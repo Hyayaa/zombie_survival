@@ -28,13 +28,26 @@ export class FogRenderer {
     if (!this.initialized) {
       const cellCount = this.fog.widthCells * this.fog.heightCells;
       for (let index = 0; index < cellCount; index += 1) this.writeState(index);
+      this.texture.context.putImageData(this.imageData, 0, 0);
       this.initialized = true;
     } else {
       const changed = this.fog.getChangedIndices();
       if (changed.length === 0) return 0;
-      for (const index of changed) this.writeState(index);
+      let minX = this.fog.widthCells;
+      let minY = this.fog.heightCells;
+      let maxX = 0;
+      let maxY = 0;
+      for (const index of changed) {
+        this.writeState(index);
+        const x = index % this.fog.widthCells;
+        const y = Math.floor(index / this.fog.widthCells);
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      }
+      this.texture.context.putImageData(this.imageData, 0, 0, minX, minY, maxX - minX + 1, maxY - minY + 1);
     }
-    this.texture.context.putImageData(this.imageData, 0, 0);
     this.texture.refresh();
     return this.fog.getChangedIndices().length;
   }

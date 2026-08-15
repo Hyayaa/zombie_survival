@@ -1,4 +1,6 @@
 import { deterministicHash } from "../core/seeded-rng";
+import type { SavedFogExploration } from "../core/save-state";
+import { decodeExploredFog, encodeExploredFog } from "./fog-save-codec";
 
 export enum VisibilityState {
   Unknown = 0,
@@ -96,18 +98,12 @@ export class FogOfWarSystem {
     return this.changedIndices;
   }
 
-  exportExplored(): number[] {
-    const indices: number[] = [];
-    for (let index = 0; index < this.explored.length; index += 1) {
-      if (this.explored[index]) indices.push(index);
-    }
-    return indices;
+  exportExplored(): SavedFogExploration {
+    return encodeExploredFog(this.explored, this.cellSize);
   }
 
-  importExplored(indices: readonly number[]): void {
-    for (const index of indices) {
-      if (Number.isInteger(index) && index >= 0 && index < this.explored.length) this.explored[index] = 1;
-    }
+  importExplored(exploration: SavedFogExploration): boolean {
+    return decodeExploredFog(exploration, this.explored);
   }
 
   private propagate(source: VisionSource, grid: VisionGrid, previousGeneration: number): void {
@@ -161,7 +157,8 @@ export class FogOfWarSystem {
         const sealedCorner = this.isSealedCorner(originX, originY, cellX, cellY, grid);
         const distanceSquared = deltaX * deltaX + deltaY * deltaY;
         if (!sealedCorner && distanceSquared <= radiusSquared) {
-          this.markCandidate(source, cellX, cellY, Math.sqrt(distanceSquared / radiusSquared), sourceSalt, previousGeneration);
+          const distanceCells = Math.sqrt(distanceSquared);
+          this.markCandidate(source, cellX, cellY, Math.sqrt(distanceSquared / radiusSquared), distanceCells, sourceSalt, previousGeneration);
         }
 
         const opaque = sealedCorner || grid.blocksVision(cellX, cellY);
@@ -198,11 +195,16 @@ export class FogOfWarSystem {
     }
   }
 
-  private markCandidate(source: VisionSource, cellX: number, cellY: number, radiusRatio: number, sourceSalt: number, previousGeneration: number): void {
+  private markCandidate(source: VisionSource, cellX: number, cellY: number, radiusRatio: number, distanceCells: number, sourceSalt: number, previousGeneration: number): void {
     if (!this.inCone(source, cellX, cellY)) return;
-    const fringeDrop = radiusRatio > 0.72
-      && deterministicHash(cellX, cellY, sourceSalt) < (radiusRatio - 0.72) * 1.55;
-    if (!fringeDrop || radiusRatio < 0.12) this.markVisible(cellX, cellY, previousGeneration);
+    if (distanceCells <= 5) {
+      this.markVisible(cellX, cellY, previousGeneration);
+      return;
+    }
+    const clusterNoise = deterministicHash(Math.floor(cellX / 2), Math.floor(cellY / 2), sourceSalt);
+    const detailNoise = deterministicHash(cellX, cellY, sourceSalt ^ 0x5bd1e995);
+    const irregularEdge = 0.76 + (clusterNoise - 0.5) * 0.13 + (detailNoise - 0.5) * 0.018;
+    if (radiusRatio <= 0.73 || radiusRatio <= irregularEdge) this.markVisible(cellX, cellY, previousGeneration);
   }
 
   private isSealedCorner(originX: number, originY: number, cellX: number, cellY: number, grid: VisionGrid): boolean {

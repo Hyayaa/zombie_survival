@@ -1,10 +1,10 @@
-import { FOG_CELL_SIZE, MAP_TILES, TILE_SIZE, WORLD_SIZE } from "../config/game-config";
+import { FOG_CELLS_PER_TILE, MAP_TILES, TILE_SIZE, WORLD_SIZE } from "../config/game-config";
 import type { DoorDefinition, WorldObstacle } from "../data/map-definitions";
 import type { VisionGrid } from "./fog-of-war-system";
 import type { Point } from "./zombie-ai-system";
 
-const VISION_CELLS_PER_TILE = TILE_SIZE / FOG_CELL_SIZE;
-const VISION_WIDTH_CELLS = Math.ceil(WORLD_SIZE / FOG_CELL_SIZE);
+const VISION_CELLS_PER_TILE = FOG_CELLS_PER_TILE;
+const VISION_WIDTH_CELLS = MAP_TILES * VISION_CELLS_PER_TILE;
 
 export class CollisionSystem implements VisionGrid {
   private readonly doors: DoorDefinition[];

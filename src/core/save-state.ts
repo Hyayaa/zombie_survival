@@ -22,6 +22,12 @@ export interface SavedCompanion extends SavedActor {
   targetY?: number;
 }
 
+export interface SavedFogExploration {
+  cellSize: number;
+  encoding: "rle-v1";
+  runs: number[];
+}
+
 export interface SaveGame {
   version: number;
   seed: number;
@@ -44,10 +50,9 @@ export interface SaveGame {
   searchedContainers: string[];
   openedDoors: string[];
   zombies: SavedZombie[];
-  exploredFog: number[];
+  exploredFog: SavedFogExploration;
   extraction: {
     active: boolean;
     remainingSeconds: number;
   };
 }
-

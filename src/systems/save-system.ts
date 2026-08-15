@@ -1,6 +1,7 @@
 import { SAVE_VERSION } from "../config/game-config";
 import type { SaveGame } from "../core/save-state";
 import { ITEM_DEFINITIONS } from "../data/item-definitions";
+import { emptyFogExploration, isValidExploredFog, migrateLegacyExploredFog } from "./fog-save-codec";
 
 export interface StorageLike {
   getItem(key: string): string | null;
@@ -13,7 +14,8 @@ export class SaveSystem {
 
   save(data: SaveGame): boolean {
     try {
-      this.storage.setItem(this.key, JSON.stringify({ ...data, version: SAVE_VERSION, savedAt: Date.now() }));
+      const exploredFog = isValidExploredFog(data.exploredFog) ? data.exploredFog : emptyFogExploration();
+      this.storage.setItem(this.key, JSON.stringify({ ...data, exploredFog, version: SAVE_VERSION, savedAt: Date.now() }));
       return true;
     } catch {
       return false;
@@ -24,9 +26,12 @@ export class SaveSystem {
     try {
       const raw = this.storage.getItem(this.key);
       if (!raw) return null;
-      const parsed = JSON.parse(raw) as Partial<SaveGame>;
-      if (!this.isValid(parsed)) return null;
-      return parsed;
+      const parsed = JSON.parse(raw) as SaveCandidate;
+      if (!this.isValidBase(parsed)) return null;
+      const exploredFog = parsed.version === 1
+        ? migrateLegacyExploredFog(parsed.exploredFog) ?? emptyFogExploration()
+        : isValidExploredFog(parsed.exploredFog) ? parsed.exploredFog : emptyFogExploration();
+      return { ...parsed, version: SAVE_VERSION, exploredFog } as SaveGame;
     } catch {
       return null;
     }
@@ -40,8 +45,8 @@ export class SaveSystem {
     this.storage.removeItem(this.key);
   }
 
-  private isValid(value: Partial<SaveGame>): value is SaveGame {
-    return value.version === SAVE_VERSION
+  private isValidBase(value: SaveCandidate): boolean {
+    return (value.version === 1 || value.version === SAVE_VERSION)
       && typeof value.seed === "number"
       && typeof value.rngState === "number"
       && typeof value.savedAt === "number"
@@ -59,7 +64,6 @@ export class SaveSystem {
       && value.inventory.every((slot) => slot === null || (typeof slot?.itemId === "string" && ITEM_DEFINITIONS[slot.itemId] !== undefined && typeof slot.quantity === "number" && slot.quantity > 0))
       && Array.isArray(value.quickslots)
       && value.quickslots.every((itemId) => itemId === null || (typeof itemId === "string" && ITEM_DEFINITIONS[itemId] !== undefined))
-      && Array.isArray(value.exploredFog)
       && Array.isArray(value.zombies)
       && typeof value.clock?.elapsedSeconds === "number"
       && typeof value.companion?.x === "number"
@@ -75,3 +79,7 @@ export class SaveSystem {
       && typeof value.extraction?.remainingSeconds === "number";
   }
 }
+
+type SaveCandidate = Omit<Partial<SaveGame>, "exploredFog"> & {
+  exploredFog?: unknown;
+};

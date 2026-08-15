@@ -3,9 +3,11 @@ export const LOGICAL_HEIGHT = 270;
 export const TILE_SIZE = 24;
 export const MAP_TILES = 48;
 export const WORLD_SIZE = MAP_TILES * TILE_SIZE;
-export const FOG_CELL_SIZE = 6;
+export const FOG_CELLS_PER_TILE = 8;
+export const FOG_CELL_SIZE = TILE_SIZE / FOG_CELLS_PER_TILE;
+if (!Number.isInteger(FOG_CELL_SIZE)) throw new Error("TILE_SIZE must divide evenly into FOG_CELLS_PER_TILE");
 export const SAVE_KEY = "last-block-save-v1";
-export const SAVE_VERSION = 1;
+export const SAVE_VERSION = 2;
 
 export const DEPTH = {
   ground: 0,
@@ -14,7 +16,9 @@ export const DEPTH = {
   actor: 200,
   propFront: 500,
   roof: 700,
+  effectWorld: 7_800,
   tint: 8_000,
+  effectEmissive: 8_500,
   fog: 9_000,
 } as const;
 
@@ -51,4 +55,3 @@ export const BALANCE = {
   nightSeconds: 360,
   dawnSeconds: 120,
 } as const;
-
