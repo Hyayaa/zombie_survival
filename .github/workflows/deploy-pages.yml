@@ -2,7 +2,7 @@ name: Test, build, and deploy Pages
 
 on:
   push:
-    branches: [main]
+    branches: [main, feature/vertical-slice]
   pull_request:
     branches: [main]
   workflow_dispatch:
