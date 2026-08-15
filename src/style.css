@@ -3,6 +3,7 @@
   background: #080b0d;
   font-family: ui-monospace, "Cascadia Mono", monospace;
   image-rendering: pixelated;
+  font-synthesis: none;
 }
 
 * {
@@ -18,7 +19,294 @@ body,
   overflow: hidden;
 }
 
+#app {
+  position: relative;
+  background: radial-gradient(circle at center, #17201e 0%, #080b0d 70%);
+}
+
 canvas {
+  display: block;
   image-rendering: pixelated;
 }
 
+button {
+  color: #dce3dd;
+  background: #26312f;
+  border: 1px solid #65736d;
+  padding: 5px 8px;
+  font: inherit;
+  cursor: pointer;
+}
+
+button:hover,
+button:focus-visible {
+  background: #3a4b47;
+  outline: 1px solid #bcc9c1;
+}
+
+.game-ui-root {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  pointer-events: none;
+  container-type: size;
+}
+
+.pixel-panel {
+  color: #d9e0da;
+  background: rgb(10 15 16 / 88%);
+  border: 1px solid #65736d;
+  box-shadow: inset 0 0 0 1px #161e1c, 0 2px 0 rgb(0 0 0 / 45%);
+  backdrop-filter: blur(1px);
+}
+
+.hud {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  font-size: clamp(8px, 1.8cqh, 12px);
+  text-shadow: 1px 1px #000;
+}
+
+.hud__status {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  max-width: min(72%, 680px);
+  padding: 5px 7px;
+}
+
+.hud__status b {
+  color: #eff3ef;
+}
+
+.hud .warn { color: #e5b563; }
+.hud .danger { color: #df6b5d; }
+
+.hud__quickslots {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  display: flex;
+  gap: 3px;
+}
+
+.quickslot {
+  display: grid;
+  place-items: center;
+  width: clamp(42px, 9cqw, 74px);
+  min-height: 31px;
+  padding: 3px;
+  color: #bfc9c2;
+  background: rgb(9 14 15 / 88%);
+  border: 1px solid #56635e;
+  font-size: 0.82em;
+}
+
+.quickslot b {
+  position: absolute;
+  align-self: start;
+  justify-self: start;
+  color: #d9bd72;
+  font-size: 0.85em;
+}
+
+.hud__objective {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  max-width: 27%;
+  padding: 5px 7px;
+  color: #d7c681;
+  text-align: right;
+}
+
+.hud__message {
+  position: absolute;
+  top: 20%;
+  left: 50%;
+  max-width: 80%;
+  padding: 5px 9px;
+  opacity: 0;
+  color: #f0ead2;
+  background: rgb(8 12 12 / 82%);
+  border-left: 2px solid #c6ad65;
+  transform: translateX(-50%);
+  transition: opacity 120ms steps(2);
+}
+
+.hud__message.is-visible { opacity: 1; }
+
+.hud__prompt {
+  position: absolute;
+  bottom: 17%;
+  left: 50%;
+  padding: 5px 10px;
+  color: #f1df9b;
+  transform: translateX(-50%);
+}
+
+.modal-layer {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  pointer-events: auto;
+  background: rgb(1 4 5 / 60%);
+}
+
+.modal-layer[hidden],
+.command-panel[hidden] {
+  display: none;
+}
+
+.inventory-panel {
+  width: min(900px, 96%);
+  max-height: 92%;
+  overflow: auto;
+  padding: 10px;
+  font-size: clamp(9px, 1.7cqh, 13px);
+}
+
+.inventory-panel header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid #46524d;
+}
+
+.inventory-panel h2,
+.inventory-panel h3 {
+  margin: 5px 0 8px;
+  color: #d6c27c;
+  font-size: 1.05em;
+}
+
+.inventory-panel__content {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(190px, 1fr);
+  gap: 12px;
+}
+
+.inventory-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.inventory-slot {
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 5px;
+  min-height: 38px;
+  padding: 4px;
+  background: #151d1b;
+  border: 1px solid #36423e;
+}
+
+.inventory-slot.is-empty {
+  color: #4f5a56;
+  background: #101513;
+}
+
+.inventory-slot small {
+  display: block;
+  margin-top: 2px;
+  color: #7f8b86;
+}
+
+.inventory-slot em {
+  color: #d7bd6f;
+  font-style: normal;
+}
+
+.item-swatch {
+  width: 8px;
+  height: 8px;
+  margin-top: 3px;
+  background: var(--swatch);
+  box-shadow: 1px 1px #000;
+}
+
+.slot-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 2px;
+}
+
+.slot-actions button {
+  padding: 2px 5px;
+  font-size: 0.78em;
+}
+
+.recipe-list,
+.weapon-list {
+  display: grid;
+  gap: 4px;
+}
+
+.recipe {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  text-align: left;
+}
+
+.recipe span,
+.recipe small {
+  color: #93a099;
+  font-size: 0.8em;
+}
+
+.weapon-button.is-active {
+  color: #f2df9d;
+  border-color: #c7ad61;
+}
+
+.panel-note {
+  color: #9a7c6b;
+  font-size: 0.82em;
+}
+
+.command-panel {
+  position: absolute;
+  bottom: 17%;
+  left: 50%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  max-width: 90%;
+  padding: 7px;
+  pointer-events: auto;
+  transform: translateX(-50%);
+  font-size: clamp(8px, 1.7cqh, 12px);
+}
+
+.command-panel b,
+.command-panel small {
+  width: 100%;
+}
+
+.command-panel small { color: #8f9b95; }
+
+.pause-panel {
+  display: grid;
+  gap: 7px;
+  width: min(300px, 85%);
+  padding: 16px;
+  text-align: center;
+}
+
+.pause-panel h2 { margin: 0 0 8px; color: #d6c27c; }
+.pause-panel small { color: #89948f; }
+
+@media (max-width: 700px), (max-height: 480px) {
+  .inventory-panel__content { grid-template-columns: 1fr 190px; }
+  .inventory-grid { grid-template-columns: 1fr; }
+  .inventory-slot small { display: none; }
+  .hud__objective { top: 42px; max-width: 45%; }
+}
