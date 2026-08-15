@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
+import { GameClock } from "../core/game-clock";
+import { createCityBlockMap } from "../data/map-definitions";
 import { CollisionSystem } from "../systems/collision-system";
 import { FogOfWarSystem, VisibilityState, type VisionGrid, type VisionSource } from "../systems/fog-of-war-system";
+import { buildVisionSources } from "../systems/lighting-system";
 
 function source(overrides: Partial<VisionSource> = {}): VisionSource {
   return { x: 51, y: 63, radius: 42, intensity: 1, sourceType: "player", ...overrides };
@@ -52,6 +55,33 @@ describe("FogOfWarSystem", () => {
     fog.recompute([source({ x: 90, y: 90, radius: 72, sourceType: "flashlight", direction: 0, coneAngle: Math.PI / 3 })], grid());
     expect(fog.getStateAtWorld(126, 90)).toBe(VisibilityState.Visible);
     expect(fog.getStateAtWorld(90, 144)).not.toBe(VisibilityState.Visible);
+  });
+
+  it("keeps the player's base vision when the flashlight is toggled", () => {
+    const fog = new FogOfWarSystem(240, 240, 6, 202);
+    const player = source({ x: 120, y: 120, radius: 60 });
+    fog.recompute([player], grid());
+    expect(fog.getStateAtWorld(84, 120)).toBe(VisibilityState.Visible);
+    fog.recompute([
+      player,
+      source({ x: 120, y: 120, radius: 108, sourceType: "flashlight", direction: 0, coneAngle: Math.PI / 3 }),
+    ], grid());
+    expect(fog.getStateAtWorld(84, 120)).toBe(VisibilityState.Visible);
+    expect(fog.getStateAtWorld(198, 120)).toBe(VisibilityState.Visible);
+  });
+
+  it("keeps the real spawn visible across repeated flashlight updates", () => {
+    const map = createCityBlockMap();
+    const collision = new CollisionSystem(map.obstacles, map.doors);
+    const fog = new FogOfWarSystem(1_152, 1_152, 6, 303);
+    const clock = new GameClock();
+    const player = { ...map.playerSpawn, aimAngle: 0, flashlightOn: true, torchRemaining: 0 };
+    for (let update = 0; update < 20; update += 1) {
+      const changed = fog.recompute(buildVisionSources(player, clock, []), collision);
+      expect(fog.getStateAtWorld(player.x, player.y)).toBe(VisibilityState.Visible);
+      expect(fog.getStateAtWorld(player.x - 30, player.y)).toBe(VisibilityState.Visible);
+      if (update > 0) expect(changed).toBe(0);
+    }
   });
 
   it("does not leak visibility through a sealed diagonal corner", () => {

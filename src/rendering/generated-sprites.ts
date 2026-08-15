@@ -21,8 +21,8 @@ export class TopDownActorView {
   readonly container: Phaser.GameObjects.Container;
   private readonly visual: Phaser.GameObjects.Container;
   private readonly aimLayer: Phaser.GameObjects.Container;
-  private readonly idleAim: Phaser.GameObjects.Graphics;
-  private readonly attackAim: Phaser.GameObjects.Graphics;
+  private readonly idleAim: Phaser.GameObjects.Container;
+  private readonly attackAim: Phaser.GameObjects.Container;
   private readonly healthBarBackground: Phaser.GameObjects.Rectangle;
   private readonly healthBarFill: Phaser.GameObjects.Rectangle;
   private hitUntil = 0;
@@ -147,19 +147,21 @@ export class TopDownActorView {
   }
 }
 
-function createAimLayer(scene: Phaser.Scene, palette: ActorPalette, armed: boolean, attacking: boolean): Phaser.GameObjects.Graphics {
-  const graphics = scene.add.graphics();
-  graphics.fillStyle(palette.outline, 1);
-  graphics.fillCircle(5, -2, 2.6);
-  graphics.fillCircle(5, 3, 2.6);
-  graphics.fillStyle(palette.skin, 1);
-  graphics.fillCircle(5, -2, 1.8);
-  graphics.fillCircle(5, 3, 1.8);
+function createAimLayer(scene: Phaser.Scene, palette: ActorPalette, armed: boolean, attacking: boolean): Phaser.GameObjects.Container {
+  const container = scene.add.container(0, 0);
+  container.add([
+    scene.add.circle(5, -2, 2.6, palette.outline),
+    scene.add.circle(5, 3, 2.6, palette.outline),
+    scene.add.circle(5, -2, 1.8, palette.skin),
+    scene.add.circle(5, 3, 1.8, palette.skin),
+  ]);
   if (armed) {
-    graphics.fillStyle(palette.accent, 1);
-    graphics.fillRect(attacking ? 5 : 4, -1, attacking ? 12 : 9, 2);
-    graphics.fillStyle(palette.outline, 1);
-    graphics.fillRect(attacking ? 14 : 11, -1, 2, 2);
+    const length = attacking ? 12 : 9;
+    const start = attacking ? 5 : 4;
+    container.add([
+      scene.add.rectangle(start, -1, length, 2, palette.accent).setOrigin(0, 0),
+      scene.add.rectangle(attacking ? 14 : 11, -1, 2, 2, palette.outline).setOrigin(0, 0),
+    ]);
   }
-  return graphics;
+  return container;
 }
