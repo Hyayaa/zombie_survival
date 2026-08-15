@@ -23,6 +23,54 @@ export interface VisionGrid {
   additionalCost(cellX: number, cellY: number): number;
 }
 
+export interface FogInvalidationInput {
+  playerCell: number;
+  aimBucket: number;
+  visionRevision: number;
+  radiusBucket: number;
+  torchActive: boolean;
+}
+
+export class FogInvalidationTracker {
+  private lastPlayerCell = -1;
+  private lastAimBucket = -1;
+  private lastVisionRevision = -1;
+  private lastRadiusBucket = -1;
+  private lastTorchActive = false;
+  private invalidated = true;
+
+  shouldRecompute(input: FogInvalidationInput, force = false): boolean {
+    return force || this.invalidated
+      || input.playerCell !== this.lastPlayerCell
+      || input.aimBucket !== this.lastAimBucket
+      || input.visionRevision !== this.lastVisionRevision
+      || input.radiusBucket !== this.lastRadiusBucket
+      || input.torchActive !== this.lastTorchActive;
+  }
+
+  commit(input: FogInvalidationInput): void {
+    this.lastPlayerCell = input.playerCell;
+    this.lastAimBucket = input.aimBucket;
+    this.lastVisionRevision = input.visionRevision;
+    this.lastRadiusBucket = input.radiusBucket;
+    this.lastTorchActive = input.torchActive;
+    this.invalidated = false;
+  }
+
+  invalidate(): void {
+    this.invalidated = true;
+  }
+
+  reset(): void {
+    this.lastPlayerCell = -1;
+    this.lastAimBucket = -1;
+    this.lastVisionRevision = -1;
+    this.lastRadiusBucket = -1;
+    this.lastTorchActive = false;
+    this.invalidated = true;
+  }
+}
+
 const OCTANTS = [
   [1, 0, 0, 1],
   [0, 1, 1, 0],

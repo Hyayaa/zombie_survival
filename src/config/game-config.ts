@@ -6,6 +6,7 @@ export const WORLD_SIZE = MAP_TILES * TILE_SIZE;
 export const FOG_CELLS_PER_TILE = 8;
 export const FOG_CELL_SIZE = TILE_SIZE / FOG_CELLS_PER_TILE;
 if (!Number.isInteger(FOG_CELL_SIZE)) throw new Error("TILE_SIZE must divide evenly into FOG_CELLS_PER_TILE");
+export const FLASHLIGHT_AIM_BUCKETS = 32;
 export const SAVE_KEY = "last-block-save-v1";
 export const SAVE_VERSION = 2;
 

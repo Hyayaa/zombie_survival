@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { FOG_CELL_SIZE, FOG_CELLS_PER_TILE, MAP_TILES, TILE_SIZE, WORLD_SIZE } from "../config/game-config";
+import { FLASHLIGHT_AIM_BUCKETS, FOG_CELL_SIZE, FOG_CELLS_PER_TILE, MAP_TILES, TILE_SIZE, WORLD_SIZE } from "../config/game-config";
 import { GameClock } from "../core/game-clock";
 import { createCityBlockMap } from "../data/map-definitions";
 import { CollisionSystem } from "../systems/collision-system";
-import { FogOfWarSystem, VisibilityState, type VisionGrid, type VisionSource } from "../systems/fog-of-war-system";
+import { FogInvalidationTracker, FogOfWarSystem, VisibilityState, type FogInvalidationInput, type VisionGrid, type VisionSource } from "../systems/fog-of-war-system";
 import { buildVisionSources } from "../systems/lighting-system";
 
 function source(overrides: Partial<VisionSource> = {}): VisionSource {
@@ -20,9 +20,25 @@ describe("FogOfWarSystem", () => {
     expect(TILE_SIZE).toBe(24);
     expect(FOG_CELLS_PER_TILE).toBe(8);
     expect(FOG_CELL_SIZE).toBe(3);
+    expect(FLASHLIGHT_AIM_BUCKETS).toBe(32);
     expect(TILE_SIZE / FOG_CELL_SIZE).toBe(8);
     expect(fog.widthCells).toBe(MAP_TILES * 8);
     expect(fog.heightCells).toBe(MAP_TILES * 8);
+  });
+
+  it("does zero idle recomputes until a fog input is invalidated", () => {
+    const tracker = new FogInvalidationTracker();
+    const input: FogInvalidationInput = { playerCell: 10, aimBucket: -1, visionRevision: 2, radiusBucket: 50, torchActive: false };
+    expect(tracker.shouldRecompute(input)).toBe(true);
+    tracker.commit(input);
+    let idleRecomputes = 0;
+    for (let frame = 0; frame < 600; frame += 1) {
+      if (tracker.shouldRecompute(input)) idleRecomputes += 1;
+    }
+    expect(idleRecomputes).toBe(0);
+    expect(tracker.shouldRecompute({ ...input, playerCell: 11 })).toBe(true);
+    tracker.invalidate();
+    expect(tracker.shouldRecompute(input)).toBe(true);
   });
 
   it("marks nearby cells visible and leaves distant cells unknown", () => {

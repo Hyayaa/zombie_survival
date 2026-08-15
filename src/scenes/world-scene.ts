@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { BALANCE, DEPTH, FOG_CELL_SIZE, LOGICAL_HEIGHT, LOGICAL_WIDTH, SAVE_KEY, SAVE_VERSION, TILE_SIZE, WORLD_SIZE } from "../config/game-config";
+import { BALANCE, DEPTH, FLASHLIGHT_AIM_BUCKETS, FOG_CELL_SIZE, LOGICAL_HEIGHT, LOGICAL_WIDTH, SAVE_KEY, SAVE_VERSION, TILE_SIZE, WORLD_SIZE } from "../config/game-config";
 import { GameClock } from "../core/game-clock";
 import type { SaveGame } from "../core/save-state";
 import { SeededRng } from "../core/seeded-rng";
@@ -23,7 +23,7 @@ import { CollisionSystem } from "../systems/collision-system";
 import { distance, firstTargetOnLine, targetsInMeleeArc } from "../systems/combat-system";
 import { createFormationState, getFormationSlot, updateFormationDirection, type FormationState } from "../systems/companion-system";
 import { CraftingSystem } from "../systems/crafting-system";
-import { FogOfWarSystem, VisibilityState } from "../systems/fog-of-war-system";
+import { FogInvalidationTracker, FogOfWarSystem, VisibilityState } from "../systems/fog-of-war-system";
 import { InfectionSystem } from "../systems/infection-system";
 import { InventorySystem } from "../systems/inventory-system";
 import { buildVisionSources, type ActiveFire } from "../systems/lighting-system";
@@ -122,7 +122,7 @@ export class WorldScene extends Phaser.Scene {
   private simulationTime = 0;
   private nextFootstepAt = 0;
   private nextHudAt = 0;
-  private nextFogAt = 0;
+  private readonly fogInvalidation = new FogInvalidationTracker();
   private nextNightSpawnAt = 0;
   private nextDefenseSpawnAt = 0;
   private dropCounter = 0;
@@ -136,9 +136,6 @@ export class WorldScene extends Phaser.Scene {
   private readonly separationBuckets: number[][] = [];
   private readonly separationUsedBuckets: number[] = [];
   private lastTintAlpha = Number.NaN;
-  private lastFogPlayerCell = -1;
-  private lastFogAimBucket = -1;
-  private lastFogVisionRevision = -1;
 
   constructor() {
     super("world");
@@ -260,7 +257,7 @@ export class WorldScene extends Phaser.Scene {
     this.simulationTime = 0;
     this.nextFootstepAt = 0;
     this.nextHudAt = 0;
-    this.nextFogAt = 0;
+    this.fogInvalidation.reset();
     this.nextNightSpawnAt = 0;
     this.nextDefenseSpawnAt = 0;
     this.dropCounter = 0;
@@ -270,9 +267,6 @@ export class WorldScene extends Phaser.Scene {
     this.pathfindingWorkThisFrame = 0;
     this.separationUsedBuckets.length = 0;
     this.lastTintAlpha = Number.NaN;
-    this.lastFogPlayerCell = -1;
-    this.lastFogAimBucket = -1;
-    this.lastFogVisionRevision = -1;
   }
 
   private configureCamera(): void {
@@ -500,7 +494,7 @@ export class WorldScene extends Phaser.Scene {
       return;
     }
     this.player.flashlightOn = !this.player.flashlightOn;
-    this.nextFogAt = 0;
+    this.fogInvalidation.invalidate();
   }
 
   private createZombies(saved: SaveGame | null): void {
@@ -912,7 +906,7 @@ export class WorldScene extends Phaser.Scene {
     if (view) updateDoorView(view, door.open);
     this.noise.emit({ x: tileCenter(door.tileX), y: tileCenter(door.tileY), intensity: NOISE_LEVELS.door, category: "door", createdAt: this.simulationTime });
     this.audio.play("door");
-    this.nextFogAt = 0;
+    this.fogInvalidation.invalidate();
   }
 
   private searchContainer(container: ContainerDefinition): void {
@@ -1020,7 +1014,7 @@ export class WorldScene extends Phaser.Scene {
     } else if (itemId === "torch") {
       this.player.torchRemaining = Math.max(this.player.torchRemaining, BALANCE.torchSeconds);
       consumed = true;
-      this.nextFogAt = 0;
+      this.fogInvalidation.invalidate();
     } else if (itemId === "molotov") {
       this.throwMolotov();
       consumed = true;
@@ -1051,7 +1045,7 @@ export class WorldScene extends Phaser.Scene {
     this.fires.push({ id: `fire-${this.simulationTime}`, x: point.x, y: point.y, remaining: 12, view, nextDamageAt: 0 });
     this.noise.emit({ x: point.x, y: point.y, intensity: NOISE_LEVELS.explosion, category: "explosion", createdAt: this.simulationTime });
     this.effects.emitFireBurst(point.x, point.y, ++this.ambientEffectSequence, this.simulationTime);
-    this.nextFogAt = 0;
+    this.fogInvalidation.invalidate();
   }
 
   private placeBarricade(): boolean {
@@ -1100,7 +1094,7 @@ export class WorldScene extends Phaser.Scene {
       }
     }
     this.fires.length = writeIndex;
-    if (expired) this.nextFogAt = 0;
+    if (expired) this.fogInvalidation.invalidate();
   }
 
   private dropInventorySlot(index: number): void {
@@ -1203,12 +1197,14 @@ export class WorldScene extends Phaser.Scene {
     const playerCellX = Math.floor(this.player.position.x / FOG_CELL_SIZE);
     const playerCellY = Math.floor(this.player.position.y / FOG_CELL_SIZE);
     const playerCell = playerCellY * this.fog.widthCells + playerCellX;
-    const aimBucket = this.player.flashlightOn ? Math.round(this.player.aimAngle / (Math.PI / 90)) : -1;
-    const sourceChanged = playerCell !== this.lastFogPlayerCell
-      || aimBucket !== this.lastFogAimBucket
-      || this.collision.visionRevision !== this.lastFogVisionRevision;
-    if (!force && !sourceChanged && this.simulationTime < this.nextFogAt) return;
-    this.nextFogAt = this.simulationTime + 50;
+    const input = {
+      playerCell,
+      aimBucket: this.player.flashlightOn ? Math.round(this.player.aimAngle / (Math.PI * 2 / FLASHLIGHT_AIM_BUCKETS)) : -1,
+      visionRevision: this.collision.visionRevision,
+      radiusBucket: Math.round(this.clock.getBaseVisionRadius() / FOG_CELL_SIZE),
+      torchActive: this.player.torchRemaining > 0,
+    };
+    if (!this.fogInvalidation.shouldRecompute(input, force)) return;
 
     const calculationStarted = performance.now();
     this.fog.recompute(buildVisionSources({
@@ -1222,9 +1218,7 @@ export class WorldScene extends Phaser.Scene {
     this.fogRenderer.render();
     const textureFinished = performance.now();
     this.performanceMonitor.recordFog(calculationFinished - calculationStarted, textureFinished - calculationFinished);
-    this.lastFogPlayerCell = playerCell;
-    this.lastFogAimBucket = aimBucket;
-    this.lastFogVisionRevision = this.collision.visionRevision;
+    this.fogInvalidation.commit(input);
     this.updateFogVisibility();
   }
 
