@@ -1,4 +1,5 @@
 import type { WeaponId } from "../data/weapon-definitions";
+import { ATTACK_EFFECT_DURATION_MS } from "../effects/pixel-effect-definitions";
 import type { VitalState } from "../systems/infection-system";
 import type { Point } from "../systems/zombie-ai-system";
 import { ACTOR_PALETTES, TopDownActorView } from "../rendering/generated-sprites";
@@ -24,6 +25,7 @@ export class Player {
   constructor(scene: Phaser.Scene, position: Point) {
     this.position = { ...position };
     this.view = new TopDownActorView(scene, position.x, position.y, ACTOR_PALETTES.player, true);
+    this.view.setWeapon(this.equippedWeapon);
   }
 
   unlockWeapon(weapon: WeaponId): void {
@@ -35,8 +37,17 @@ export class Player {
   updateView(time: number): void {
     const moving = Math.hypot(this.movement.x, this.movement.y) > 0.1;
     this.view.setPosition(this.position.x, this.position.y);
-    this.view.updateAnimation(time, moving, time - this.lastAttackAt < 100, this.aimAngle);
+    this.view.setWeapon(this.equippedWeapon);
+    this.view.updateAnimation(time, moving, time - this.lastAttackAt < ATTACK_EFFECT_DURATION_MS[this.equippedWeapon], this.aimAngle);
     this.view.setHealth(this.vitals.health, this.vitals.maxHealth, true);
   }
-}
 
+  beginAttack(startedAt: number): void {
+    this.view.beginAttack({
+      weapon: this.equippedWeapon,
+      startedAt,
+      durationMs: ATTACK_EFFECT_DURATION_MS[this.equippedWeapon],
+      baseAimAngle: this.aimAngle,
+    });
+  }
+}

@@ -9,13 +9,15 @@ import { RECIPE_DEFINITIONS } from "../data/recipe-definitions";
 import { WEAPON_DEFINITIONS, type WeaponId } from "../data/weapon-definitions";
 import type { ZombieKind } from "../data/zombie-definitions";
 import { PerformanceMonitor } from "../debug/performance-monitor";
+import { AttackEffectController, getAttackBlockReason } from "../effects/attack-effect-controller";
+import type { AttackEffectImpact } from "../effects/pixel-effect-definitions";
+import { PixelEffectSystem } from "../effects/pixel-effect-system";
 import { Companion, type CompanionCommand } from "../entities/companion";
 import { ItemDrop } from "../entities/item-drop";
 import { Player } from "../entities/player";
 import { Zombie } from "../entities/zombie";
 import { FogRenderer } from "../rendering/fog-renderer";
 import { createMapRendering, updateDoorView, type MapViews } from "../rendering/map-renderer";
-import { ParticlePool } from "../rendering/particle-pool";
 import { AudioSystem } from "../systems/audio-system";
 import { CollisionSystem } from "../systems/collision-system";
 import { distance, firstTargetOnLine, targetsInMeleeArc } from "../systems/combat-system";
@@ -102,7 +104,8 @@ export class WorldScene extends Phaser.Scene {
   private quickslots: Array<string | null> = ["bandage", "medicine", "torch", "molotov", "barricade"];
   private collectedParts = new Set<string>();
   private searchedContainers = new Set<string>();
-  private particles!: ParticlePool;
+  private effects!: PixelEffectSystem;
+  private attackEffects!: AttackEffectController;
   private audio = new AudioSystem();
   private keys!: WorldKeys;
   private uiRoot!: HTMLDivElement;
@@ -123,6 +126,7 @@ export class WorldScene extends Phaser.Scene {
   private nextNightSpawnAt = 0;
   private nextDefenseSpawnAt = 0;
   private dropCounter = 0;
+  private ambientEffectSequence = 1_000_000;
   private defenseActive = false;
   private defenseRemaining: number = BALANCE.defenseSeconds;
   private gameEnded = false;
@@ -188,7 +192,8 @@ export class WorldScene extends Phaser.Scene {
     this.fog = new FogOfWarSystem(WORLD_SIZE, WORLD_SIZE, FOG_CELL_SIZE, this.seed);
     if (saved) this.fog.importExplored(saved.exploredFog);
     this.fogRenderer = new FogRenderer(this, this.fog);
-    this.particles = new ParticlePool(this);
+    this.effects = new PixelEffectSystem(this, (x, y) => this.fog.getStateAtWorld(x, y) === VisibilityState.Visible);
+    this.attackEffects = new AttackEffectController(this.effects);
     this.tintOverlay = this.add.rectangle(LOGICAL_WIDTH / 2, LOGICAL_HEIGHT / 2, LOGICAL_WIDTH, LOGICAL_HEIGHT, 0x101b2c, 0)
       .setScrollFactor(0)
       .setDepth(DEPTH.tint);
@@ -211,7 +216,7 @@ export class WorldScene extends Phaser.Scene {
     this.pathfindingWorkThisFrame = 0;
     this.handlePanelKeys();
     if (this.inventoryPanel.isOpen() || this.pauseMenu.isOpen()) {
-      this.player.updateView(time);
+      this.player.updateView(this.simulationTime);
       this.performanceMonitor.update(time, this.activeZombieCount);
       return;
     }
@@ -223,14 +228,14 @@ export class WorldScene extends Phaser.Scene {
     this.clock.update(deltaSeconds);
     this.telegraphGraphics.clear();
 
-    this.updatePlayer(time, deltaSeconds);
+    this.updatePlayer(deltaSeconds);
     this.updateFires(deltaSeconds);
     this.updateCompanion(time, deltaSeconds);
     this.updateZombies(time, deltaSeconds);
     this.performanceMonitor.recordSeparationCandidates(this.applyZombieSeparation());
     this.updateSpawning();
     this.updateExtraction(deltaSeconds);
-    this.particles.update(this.simulationTime, deltaSeconds);
+    this.effects.update(this.simulationTime, deltaSeconds);
     this.noise.prune(this.simulationTime);
     this.updateWorldTint();
     this.recomputeFog(false);
@@ -259,6 +264,7 @@ export class WorldScene extends Phaser.Scene {
     this.nextNightSpawnAt = 0;
     this.nextDefenseSpawnAt = 0;
     this.dropCounter = 0;
+    this.ambientEffectSequence = 1_000_000;
     this.gameEnded = false;
     this.activeZombieCount = 0;
     this.pathfindingWorkThisFrame = 0;
@@ -347,7 +353,7 @@ export class WorldScene extends Phaser.Scene {
     }
   }
 
-  private updatePlayer(time: number, deltaSeconds: number): void {
+  private updatePlayer(deltaSeconds: number): void {
     const pointer = this.input.activePointer;
     const worldPointer = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
     this.player.aimAngle = Math.atan2(worldPointer.y - this.player.position.y, worldPointer.x - this.player.position.x);
@@ -386,7 +392,7 @@ export class WorldScene extends Phaser.Scene {
       }
     }
     this.player.torchRemaining = Math.max(0, this.player.torchRemaining - deltaSeconds);
-    this.player.updateView(time);
+    this.player.updateView(this.simulationTime);
 
     const insideSafehouse = this.isInsideSafehouse(this.player.position);
     if (insideSafehouse && !this.wasInSafehouse) this.saveGame(false);
@@ -395,16 +401,23 @@ export class WorldScene extends Phaser.Scene {
 
   private tryPlayerAttack(): void {
     const weapon = WEAPON_DEFINITIONS[this.player.equippedWeapon];
-    if (this.simulationTime - this.player.lastAttackAt < weapon.cooldownMs || this.player.reloadingUntil > 0) return;
-    if (weapon.kind === "ranged") {
-      if (this.player.magazine <= 0) {
-        this.hud.showMessage("탄창이 비었습니다. R로 재장전하세요.");
-        return;
-      }
-      this.player.magazine -= 1;
+    const blockReason = getAttackBlockReason({
+      now: this.simulationTime,
+      lastAttackAt: this.player.lastAttackAt,
+      reloadingUntil: this.player.reloadingUntil,
+      magazine: this.player.magazine,
+      blocked: this.gameEnded || this.inventoryPanel.isOpen() || this.pauseMenu.isOpen() || this.commandPanel.isOpen(),
+    }, weapon);
+    if (blockReason) {
+      if (blockReason === "empty") this.hud.showMessage("탄창이 비었습니다. R로 재장전하세요.");
+      return;
     }
+    if (weapon.kind === "ranged") this.player.magazine -= 1;
     this.player.lastAttackAt = this.simulationTime;
     this.noise.emit({ x: this.player.position.x, y: this.player.position.y, intensity: weapon.noise, category: weapon.kind === "ranged" ? "gunshot" : "melee", createdAt: this.simulationTime });
+    const impacts: AttackEffectImpact[] = [];
+    let endpointX: number | undefined;
+    let endpointY: number | undefined;
 
     if (weapon.kind === "melee") {
       const targets = targetsInMeleeArc(this.player.position, this.player.aimAngle, weapon, this.zombies
@@ -413,6 +426,7 @@ export class WorldScene extends Phaser.Scene {
       targets.forEach((target) => {
         const zombie = this.zombies.find((candidate) => candidate.id === target.id);
         if (!zombie) return;
+        impacts.push({ x: zombie.position.x, y: zombie.position.y, kind: "zombie" });
         const direction = normalize({ x: zombie.position.x - this.player.position.x, y: zombie.position.y - this.player.position.y });
         this.damageZombie(zombie, weapon.damage, { x: direction.x * weapon.knockback, y: direction.y * weapon.knockback });
       });
@@ -426,22 +440,35 @@ export class WorldScene extends Phaser.Scene {
       const end = wallHit ?? rawEnd;
       const hit = firstTargetOnLine(this.player.position, end, this.zombies.map((zombie) => ({ id: zombie.id, position: zombie.position, alive: zombie.isAlive() })), 8);
       const tracerEnd = hit ? this.zombies.find((zombie) => zombie.id === hit.target.id)?.position ?? end : end;
-      this.drawTracer(this.player.position, tracerEnd, 0xe7d799);
+      endpointX = tracerEnd.x;
+      endpointY = tracerEnd.y;
       if (hit) {
         const zombie = this.zombies.find((candidate) => candidate.id === hit.target.id);
         if (zombie) {
+          impacts.push({ x: zombie.position.x, y: zombie.position.y, kind: "zombie" });
           const direction = normalize({ x: Math.cos(this.player.aimAngle), y: Math.sin(this.player.aimAngle) });
           this.damageZombie(zombie, weapon.damage, { x: direction.x * weapon.knockback, y: direction.y * weapon.knockback });
         }
-      } else this.particles.burst(end.x, end.y, 0xa8a291, 3, this.simulationTime);
+      } else if (wallHit) impacts.push({ x: wallHit.x, y: wallHit.y, kind: "wall" });
       this.audio.play("shot");
       this.cameras.main.shake(80, 0.0025);
     }
+    this.player.beginAttack(this.simulationTime);
+    this.attackEffects.play({
+      weapon: weapon.id,
+      originX: this.player.position.x,
+      originY: this.player.position.y,
+      angle: this.player.aimAngle,
+      startedAt: this.simulationTime,
+      endpointX,
+      endpointY,
+      impacts,
+      alwaysShowCore: true,
+    });
   }
 
   private damageZombie(zombie: Zombie, damage: number, knockback: Point): void {
     const killed = zombie.damage(damage, knockback, this.simulationTime);
-    this.particles.burst(zombie.position.x, zombie.position.y, 0x7d342f, killed ? 8 : 4, this.simulationTime);
     if (killed && this.rng.chance(0.28)) {
       const itemId = this.rng.chance(0.45) ? "ammo" : "cloth";
       this.spawnDrop(itemId, 1, zombie.position.x, zombie.position.y);
@@ -733,8 +760,19 @@ export class WorldScene extends Phaser.Scene {
       if (this.simulationTime >= this.companion.nextAttackAt) {
         this.companion.nextAttackAt = this.simulationTime + 720;
         const direction = normalize({ x: combatTarget.position.x - this.companion.position.x, y: combatTarget.position.y - this.companion.position.y });
+        const impactX = combatTarget.position.x;
+        const impactY = combatTarget.position.y;
         this.damageZombie(combatTarget, 13, { x: direction.x * 4, y: direction.y * 4 });
-        this.drawTracer(this.companion.position, combatTarget.position, 0xd6b86c);
+        this.attackEffects.play({
+          weapon: "pistol",
+          originX: this.companion.position.x,
+          originY: this.companion.position.y,
+          angle: this.companion.aimAngle,
+          startedAt: this.simulationTime,
+          endpointX: impactX,
+          endpointY: impactY,
+          impacts: [{ x: impactX, y: impactY, kind: "zombie" }],
+        });
         this.noise.emit({ x: this.companion.position.x, y: this.companion.position.y, intensity: 12, category: "melee", createdAt: this.simulationTime });
       }
     }
@@ -1012,7 +1050,7 @@ export class WorldScene extends Phaser.Scene {
     view.fillStyle(0xe66d36, 0.7).fillRect(point.x - 10, point.y - 10, 8, 8).fillRect(point.x + 3, point.y - 7, 9, 9).fillRect(point.x - 4, point.y + 3, 10, 8);
     this.fires.push({ id: `fire-${this.simulationTime}`, x: point.x, y: point.y, remaining: 12, view, nextDamageAt: 0 });
     this.noise.emit({ x: point.x, y: point.y, intensity: NOISE_LEVELS.explosion, category: "explosion", createdAt: this.simulationTime });
-    this.particles.burst(point.x, point.y, 0xe88742, 12, this.simulationTime);
+    this.effects.emitFireBurst(point.x, point.y, ++this.ambientEffectSequence, this.simulationTime);
     this.nextFogAt = 0;
   }
 
@@ -1044,7 +1082,13 @@ export class WorldScene extends Phaser.Scene {
       if (this.simulationTime >= fire.nextDamageAt) {
         fire.nextDamageAt = this.simulationTime + 550;
         for (const zombie of this.zombies) {
-          if (zombie.isAlive() && distance(zombie.position, fire) <= 34) this.damageZombie(zombie, 8, { x: 0, y: 0 });
+          if (zombie.isAlive() && distance(zombie.position, fire) <= 34) {
+            const impactX = zombie.position.x;
+            const impactY = zombie.position.y;
+            const angle = Math.atan2(impactY - fire.y, impactX - fire.x);
+            this.damageZombie(zombie, 8, { x: 0, y: 0 });
+            this.effects.emitBloodImpact(impactX, impactY, angle, "bat", ++this.ambientEffectSequence, this.simulationTime);
+          }
         }
       }
       if (fire.remaining <= 0) {
@@ -1325,12 +1369,6 @@ export class WorldScene extends Phaser.Scene {
     return point.x >= zone.x && point.x <= zone.x + zone.width && point.y >= zone.y && point.y <= zone.y + zone.height;
   }
 
-  private drawTracer(start: Point, end: Point, color: number): void {
-    const tracer = this.add.graphics().setDepth(DEPTH.propFront + 600);
-    tracer.lineStyle(1, color, 0.9).lineBetween(Math.round(start.x), Math.round(start.y), Math.round(end.x), Math.round(end.y));
-    this.time.delayedCall(70, () => tracer.destroy());
-  }
-
   private finishGame(won: boolean, reason: string): void {
     if (this.gameEnded) return;
     this.gameEnded = true;
@@ -1347,6 +1385,7 @@ export class WorldScene extends Phaser.Scene {
 
   private shutdownUi(): void {
     this.performanceMonitor?.destroy();
+    this.effects?.destroy();
     this.fogRenderer?.destroy();
     this.hud?.destroy();
     this.inventoryPanel?.destroy();

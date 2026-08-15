@@ -1,5 +1,7 @@
 import Phaser from "phaser";
 import { DEPTH } from "../config/game-config";
+import type { WeaponId } from "../data/weapon-definitions";
+import { swingOffsetAt } from "../effects/pixel-effect-math";
 
 export interface ActorPalette {
   skin: number;
@@ -17,22 +19,32 @@ export const ACTOR_PALETTES = {
   runner: { skin: 0x80665b, skinLight: 0x9b8173, body: 0x533b36, bodyLight: 0x66483f, outline: 0x261b19, accent: 0x9f4237 },
 } satisfies Record<string, ActorPalette>;
 
+export interface ActorAttackAnimation {
+  weapon: WeaponId;
+  startedAt: number;
+  durationMs: number;
+  baseAimAngle: number;
+}
+
 export class TopDownActorView {
   readonly container: Phaser.GameObjects.Container;
   private readonly visual: Phaser.GameObjects.Container;
   private readonly aimLayer: Phaser.GameObjects.Container;
-  private readonly idleAim: Phaser.GameObjects.Container;
-  private readonly attackAim: Phaser.GameObjects.Container;
+  private readonly weaponBody?: Phaser.GameObjects.Rectangle;
+  private readonly weaponTip?: Phaser.GameObjects.Rectangle;
   private readonly healthBarBackground: Phaser.GameObjects.Rectangle;
   private readonly healthBarFill: Phaser.GameObjects.Rectangle;
+  private attackAnimation?: ActorAttackAnimation;
+  private weapon: WeaponId = "pistol";
   private hitUntil = 0;
   private lastX = Number.NaN;
   private lastY = Number.NaN;
   private lastDepth = Number.NaN;
   private lastAim = Number.NaN;
-  private lastAttacking = false;
   private lastBob = Number.NaN;
   private lastVisualX = Number.NaN;
+  private lastVisualY = Number.NaN;
+  private lastVisualRotation = Number.NaN;
   private lastAlpha = Number.NaN;
   private lastHealth = Number.NaN;
   private lastMaximum = Number.NaN;
@@ -50,15 +62,16 @@ export class TopDownActorView {
     const headOutline = scene.add.circle(0, -5, 4.6, palette.outline);
     const head = scene.add.circle(0, -5, 3.7, palette.skin);
     const headLight = scene.add.rectangle(-1, -7, 3, 2, palette.skinLight);
-    this.aimLayer = scene.add.container(0, 0);
-    this.idleAim = createAimLayer(scene, palette, armed, false);
-    this.attackAim = createAimLayer(scene, palette, armed, true).setVisible(false);
-    this.aimLayer.add([this.idleAim, this.attackAim]);
+    const aimParts = createAimLayer(scene, palette, armed);
+    this.aimLayer = aimParts.container;
+    this.weaponBody = aimParts.weaponBody;
+    this.weaponTip = aimParts.weaponTip;
     this.healthBarBackground = scene.add.rectangle(-7, -13, 14, 2, 0x171a18, 0.9).setOrigin(0, 0);
     this.healthBarFill = scene.add.rectangle(-7, -13, 14, 2, 0x7aaa65, 1).setOrigin(0, 0);
     this.visual.add([torsoOutline, torso, torsoLight, headOutline, head, headLight, this.aimLayer, this.healthBarBackground, this.healthBarFill]);
     this.container.add([shadow, this.visual]);
-    this.setAim(0, false);
+    this.setAim(0);
+    this.setWeapon("pistol");
     this.setPosition(x, y);
   }
 
@@ -77,32 +90,89 @@ export class TopDownActorView {
     }
   }
 
-  setAim(angle: number, attacking: boolean): void {
+  setAim(angle: number): void {
     const snapped = Math.round(angle / (Math.PI / 8)) * (Math.PI / 8);
     if (snapped !== this.lastAim) {
       this.aimLayer.rotation = snapped;
       this.lastAim = snapped;
     }
-    if (attacking !== this.lastAttacking) {
-      this.idleAim.setVisible(!attacking);
-      this.attackAim.setVisible(attacking);
-      this.lastAttacking = attacking;
+  }
+
+  setWeapon(weapon: WeaponId): void {
+    if (!this.weaponBody || !this.weaponTip || weapon === this.weapon) return;
+    this.weapon = weapon;
+    if (weapon === "knife") {
+      this.weaponBody.setPosition(7, -1).setDisplaySize(7, 2).setFillStyle(0xc8d0cb, 1);
+      this.weaponTip.setPosition(13, -1).setDisplaySize(2, 2).setFillStyle(0x596562, 1);
+    } else if (weapon === "bat") {
+      this.weaponBody.setPosition(6, -1.5).setDisplaySize(14, 3).setFillStyle(0x8c6847, 1);
+      this.weaponTip.setPosition(18, -2).setDisplaySize(3, 4).setFillStyle(0x58412f, 1);
+    } else {
+      this.weaponBody.setPosition(7, -2).setDisplaySize(7, 4).setFillStyle(0x8d9693, 1);
+      this.weaponTip.setPosition(13, -1).setDisplaySize(3, 2).setFillStyle(0x3e4948, 1);
     }
+  }
+
+  beginAttack(animation: ActorAttackAnimation): void {
+    this.attackAnimation = animation;
+    this.setWeapon(animation.weapon);
   }
 
   updateAnimation(time: number, moving: boolean, attacking: boolean, aimAngle: number): void {
     if (!this.visible) return;
     const bob = moving ? Math.round(Math.sin(time / 95)) : 0;
-    if (bob !== this.lastBob) {
-      this.visual.y = bob;
+    let visualX = attacking ? -Math.round(Math.cos(aimAngle)) : 0;
+    let visualY = 0;
+    let visualRotation = 0;
+    let poseAngle = aimAngle;
+    let aimOffsetX = 0;
+    let aimOffsetY = 0;
+    let customAttacking = false;
+    const attack = this.attackAnimation;
+    if (attack) {
+      const progress = (time - attack.startedAt) / attack.durationMs;
+      if (progress >= 1) this.attackAnimation = undefined;
+      else if (progress >= 0) {
+        customAttacking = true;
+        poseAngle = attack.baseAimAngle;
+        if (attack.weapon === "knife" || attack.weapon === "bat") {
+          poseAngle += swingOffsetAt(attack.weapon, progress);
+          visualX = -Math.round(Math.cos(attack.baseAimAngle));
+          visualY = -Math.round(Math.sin(attack.baseAimAngle));
+          if (attack.weapon === "bat") visualRotation = Math.sin(progress * Math.PI) * 0.045;
+        } else {
+          const recoil = progress < 0.3 ? progress / 0.3 : 1 - (progress - 0.3) / 0.7;
+          aimOffsetX = -Math.cos(attack.baseAimAngle) * Math.round(recoil * 2);
+          aimOffsetY = -Math.sin(attack.baseAimAngle) * Math.round(recoil * 2);
+          visualX = -Math.cos(attack.baseAimAngle) * Math.round(recoil);
+          visualY = -Math.sin(attack.baseAimAngle) * Math.round(recoil);
+        }
+      }
+    }
+    const roundedVisualX = Math.round(visualX);
+    const roundedVisualY = Math.round(visualY);
+    if (roundedVisualX !== this.lastVisualX) {
+      this.visual.x = roundedVisualX;
+      this.lastVisualX = roundedVisualX;
+    }
+    if (roundedVisualY !== this.lastVisualY || bob !== this.lastBob) {
+      this.visual.y = bob + roundedVisualY;
+      this.lastVisualY = roundedVisualY;
       this.lastBob = bob;
     }
-    const visualX = attacking ? -Math.round(Math.cos(aimAngle)) : 0;
-    if (visualX !== this.lastVisualX) {
-      this.visual.x = visualX;
-      this.lastVisualX = visualX;
+    if (!this.dead && visualRotation !== this.lastVisualRotation) {
+      this.visual.rotation = visualRotation;
+      this.lastVisualRotation = visualRotation;
     }
-    this.setAim(aimAngle, attacking);
+    const poseStep = customAttacking ? Math.PI / 32 : Math.PI / 8;
+    const snappedPose = Math.round(poseAngle / poseStep) * poseStep;
+    if (snappedPose !== this.lastAim) {
+      this.aimLayer.rotation = snappedPose;
+      this.lastAim = snappedPose;
+    }
+    const roundedAimX = Math.round(aimOffsetX);
+    const roundedAimY = Math.round(aimOffsetY);
+    if (this.aimLayer.x !== roundedAimX || this.aimLayer.y !== roundedAimY) this.aimLayer.setPosition(roundedAimX, roundedAimY);
     const alpha = this.dead ? 0.5 : time < this.hitUntil && Math.floor(time / 55) % 2 === 0 ? 0.4 : 1;
     if (alpha !== this.lastAlpha) {
       this.visual.setAlpha(alpha);
@@ -138,6 +208,7 @@ export class TopDownActorView {
     if (dead === this.dead) return;
     this.dead = dead;
     this.visual.rotation = dead ? Math.PI / 2 : 0;
+    this.lastVisualRotation = this.visual.rotation;
     this.lastAlpha = dead ? 0.5 : 1;
     this.visual.setAlpha(this.lastAlpha);
   }
@@ -147,7 +218,13 @@ export class TopDownActorView {
   }
 }
 
-function createAimLayer(scene: Phaser.Scene, palette: ActorPalette, armed: boolean, attacking: boolean): Phaser.GameObjects.Container {
+interface AimLayerParts {
+  container: Phaser.GameObjects.Container;
+  weaponBody?: Phaser.GameObjects.Rectangle;
+  weaponTip?: Phaser.GameObjects.Rectangle;
+}
+
+function createAimLayer(scene: Phaser.Scene, palette: ActorPalette, armed: boolean): AimLayerParts {
   const container = scene.add.container(0, 0);
   container.add([
     scene.add.circle(5, -2, 2.6, palette.outline),
@@ -156,12 +233,10 @@ function createAimLayer(scene: Phaser.Scene, palette: ActorPalette, armed: boole
     scene.add.circle(5, 3, 1.8, palette.skin),
   ]);
   if (armed) {
-    const length = attacking ? 12 : 9;
-    const start = attacking ? 5 : 4;
-    container.add([
-      scene.add.rectangle(start, -1, length, 2, palette.accent).setOrigin(0, 0),
-      scene.add.rectangle(attacking ? 14 : 11, -1, 2, 2, palette.outline).setOrigin(0, 0),
-    ]);
+    const weaponBody = scene.add.rectangle(7, -2, 7, 4, palette.accent).setOrigin(0, 0);
+    const weaponTip = scene.add.rectangle(13, -1, 3, 2, palette.outline).setOrigin(0, 0);
+    container.add([weaponBody, weaponTip]);
+    return { container, weaponBody, weaponTip };
   }
-  return container;
+  return { container };
 }
