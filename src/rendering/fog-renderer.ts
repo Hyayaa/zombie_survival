@@ -2,34 +2,66 @@ import Phaser from "phaser";
 import { COLORS, DEPTH } from "../config/game-config";
 import { FogOfWarSystem, VisibilityState } from "../systems/fog-of-war-system";
 
-export class FogRenderer {
-  private readonly graphics: Phaser.GameObjects.Graphics;
+let fogTextureCounter = 0;
 
-  constructor(scene: Phaser.Scene, private readonly fog: FogOfWarSystem) {
-    this.graphics = scene.add.graphics().setDepth(DEPTH.fog);
+export class FogRenderer {
+  private readonly textureKey: string;
+  private readonly texture: Phaser.Textures.CanvasTexture;
+  private readonly image: Phaser.GameObjects.Image;
+  private readonly imageData: ImageData;
+  private initialized = false;
+
+  constructor(private readonly scene: Phaser.Scene, private readonly fog: FogOfWarSystem) {
+    this.textureKey = `fog-${scene.sys.settings.key}-${fogTextureCounter++}`;
+    const texture = scene.textures.createCanvas(this.textureKey, fog.widthCells, fog.heightCells);
+    if (!texture) throw new Error("Unable to create fog texture");
+    this.texture = texture;
+    this.texture.setFilter(Phaser.Textures.FilterMode.NEAREST);
+    this.imageData = texture.context.createImageData(fog.widthCells, fog.heightCells);
+    this.image = scene.add.image(0, 0, this.textureKey)
+      .setOrigin(0)
+      .setDisplaySize(fog.widthPixels, fog.heightPixels)
+      .setDepth(DEPTH.fog);
   }
 
-  render(camera: Phaser.Cameras.Scene2D.Camera): void {
-    this.graphics.clear();
-    const cell = this.fog.cellSize;
-    const margin = cell * 2;
-    const startX = Math.max(0, Math.floor((camera.worldView.x - margin) / cell));
-    const startY = Math.max(0, Math.floor((camera.worldView.y - margin) / cell));
-    const endX = Math.min(this.fog.widthCells - 1, Math.ceil((camera.worldView.right + margin) / cell));
-    const endY = Math.min(this.fog.heightCells - 1, Math.ceil((camera.worldView.bottom + margin) / cell));
-    for (let y = startY; y <= endY; y += 1) {
-      for (let x = startX; x <= endX; x += 1) {
-        const state = this.fog.getStateAtCell(x, y);
-        if (state === VisibilityState.Visible) continue;
-        if (state === VisibilityState.Unknown) this.graphics.fillStyle(COLORS.unknownFog, 0.985);
-        else this.graphics.fillStyle(COLORS.exploredFog, 0.82);
-        this.graphics.fillRect(x * cell, y * cell, cell, cell);
-      }
+  render(): number {
+    if (!this.initialized) {
+      const cellCount = this.fog.widthCells * this.fog.heightCells;
+      for (let index = 0; index < cellCount; index += 1) this.writeState(index);
+      this.initialized = true;
+    } else {
+      const changed = this.fog.getChangedIndices();
+      if (changed.length === 0) return 0;
+      for (const index of changed) this.writeState(index);
     }
+    this.texture.context.putImageData(this.imageData, 0, 0);
+    this.texture.refresh();
+    return this.fog.getChangedIndices().length;
   }
 
   destroy(): void {
-    this.graphics.destroy();
+    this.image.destroy();
+    this.scene.textures.remove(this.textureKey);
+  }
+
+  private writeState(index: number): void {
+    const x = index % this.fog.widthCells;
+    const y = Math.floor(index / this.fog.widthCells);
+    const state = this.fog.getStateAtCell(x, y);
+    if (state === VisibilityState.Visible) {
+      this.writePixel(index, 0, 0);
+    } else if (state === VisibilityState.Explored) {
+      this.writePixel(index, COLORS.exploredFog, 0.82);
+    } else {
+      this.writePixel(index, COLORS.unknownFog, 0.985);
+    }
+  }
+
+  private writePixel(index: number, color: number, alpha: number): void {
+    const offset = index * 4;
+    this.imageData.data[offset] = color >> 16 & 0xff;
+    this.imageData.data[offset + 1] = color >> 8 & 0xff;
+    this.imageData.data[offset + 2] = color & 0xff;
+    this.imageData.data[offset + 3] = Math.round(alpha * 255);
   }
 }
-

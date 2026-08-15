@@ -50,6 +50,7 @@ export class Zombie {
 
   updateView(time: number, visible: boolean): void {
     this.view.setVisible(visible);
+    if (!visible) return;
     this.view.setPosition(this.position.x, this.position.y);
     this.view.updateAnimation(time, this.isAlive() && this.mind.state !== "Idle", this.mind.state === "Attack", this.aimAngle);
     if (!this.isAlive()) this.view.setDead(true);

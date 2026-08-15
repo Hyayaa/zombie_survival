@@ -9,22 +9,37 @@ interface Node {
   parent?: Node;
 }
 
+const CELL_COUNT = MAP_TILES * MAP_TILES;
+const bestCosts = new Uint16Array(CELL_COUNT);
+const bestGenerations = new Uint32Array(CELL_COUNT);
+const closedGenerations = new Uint32Array(CELL_COUNT);
+let pathGeneration = 0;
+
 export function findTilePath(start: Point, goal: Point, isBlocked: (x: number, y: number) => boolean, maxVisited = 800): Point[] {
   const startX = Math.floor(start.x / TILE_SIZE);
   const startY = Math.floor(start.y / TILE_SIZE);
   const goalX = Math.max(0, Math.min(MAP_TILES - 1, Math.floor(goal.x / TILE_SIZE)));
   const goalY = Math.max(0, Math.min(MAP_TILES - 1, Math.floor(goal.y / TILE_SIZE)));
-  const open: Node[] = [{ x: startX, y: startY, g: 0, f: heuristic(startX, startY, goalX, goalY) }];
-  const best = new Map<string, number>([[`${startX},${startY}`, 0]]);
-  const closed = new Set<string>();
+  pathGeneration += 1;
+  if (pathGeneration === 0xffff_ffff) {
+    bestGenerations.fill(0);
+    closedGenerations.fill(0);
+    pathGeneration = 1;
+  }
+  const open = new NodeHeap();
+  open.push({ x: startX, y: startY, g: 0, f: heuristic(startX, startY, goalX, goalY) });
+  const startIndex = startY * MAP_TILES + startX;
+  bestGenerations[startIndex] = pathGeneration;
+  bestCosts[startIndex] = 0;
+  let closedCount = 0;
 
-  while (open.length > 0 && closed.size < maxVisited) {
-    open.sort((a, b) => a.f - b.f);
-    const current = open.shift();
+  while (open.size > 0 && closedCount < maxVisited) {
+    const current = open.pop();
     if (!current) break;
-    const currentKey = `${current.x},${current.y}`;
-    if (closed.has(currentKey)) continue;
-    closed.add(currentKey);
+    const currentIndex = current.y * MAP_TILES + current.x;
+    if (closedGenerations[currentIndex] === pathGeneration) continue;
+    closedGenerations[currentIndex] = pathGeneration;
+    closedCount += 1;
 
     if (current.x === goalX && current.y === goalY) return reconstruct(current).slice(1);
 
@@ -32,14 +47,54 @@ export function findTilePath(start: Point, goal: Point, isBlocked: (x: number, y
       const x = current.x + deltaX;
       const y = current.y + deltaY;
       if (x < 0 || y < 0 || x >= MAP_TILES || y >= MAP_TILES || isBlocked(x, y)) continue;
-      const key = `${x},${y}`;
+      const index = y * MAP_TILES + x;
       const g = current.g + 1;
-      if (g >= (best.get(key) ?? Number.POSITIVE_INFINITY)) continue;
-      best.set(key, g);
+      if (bestGenerations[index] === pathGeneration && g >= bestCosts[index]!) continue;
+      bestGenerations[index] = pathGeneration;
+      bestCosts[index] = g;
       open.push({ x, y, g, f: g + heuristic(x, y, goalX, goalY), parent: current });
     }
   }
   return [];
+}
+
+class NodeHeap {
+  private readonly nodes: Node[] = [];
+
+  get size(): number {
+    return this.nodes.length;
+  }
+
+  push(node: Node): void {
+    let index = this.nodes.length;
+    this.nodes.push(node);
+    while (index > 0) {
+      const parent = Math.floor((index - 1) / 2);
+      const parentNode = this.nodes[parent];
+      if (!parentNode || parentNode.f <= node.f) break;
+      this.nodes[index] = parentNode;
+      index = parent;
+    }
+    this.nodes[index] = node;
+  }
+
+  pop(): Node | undefined {
+    const root = this.nodes[0];
+    const last = this.nodes.pop();
+    if (!root || !last || this.nodes.length === 0) return root;
+    let index = 0;
+    while (true) {
+      const left = index * 2 + 1;
+      if (left >= this.nodes.length) break;
+      const right = left + 1;
+      const smaller = right < this.nodes.length && this.nodes[right]!.f < this.nodes[left]!.f ? right : left;
+      if (this.nodes[smaller]!.f >= last.f) break;
+      this.nodes[index] = this.nodes[smaller]!;
+      index = smaller;
+    }
+    this.nodes[index] = last;
+    return root;
+  }
 }
 
 function heuristic(x: number, y: number, goalX: number, goalY: number): number {
@@ -55,4 +110,3 @@ function reconstruct(node: Node): Point[] {
   }
   return path.reverse();
 }
-

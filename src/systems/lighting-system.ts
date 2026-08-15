@@ -26,9 +26,8 @@ export function buildVisionSources(player: PlayerLightState, clock: GameClock, f
   if (player.flashlightOn) {
     sources.push({ x: player.x, y: player.y, radius: 245, intensity: 1, sourceType: "flashlight", direction: player.aimAngle, coneAngle: Math.PI * 0.34 });
   }
-  fires.filter((fire) => fire.remaining > 0).forEach((fire) => {
-    sources.push({ x: fire.x, y: fire.y, radius: 76, intensity: 0.9, sourceType: "fire" });
-  });
+  for (const fire of fires) {
+    if (fire.remaining > 0) sources.push({ x: fire.x, y: fire.y, radius: 76, intensity: 0.9, sourceType: "fire" });
+  }
   return sources;
 }
-

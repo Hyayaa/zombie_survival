@@ -21,93 +21,205 @@ export interface VisionGrid {
   additionalCost(cellX: number, cellY: number): number;
 }
 
-interface QueueNode {
-  x: number;
-  y: number;
-  cost: number;
-}
-
-const NEIGHBORS = [
-  [1, 0, 1], [-1, 0, 1], [0, 1, 1], [0, -1, 1],
-  [1, 1, 1.42], [1, -1, 1.42], [-1, 1, 1.42], [-1, -1, 1.42],
+const OCTANTS = [
+  [1, 0, 0, 1],
+  [0, 1, 1, 0],
+  [0, -1, 1, 0],
+  [-1, 0, 0, 1],
+  [-1, 0, 0, -1],
+  [0, -1, -1, 0],
+  [0, 1, -1, 0],
+  [1, 0, 0, -1],
 ] as const;
+
+const SOURCE_SALTS = {
+  player: 0x13579b,
+  torch: 0x2468ac,
+  flashlight: 0x3579bd,
+  fire: 0x468ace,
+} as const;
 
 export class FogOfWarSystem {
   readonly widthCells: number;
   readonly heightCells: number;
-  private readonly states: Uint8Array;
+  private readonly explored: Uint8Array;
+  private readonly visibleGeneration: Uint32Array;
+  private currentVisible: number[] = [];
+  private previousVisible: number[] = [];
+  private readonly changedIndices: number[] = [];
+  private generation = 1;
 
   constructor(readonly widthPixels: number, readonly heightPixels: number, readonly cellSize: number, private readonly seed: number) {
     this.widthCells = Math.ceil(widthPixels / cellSize);
     this.heightCells = Math.ceil(heightPixels / cellSize);
-    this.states = new Uint8Array(this.widthCells * this.heightCells);
+    const cells = this.widthCells * this.heightCells;
+    this.explored = new Uint8Array(cells);
+    this.visibleGeneration = new Uint32Array(cells);
   }
 
-  recompute(sources: readonly VisionSource[], grid: VisionGrid): void {
-    for (let index = 0; index < this.states.length; index += 1) {
-      if (this.states[index] === VisibilityState.Visible) this.states[index] = VisibilityState.Explored;
+  recompute(sources: readonly VisionSource[], grid: VisionGrid): number {
+    let previousGeneration = this.generation;
+    if (this.generation === 0xffff_ffff) {
+      this.visibleGeneration.fill(0);
+      this.generation = 1;
+      previousGeneration = 0xffff_ffff;
+    } else {
+      this.generation += 1;
     }
-    sources.forEach((source, sourceIndex) => this.propagate(source, grid, sourceIndex));
+
+    const reuse = this.previousVisible;
+    this.previousVisible = this.currentVisible;
+    this.currentVisible = reuse;
+    this.currentVisible.length = 0;
+    this.changedIndices.length = 0;
+
+    for (const source of sources) this.propagate(source, grid, previousGeneration);
+
+    for (const index of this.previousVisible) {
+      if (this.visibleGeneration[index] !== this.generation) this.changedIndices.push(index);
+    }
+    return this.changedIndices.length;
   }
 
   getStateAtCell(x: number, y: number): VisibilityState {
     if (!this.inBounds(x, y)) return VisibilityState.Unknown;
-    return this.states[this.index(x, y)] as VisibilityState;
+    const index = this.index(x, y);
+    if (this.visibleGeneration[index] === this.generation) return VisibilityState.Visible;
+    return this.explored[index] ? VisibilityState.Explored : VisibilityState.Unknown;
   }
 
   getStateAtWorld(x: number, y: number): VisibilityState {
     return this.getStateAtCell(Math.floor(x / this.cellSize), Math.floor(y / this.cellSize));
   }
 
+  getChangedIndices(): readonly number[] {
+    return this.changedIndices;
+  }
+
   exportExplored(): number[] {
-    const explored: number[] = [];
-    for (let index = 0; index < this.states.length; index += 1) {
-      if (this.states[index] !== VisibilityState.Unknown) explored.push(index);
+    const indices: number[] = [];
+    for (let index = 0; index < this.explored.length; index += 1) {
+      if (this.explored[index]) indices.push(index);
     }
-    return explored;
+    return indices;
   }
 
   importExplored(indices: readonly number[]): void {
-    indices.forEach((index) => {
-      if (Number.isInteger(index) && index >= 0 && index < this.states.length) this.states[index] = VisibilityState.Explored;
-    });
+    for (const index of indices) {
+      if (Number.isInteger(index) && index >= 0 && index < this.explored.length) this.explored[index] = 1;
+    }
   }
 
-  private propagate(source: VisionSource, grid: VisionGrid, sourceIndex: number): void {
+  private propagate(source: VisionSource, grid: VisionGrid, previousGeneration: number): void {
     const sourceX = Math.floor(source.x / this.cellSize);
     const sourceY = Math.floor(source.y / this.cellSize);
-    const maxCost = Math.max(1, source.radius / this.cellSize) * Math.max(0.25, source.intensity);
-    const best = new Float32Array(this.states.length);
-    best.fill(Number.POSITIVE_INFINITY);
-    const queue = new MinHeap();
-    queue.push({ x: sourceX, y: sourceY, cost: 0 });
-    if (this.inBounds(sourceX, sourceY)) best[this.index(sourceX, sourceY)] = 0;
+    if (!this.inBounds(sourceX, sourceY)) return;
+    const radius = Math.max(1, source.radius / this.cellSize * Math.max(0.25, source.intensity));
+    const radiusCells = Math.ceil(radius);
+    const radiusSquared = radius * radius;
+    const sourceSalt = this.seed + SOURCE_SALTS[source.sourceType];
 
-    while (queue.size > 0) {
-      const current = queue.pop();
-      if (!current || current.cost > maxCost || !this.inBounds(current.x, current.y)) continue;
-      const currentIndex = this.index(current.x, current.y);
-      if (current.cost > best[currentIndex]) continue;
-      if (!this.inCone(source, current.x, current.y)) continue;
-      if (!this.hasGridLineOfSight(sourceX, sourceY, current.x, current.y, grid)) continue;
-
-      const ratio = current.cost / maxCost;
-      const fringeDrop = ratio > 0.7 && deterministicHash(current.x, current.y, this.seed + sourceIndex * 977) < (ratio - 0.7) * 1.45;
-      const blocked = grid.blocksVision(current.x, current.y);
-      if (!fringeDrop || current.cost < 2) this.states[currentIndex] = VisibilityState.Visible;
-      if (blocked || fringeDrop) continue;
-
-      for (const [deltaX, deltaY, moveCost] of NEIGHBORS) {
-        const x = current.x + deltaX;
-        const y = current.y + deltaY;
-        if (!this.inBounds(x, y)) continue;
-        const cost = current.cost + moveCost + grid.additionalCost(x, y);
-        const index = this.index(x, y);
-        if (cost >= best[index] || cost > maxCost) continue;
-        best[index] = cost;
-        queue.push({ x, y, cost });
-      }
+    this.markVisible(sourceX, sourceY, previousGeneration);
+    for (const [xx, xy, yx, yy] of OCTANTS) {
+      this.castOctant(source, grid, previousGeneration, sourceX, sourceY, 1, 1, 0, radiusCells, radiusSquared, sourceSalt, xx, xy, yx, yy);
     }
+  }
+
+  private castOctant(
+    source: VisionSource,
+    grid: VisionGrid,
+    previousGeneration: number,
+    originX: number,
+    originY: number,
+    row: number,
+    startSlope: number,
+    endSlope: number,
+    radiusCells: number,
+    radiusSquared: number,
+    sourceSalt: number,
+    xx: number,
+    xy: number,
+    yx: number,
+    yy: number,
+  ): void {
+    if (startSlope < endSlope) return;
+    let nextStartSlope = startSlope;
+
+    for (let distance = row; distance <= radiusCells; distance += 1) {
+      let blocked = false;
+      const deltaY = -distance;
+      for (let deltaX = -distance; deltaX <= 0; deltaX += 1) {
+        const cellX = originX + deltaX * xx + deltaY * xy;
+        const cellY = originY + deltaX * yx + deltaY * yy;
+        const leftSlope = (deltaX - 0.5) / (deltaY + 0.5);
+        const rightSlope = (deltaX + 0.5) / (deltaY - 0.5);
+
+        if (startSlope < rightSlope) continue;
+        if (endSlope > leftSlope) break;
+        if (!this.inBounds(cellX, cellY)) continue;
+
+        const sealedCorner = this.isSealedCorner(originX, originY, cellX, cellY, grid);
+        const distanceSquared = deltaX * deltaX + deltaY * deltaY;
+        if (!sealedCorner && distanceSquared <= radiusSquared) {
+          this.markCandidate(source, cellX, cellY, Math.sqrt(distanceSquared / radiusSquared), sourceSalt, previousGeneration);
+        }
+
+        const opaque = sealedCorner || grid.blocksVision(cellX, cellY);
+        if (blocked) {
+          if (opaque) {
+            nextStartSlope = rightSlope;
+            continue;
+          }
+          blocked = false;
+          startSlope = nextStartSlope;
+        } else if (opaque && distance < radiusCells) {
+          blocked = true;
+          this.castOctant(
+            source,
+            grid,
+            previousGeneration,
+            originX,
+            originY,
+            distance + 1,
+            startSlope,
+            leftSlope,
+            radiusCells,
+            radiusSquared,
+            sourceSalt,
+            xx,
+            xy,
+            yx,
+            yy,
+          );
+          nextStartSlope = rightSlope;
+        }
+      }
+      if (blocked) break;
+    }
+  }
+
+  private markCandidate(source: VisionSource, cellX: number, cellY: number, radiusRatio: number, sourceSalt: number, previousGeneration: number): void {
+    if (!this.inCone(source, cellX, cellY)) return;
+    const fringeDrop = radiusRatio > 0.72
+      && deterministicHash(cellX, cellY, sourceSalt) < (radiusRatio - 0.72) * 1.55;
+    if (!fringeDrop || radiusRatio < 0.12) this.markVisible(cellX, cellY, previousGeneration);
+  }
+
+  private isSealedCorner(originX: number, originY: number, cellX: number, cellY: number, grid: VisionGrid): boolean {
+    const stepX = Math.sign(originX - cellX);
+    const stepY = Math.sign(originY - cellY);
+    if (stepX === 0 || stepY === 0) return false;
+    return grid.blocksVision(cellX + stepX, cellY) && grid.blocksVision(cellX, cellY + stepY);
+  }
+
+  private markVisible(cellX: number, cellY: number, previousGeneration: number): void {
+    const index = this.index(cellX, cellY);
+    if (this.visibleGeneration[index] === this.generation) return;
+    const wasVisible = this.visibleGeneration[index] === previousGeneration;
+    this.visibleGeneration[index] = this.generation;
+    this.explored[index] = 1;
+    this.currentVisible.push(index);
+    if (!wasVisible) this.changedIndices.push(index);
   }
 
   private inCone(source: VisionSource, cellX: number, cellY: number): boolean {
@@ -119,67 +231,12 @@ export class FogOfWarSystem {
     return Math.abs(normalizeAngle(angle - source.direction)) <= source.coneAngle / 2;
   }
 
-  private hasGridLineOfSight(fromX: number, fromY: number, toX: number, toY: number, grid: VisionGrid): boolean {
-    let x = fromX;
-    let y = fromY;
-    const deltaX = Math.abs(toX - fromX);
-    const deltaY = Math.abs(toY - fromY);
-    const stepX = fromX < toX ? 1 : -1;
-    const stepY = fromY < toY ? 1 : -1;
-    let error = deltaX - deltaY;
-
-    while (x !== toX || y !== toY) {
-      const doubleError = error * 2;
-      if (doubleError > -deltaY) { error -= deltaY; x += stepX; }
-      if (doubleError < deltaX) { error += deltaX; y += stepY; }
-      if ((x !== toX || y !== toY) && grid.blocksVision(x, y)) return false;
-    }
-    return true;
-  }
-
   private inBounds(x: number, y: number): boolean {
     return x >= 0 && y >= 0 && x < this.widthCells && y < this.heightCells;
   }
 
   private index(x: number, y: number): number {
     return y * this.widthCells + x;
-  }
-}
-
-class MinHeap {
-  private readonly nodes: QueueNode[] = [];
-  get size(): number { return this.nodes.length; }
-
-  push(node: QueueNode): void {
-    this.nodes.push(node);
-    let index = this.nodes.length - 1;
-    while (index > 0) {
-      const parent = Math.floor((index - 1) / 2);
-      const parentNode = this.nodes[parent];
-      if (!parentNode || parentNode.cost <= node.cost) break;
-      this.nodes[index] = parentNode;
-      index = parent;
-    }
-    this.nodes[index] = node;
-  }
-
-  pop(): QueueNode | undefined {
-    const root = this.nodes[0];
-    const last = this.nodes.pop();
-    if (!root || !last || this.nodes.length === 0) return root;
-    this.nodes[0] = last;
-    let index = 0;
-    while (true) {
-      const left = index * 2 + 1;
-      const right = left + 1;
-      let smallest = index;
-      if (this.nodes[left] && this.nodes[left]!.cost < this.nodes[smallest]!.cost) smallest = left;
-      if (this.nodes[right] && this.nodes[right]!.cost < this.nodes[smallest]!.cost) smallest = right;
-      if (smallest === index) break;
-      [this.nodes[index], this.nodes[smallest]] = [this.nodes[smallest]!, this.nodes[index]!];
-      index = smallest;
-    }
-    return root;
   }
 }
 

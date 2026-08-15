@@ -1,14 +1,21 @@
-import { MAP_TILES, TILE_SIZE, WORLD_SIZE } from "../config/game-config";
+import { FOG_CELL_SIZE, MAP_TILES, TILE_SIZE, WORLD_SIZE } from "../config/game-config";
 import type { DoorDefinition, WorldObstacle } from "../data/map-definitions";
+import type { VisionGrid } from "./fog-of-war-system";
 import type { Point } from "./zombie-ai-system";
 
-export class CollisionSystem {
+const VISION_CELLS_PER_TILE = TILE_SIZE / FOG_CELL_SIZE;
+const VISION_WIDTH_CELLS = Math.ceil(WORLD_SIZE / FOG_CELL_SIZE);
+
+export class CollisionSystem implements VisionGrid {
   private readonly doors: DoorDefinition[];
   private readonly dynamicObstacles: WorldObstacle[] = [];
   private readonly movementGrid = new Uint8Array(MAP_TILES * MAP_TILES);
   private readonly visionGrid = new Uint8Array(MAP_TILES * MAP_TILES);
   private readonly projectileGrid = new Uint8Array(MAP_TILES * MAP_TILES);
   private readonly lowCoverGrid = new Uint8Array(MAP_TILES * MAP_TILES);
+  private readonly visionBlockCells = new Uint8Array(VISION_WIDTH_CELLS * VISION_WIDTH_CELLS);
+  private readonly lowCoverCells = new Uint8Array(VISION_WIDTH_CELLS * VISION_WIDTH_CELLS);
+  private visionRevisionValue = 0;
 
   constructor(obstacles: WorldObstacle[], doors: DoorDefinition[]) {
     this.doors = doors;
@@ -23,6 +30,10 @@ export class CollisionSystem {
 
   getDynamicObstacles(): readonly WorldObstacle[] {
     return this.dynamicObstacles;
+  }
+
+  get visionRevision(): number {
+    return this.visionRevisionValue;
   }
 
   setDoorOpen(id: string, open: boolean): void {
@@ -64,6 +75,16 @@ export class CollisionSystem {
     return this.gridValue(this.lowCoverGrid, x, y) ? 0.65 : 0;
   }
 
+  blocksVision(cellX: number, cellY: number): boolean {
+    if (!this.isVisionCellInBounds(cellX, cellY)) return true;
+    return this.visionBlockCells[this.visionCellIndex(cellX, cellY)] === 1;
+  }
+
+  additionalCost(cellX: number, cellY: number): number {
+    if (!this.isVisionCellInBounds(cellX, cellY)) return 0;
+    return this.lowCoverCells[this.visionCellIndex(cellX, cellY)] ? 0.65 : 0;
+  }
+
   blocksProjectilesWorld(x: number, y: number): boolean {
     return this.gridValue(this.projectileGrid, x, y);
   }
@@ -95,6 +116,7 @@ export class CollisionSystem {
   }
 
   private markObstacle(obstacle: WorldObstacle, value: boolean): void {
+    let visionChanged = false;
     for (let y = obstacle.tileY; y < obstacle.tileY + obstacle.heightTiles; y += 1) {
       for (let x = obstacle.tileX; x < obstacle.tileX + obstacle.widthTiles; x += 1) {
         if (x < 0 || y < 0 || x >= MAP_TILES || y >= MAP_TILES) continue;
@@ -103,8 +125,10 @@ export class CollisionSystem {
         if (obstacle.blocksVision) this.visionGrid[index] = value ? 1 : 0;
         if (obstacle.blocksProjectiles) this.projectileGrid[index] = value ? 1 : 0;
         if (obstacle.coverHeight === "low") this.lowCoverGrid[index] = value ? 1 : 0;
+        visionChanged = this.syncVisionCellsForTile(x, y) || visionChanged;
       }
     }
+    if (visionChanged) this.visionRevisionValue += 1;
   }
 
   private markDoor(door: DoorDefinition): void {
@@ -113,6 +137,33 @@ export class CollisionSystem {
     this.movementGrid[index] = blocked;
     this.visionGrid[index] = blocked;
     this.projectileGrid[index] = blocked;
+    if (this.syncVisionCellsForTile(door.tileX, door.tileY)) this.visionRevisionValue += 1;
+  }
+
+  private syncVisionCellsForTile(tileX: number, tileY: number): boolean {
+    const tileIndex = this.index(tileX, tileY);
+    const blocks = this.visionGrid[tileIndex] ?? 0;
+    const lowCover = this.lowCoverGrid[tileIndex] ?? 0;
+    const startX = tileX * VISION_CELLS_PER_TILE;
+    const startY = tileY * VISION_CELLS_PER_TILE;
+    let changed = false;
+    for (let offsetY = 0; offsetY < VISION_CELLS_PER_TILE; offsetY += 1) {
+      for (let offsetX = 0; offsetX < VISION_CELLS_PER_TILE; offsetX += 1) {
+        const index = this.visionCellIndex(startX + offsetX, startY + offsetY);
+        if (this.visionBlockCells[index] !== blocks || this.lowCoverCells[index] !== lowCover) changed = true;
+        this.visionBlockCells[index] = blocks;
+        this.lowCoverCells[index] = lowCover;
+      }
+    }
+    return changed;
+  }
+
+  private isVisionCellInBounds(cellX: number, cellY: number): boolean {
+    return cellX >= 0 && cellY >= 0 && cellX < VISION_WIDTH_CELLS && cellY < VISION_WIDTH_CELLS;
+  }
+
+  private visionCellIndex(cellX: number, cellY: number): number {
+    return cellY * VISION_WIDTH_CELLS + cellX;
   }
 
   private gridValue(grid: Uint8Array, worldX: number, worldY: number): boolean {

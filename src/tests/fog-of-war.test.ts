@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { CollisionSystem } from "../systems/collision-system";
 import { FogOfWarSystem, VisibilityState, type VisionGrid, type VisionSource } from "../systems/fog-of-war-system";
 
 function source(overrides: Partial<VisionSource> = {}): VisionSource {
@@ -51,5 +52,48 @@ describe("FogOfWarSystem", () => {
     fog.recompute([source({ x: 90, y: 90, radius: 72, sourceType: "flashlight", direction: 0, coneAngle: Math.PI / 3 })], grid());
     expect(fog.getStateAtWorld(126, 90)).toBe(VisibilityState.Visible);
     expect(fog.getStateAtWorld(90, 144)).not.toBe(VisibilityState.Visible);
+  });
+
+  it("does not leak visibility through a sealed diagonal corner", () => {
+    const fog = new FogOfWarSystem(150, 150, 6, 314);
+    const cornerGrid = grid((x, y) => x === 11 && y === 10 || x === 10 && y === 11);
+    fog.recompute([source({ x: 10 * 6 + 3, y: 10 * 6 + 3, radius: 54 })], cornerGrid);
+    expect(fog.getStateAtCell(12, 12)).not.toBe(VisibilityState.Visible);
+  });
+
+  it("reports only cells whose visible state changed", () => {
+    const fog = new FogOfWarSystem(180, 180, 6, 101);
+    const visionSource = source({ x: 90, y: 90, radius: 48 });
+    expect(fog.recompute([visionSource], grid())).toBeGreaterThan(0);
+    expect(fog.recompute([visionSource], grid())).toBe(0);
+    expect(fog.getChangedIndices()).toHaveLength(0);
+  });
+
+  it("updates only the cached vision cells covered by a door tile", () => {
+    const collision = new CollisionSystem([], [{ id: "door", tileX: 5, tileY: 7, open: false }]);
+    const revision = collision.visionRevision;
+    expect(collision.blocksVision(20, 28)).toBe(true);
+    expect(collision.blocksVision(23, 31)).toBe(true);
+    expect(collision.blocksVision(24, 28)).toBe(false);
+    collision.setDoorOpen("door", true);
+    expect(collision.blocksVision(20, 28)).toBe(false);
+    expect(collision.visionRevision).toBeGreaterThan(revision);
+  });
+
+  it("keeps low furniture transparent while caching its vision cost", () => {
+    const collision = new CollisionSystem([{
+      id: "table",
+      tileX: 3,
+      tileY: 4,
+      widthTiles: 1,
+      heightTiles: 1,
+      blocksMovement: true,
+      blocksVision: false,
+      blocksProjectiles: false,
+      coverHeight: "low",
+      kind: "furniture",
+    }], []);
+    expect(collision.blocksVision(12, 16)).toBe(false);
+    expect(collision.additionalCost(15, 19)).toBe(0.65);
   });
 });

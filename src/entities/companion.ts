@@ -40,6 +40,7 @@ export class Companion {
 
   updateView(time: number, visible: boolean, moving: boolean): void {
     this.view.setVisible(visible);
+    if (!visible) return;
     this.view.setPosition(this.position.x, this.position.y);
     this.view.updateAnimation(time, moving, time < this.nextAttackAt - 450, this.aimAngle);
     if (!this.alive) this.view.setDead(true);

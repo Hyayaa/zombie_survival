@@ -20,15 +20,27 @@ export const ACTOR_PALETTES = {
 export class TopDownActorView {
   readonly container: Phaser.GameObjects.Container;
   private readonly visual: Phaser.GameObjects.Container;
-  private readonly aimLayer: Phaser.GameObjects.Graphics;
-  private readonly healthBar: Phaser.GameObjects.Graphics;
-  private readonly palette: ActorPalette;
-  private readonly armed: boolean;
+  private readonly aimLayer: Phaser.GameObjects.Container;
+  private readonly idleAim: Phaser.GameObjects.Graphics;
+  private readonly attackAim: Phaser.GameObjects.Graphics;
+  private readonly healthBarBackground: Phaser.GameObjects.Rectangle;
+  private readonly healthBarFill: Phaser.GameObjects.Rectangle;
   private hitUntil = 0;
+  private lastX = Number.NaN;
+  private lastY = Number.NaN;
+  private lastDepth = Number.NaN;
+  private lastAim = Number.NaN;
+  private lastAttacking = false;
+  private lastBob = Number.NaN;
+  private lastVisualX = Number.NaN;
+  private lastAlpha = Number.NaN;
+  private lastHealth = Number.NaN;
+  private lastMaximum = Number.NaN;
+  private lastAlwaysVisible = false;
+  private visible = true;
+  private dead = false;
 
   constructor(scene: Phaser.Scene, x: number, y: number, palette: ActorPalette, armed = true) {
-    this.palette = palette;
-    this.armed = armed;
     this.container = scene.add.container(Math.round(x), Math.round(y));
     const shadow = scene.add.ellipse(0, 6, 11, 4, 0x050708, 0.62);
     this.visual = scene.add.container(0, 0);
@@ -38,43 +50,64 @@ export class TopDownActorView {
     const headOutline = scene.add.circle(0, -5, 4.6, palette.outline);
     const head = scene.add.circle(0, -5, 3.7, palette.skin);
     const headLight = scene.add.rectangle(-1, -7, 3, 2, palette.skinLight);
-    this.aimLayer = scene.add.graphics();
-    this.healthBar = scene.add.graphics();
-    this.visual.add([torsoOutline, torso, torsoLight, headOutline, head, headLight, this.aimLayer, this.healthBar]);
+    this.aimLayer = scene.add.container(0, 0);
+    this.idleAim = createAimLayer(scene, palette, armed, false);
+    this.attackAim = createAimLayer(scene, palette, armed, true).setVisible(false);
+    this.aimLayer.add([this.idleAim, this.attackAim]);
+    this.healthBarBackground = scene.add.rectangle(-7, -13, 14, 2, 0x171a18, 0.9).setOrigin(0, 0);
+    this.healthBarFill = scene.add.rectangle(-7, -13, 14, 2, 0x7aaa65, 1).setOrigin(0, 0);
+    this.visual.add([torsoOutline, torso, torsoLight, headOutline, head, headLight, this.aimLayer, this.healthBarBackground, this.healthBarFill]);
     this.container.add([shadow, this.visual]);
     this.setAim(0, false);
+    this.setPosition(x, y);
   }
 
   setPosition(x: number, y: number): void {
-    this.container.setPosition(Math.round(x), Math.round(y));
-    this.container.setDepth(DEPTH.actor + Math.round(y));
+    const roundedX = Math.round(x);
+    const roundedY = Math.round(y);
+    if (roundedX !== this.lastX || roundedY !== this.lastY) {
+      this.container.setPosition(roundedX, roundedY);
+      this.lastX = roundedX;
+      this.lastY = roundedY;
+    }
+    const depth = DEPTH.actor + roundedY;
+    if (depth !== this.lastDepth) {
+      this.container.setDepth(depth);
+      this.lastDepth = depth;
+    }
   }
 
   setAim(angle: number, attacking: boolean): void {
     const snapped = Math.round(angle / (Math.PI / 8)) * (Math.PI / 8);
-    this.aimLayer.clear();
-    this.aimLayer.fillStyle(this.palette.outline, 1);
-    this.aimLayer.fillCircle(5, -2, 2.6);
-    this.aimLayer.fillCircle(5, 3, 2.6);
-    this.aimLayer.fillStyle(this.palette.skin, 1);
-    this.aimLayer.fillCircle(5, -2, 1.8);
-    this.aimLayer.fillCircle(5, 3, 1.8);
-    if (this.armed) {
-      this.aimLayer.fillStyle(this.palette.accent, 1);
-      this.aimLayer.fillRect(attacking ? 5 : 4, -1, attacking ? 12 : 9, 2);
-      this.aimLayer.fillStyle(this.palette.outline, 1);
-      this.aimLayer.fillRect(attacking ? 14 : 11, -1, 2, 2);
+    if (snapped !== this.lastAim) {
+      this.aimLayer.rotation = snapped;
+      this.lastAim = snapped;
     }
-    this.aimLayer.rotation = snapped;
+    if (attacking !== this.lastAttacking) {
+      this.idleAim.setVisible(!attacking);
+      this.attackAim.setVisible(attacking);
+      this.lastAttacking = attacking;
+    }
   }
 
   updateAnimation(time: number, moving: boolean, attacking: boolean, aimAngle: number): void {
+    if (!this.visible) return;
     const bob = moving ? Math.round(Math.sin(time / 95)) : 0;
-    this.visual.y = bob;
-    this.visual.x = attacking ? -Math.round(Math.cos(aimAngle)) : 0;
+    if (bob !== this.lastBob) {
+      this.visual.y = bob;
+      this.lastBob = bob;
+    }
+    const visualX = attacking ? -Math.round(Math.cos(aimAngle)) : 0;
+    if (visualX !== this.lastVisualX) {
+      this.visual.x = visualX;
+      this.lastVisualX = visualX;
+    }
     this.setAim(aimAngle, attacking);
-    if (time < this.hitUntil) this.visual.setAlpha(Math.floor(time / 55) % 2 === 0 ? 0.4 : 1);
-    else this.visual.setAlpha(1);
+    const alpha = this.dead ? 0.5 : time < this.hitUntil && Math.floor(time / 55) % 2 === 0 ? 0.4 : 1;
+    if (alpha !== this.lastAlpha) {
+      this.visual.setAlpha(alpha);
+      this.lastAlpha = alpha;
+    }
   }
 
   flashHit(now: number): void {
@@ -82,20 +115,31 @@ export class TopDownActorView {
   }
 
   setHealth(current: number, maximum: number, alwaysVisible = false): void {
-    this.healthBar.clear();
-    if (current >= maximum && !alwaysVisible) return;
-    this.healthBar.fillStyle(0x171a18, 0.9).fillRect(-7, -13, 14, 2);
+    if (current === this.lastHealth && maximum === this.lastMaximum && alwaysVisible === this.lastAlwaysVisible) return;
+    this.lastHealth = current;
+    this.lastMaximum = maximum;
+    this.lastAlwaysVisible = alwaysVisible;
+    const shown = current < maximum || alwaysVisible;
+    this.healthBarBackground.setVisible(shown);
+    this.healthBarFill.setVisible(shown);
+    if (!shown) return;
     const ratio = Math.max(0, current / maximum);
-    this.healthBar.fillStyle(ratio > 0.45 ? 0x7aaa65 : 0xb64f45, 1).fillRect(-7, -13, Math.round(14 * ratio), 2);
+    this.healthBarFill.setScale(ratio, 1);
+    this.healthBarFill.setFillStyle(ratio > 0.45 ? 0x7aaa65 : 0xb64f45, 1);
   }
 
   setVisible(visible: boolean): void {
+    if (visible === this.visible) return;
+    this.visible = visible;
     this.container.setVisible(visible);
   }
 
   setDead(dead: boolean): void {
+    if (dead === this.dead) return;
+    this.dead = dead;
     this.visual.rotation = dead ? Math.PI / 2 : 0;
-    this.visual.setAlpha(dead ? 0.5 : 1);
+    this.lastAlpha = dead ? 0.5 : 1;
+    this.visual.setAlpha(this.lastAlpha);
   }
 
   destroy(): void {
@@ -103,3 +147,19 @@ export class TopDownActorView {
   }
 }
 
+function createAimLayer(scene: Phaser.Scene, palette: ActorPalette, armed: boolean, attacking: boolean): Phaser.GameObjects.Graphics {
+  const graphics = scene.add.graphics();
+  graphics.fillStyle(palette.outline, 1);
+  graphics.fillCircle(5, -2, 2.6);
+  graphics.fillCircle(5, 3, 2.6);
+  graphics.fillStyle(palette.skin, 1);
+  graphics.fillCircle(5, -2, 1.8);
+  graphics.fillCircle(5, 3, 1.8);
+  if (armed) {
+    graphics.fillStyle(palette.accent, 1);
+    graphics.fillRect(attacking ? 5 : 4, -1, attacking ? 12 : 9, 2);
+    graphics.fillStyle(palette.outline, 1);
+    graphics.fillRect(attacking ? 14 : 11, -1, 2, 2);
+  }
+  return graphics;
+}
