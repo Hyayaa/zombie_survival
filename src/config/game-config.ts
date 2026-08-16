@@ -39,6 +39,7 @@ export const VISION = {
   torchRadius: 170,
   fireRadius: 76,
   fireIntensity: 0.9,
+  companionOmniRadius: 96,
 } as const;
 
 export const COMPANION_MOVEMENT = {
@@ -114,7 +115,7 @@ export const BALANCE = {
   flashlightBatterySeconds: 180,
   torchSeconds: 90,
   defenseSeconds: 45,
-  maxActiveZombies: 40,
+  maxActiveZombies: 64,
   inventorySlots: 20,
   daySeconds: 480,
   duskSeconds: 120,

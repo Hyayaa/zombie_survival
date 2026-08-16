@@ -112,4 +112,22 @@ describe("WorldObjectRegistry and InteractionSystem", () => {
     }));
     expect(new InteractionSystem(registry).refreshNow(context())).toBeUndefined();
   });
+
+  it("uses a player-side visibility probe instead of the explored closed-door center", () => {
+    const registry = new WorldObjectRegistry();
+    const target = object("closed-door", "door", 20, {
+      ...interaction(4),
+      getVisibilityProbe: (origin) => ({ x: origin.x < 20 ? 16 : 24, y: 0 }),
+    });
+    registry.register(target);
+    const probeContext = context();
+    probeContext.playerPosition = { x: 0, y: 0 };
+    probeContext.fog = { getStateAtWorld: (x) => x === 16 ? VisibilityState.Visible : VisibilityState.Explored };
+    expect(new InteractionSystem(registry).refreshNow(probeContext)).toBe(target);
+    probeContext.playerPosition = { x: 40, y: 0 };
+    probeContext.fog = { getStateAtWorld: (x) => x === 24 ? VisibilityState.Visible : VisibilityState.Explored };
+    expect(new InteractionSystem(registry).refreshNow(probeContext)).toBe(target);
+    probeContext.fog = { getStateAtWorld: () => VisibilityState.Explored };
+    expect(new InteractionSystem(registry).refreshNow(probeContext)).toBeUndefined();
+  });
 });

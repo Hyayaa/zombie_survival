@@ -25,6 +25,7 @@ export interface InteractionComponent {
   readonly requiresLineOfSight: boolean;
   readonly selectionPriority: number;
   distanceSquaredTo?(origin: Point): number;
+  getVisibilityProbe?(origin: Point): Point;
   isEnabled(context: InteractionContext): boolean;
   getPrompt(): string;
   execute(): void;

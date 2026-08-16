@@ -38,12 +38,12 @@ export function updateZombieMind(mind: ZombieMind, update: PerceptionUpdate): Zo
       lastSeenTargetPosition: { ...update.targetPosition },
       currentTargetId: update.targetId,
       alertLevel: 1,
-      searchTicks: 4,
+      searchTicks: 3,
     };
   }
 
   if (mind.state === "Chase" || mind.state === "Attack") {
-    return { ...mind, state: "SearchLastKnownPosition", currentTargetId: undefined, searchTicks: Math.max(2, mind.searchTicks) };
+    return { ...mind, state: "SearchLastKnownPosition", currentTargetId: undefined, searchTicks: Math.max(2, Math.min(3, mind.searchTicks)) };
   }
 
   if (update.heardNoise) {

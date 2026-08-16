@@ -149,6 +149,7 @@ export function cameraViewportToFullMap(worldView: { x: number; y: number; width
 export const cameraViewportToMinimap = cameraViewportToFullMap;
 
 export function shouldShowCompanion(rescued: boolean, alive: boolean): boolean { return rescued && alive; }
+export function shouldShowLocalCompanion(alive: boolean): boolean { return alive; }
 export function shouldShowFullCompanion(developerMode: boolean, alive: boolean): boolean { return developerMode && alive; }
 export function shouldIterateZombieMarkers(mode: MapDisplayMode): boolean { return mode === "local"; }
 export function shouldShowLocalZombie(zombie: MinimapZombieMarkerSource, window: LocalMapWindow, fog?: Pick<FogOfWarSystem, "getStateAtWorld">): boolean {
@@ -352,10 +353,11 @@ export class MinimapPanel {
     drawLocalMarker(context, state.player, this.localWindow, pixelsPerTile, MINIMAP_COLORS.player, 5, false);
     let edgeMarkerIndex = 0;
     for (const companion of state.companions) {
-      if (!shouldShowCompanion(companion.rescued, companion.alive)) continue;
+      if (!shouldShowLocalCompanion(companion.alive)) continue;
       const inside = isPointInLocalWindow(companion.position, this.localWindow);
       const offset = inside ? 0 : edgeMarkerIndex++ % 3 - 1;
-      drawLocalMarker(context, companion.position, this.localWindow, pixelsPerTile, MINIMAP_COLORS.companion, inside ? 4 : 3, true, offset);
+      const color = companion.rescued ? MINIMAP_COLORS.companion : MINIMAP_COLORS.survivor;
+      drawLocalMarker(context, companion.position, this.localWindow, pixelsPerTile, color, inside ? 4 : 3, true, offset);
     }
     let zombieCount = 0;
     for (const zombie of state.zombies) {

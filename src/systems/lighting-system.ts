@@ -14,6 +14,13 @@ export interface PlayerLightState extends Point {
   torchRemaining: number;
 }
 
+export interface CompanionLightState {
+  id: string;
+  position: Point;
+  rescued: boolean;
+  alive: boolean;
+}
+
 export interface VisionProfile {
   darknessFactor: number;
   ambientRadius: number;
@@ -40,9 +47,16 @@ export function shouldConsumeFlashlightCharge(flashlightOn: boolean, flashlightC
   return flashlightOn && flashlightCharge > 0 && getVisionProfile(clock).flashlightFactor > 0;
 }
 
-export function buildVisionSources(player: PlayerLightState, clock: GameClock, fires: readonly ActiveFire[]): VisionSource[] {
+export function buildVisionSources(
+  player: PlayerLightState,
+  clock: GameClock,
+  fires: readonly ActiveFire[],
+  companions: readonly CompanionLightState[] = [],
+  output: VisionSource[] = [],
+): VisionSource[] {
   const profile = getVisionProfile(clock);
-  const sources: VisionSource[] = [{
+  output.length = 0;
+  output.push({
     id: "player-proximity",
     x: player.x,
     y: player.y,
@@ -58,17 +72,37 @@ export function buildVisionSources(player: PlayerLightState, clock: GameClock, f
     sourceType: "ambient-cone",
     direction: player.aimAngle,
     coneAngle: profile.ambientConeAngle,
-  }];
+  });
   if (player.torchRemaining > 0) {
-    sources.push({ id: "player-torch", x: player.x, y: player.y, radius: VISION.torchRadius, intensity: 1, sourceType: "torch" });
+    output.push({ id: "player-torch", x: player.x, y: player.y, radius: VISION.torchRadius, intensity: 1, sourceType: "torch" });
   }
   if (player.flashlightOn && profile.flashlightFactor > 0) {
-    sources.push({ id: "player-flashlight", x: player.x, y: player.y, radius: profile.effectiveFlashlightRadius, intensity: 1, sourceType: "flashlight", direction: player.aimAngle, coneAngle: VISION.flashlightConeAngle });
+    output.push({ id: "player-flashlight", x: player.x, y: player.y, radius: profile.effectiveFlashlightRadius, intensity: 1, sourceType: "flashlight", direction: player.aimAngle, coneAngle: VISION.flashlightConeAngle });
   }
   for (const fire of fires) {
-    if (fire.remaining > 0) sources.push({ id: `fire:${"id" in fire ? String(fire.id) : `${Math.round(fire.x)}:${Math.round(fire.y)}`}`, x: fire.x, y: fire.y, radius: VISION.fireRadius, intensity: VISION.fireIntensity, sourceType: "fire" });
+    if (fire.remaining > 0) output.push({ id: `fire:${"id" in fire ? String(fire.id) : `${Math.round(fire.x)}:${Math.round(fire.y)}`}`, x: fire.x, y: fire.y, radius: VISION.fireRadius, intensity: VISION.fireIntensity, sourceType: "fire" });
   }
-  return sources;
+  for (const companion of companions) {
+    if (!companion.rescued || !companion.alive) continue;
+    output.push({ id: `companion:${companion.id}`, x: companion.position.x, y: companion.position.y, radius: VISION.companionOmniRadius, intensity: 1, sourceType: "companion" });
+  }
+  return output;
+}
+
+export function getCompanionVisionSignature(companions: readonly CompanionLightState[], cellSize: number, widthCells: number): number {
+  let signature = 0x811c9dc5;
+  for (const companion of companions) {
+    if (!companion.rescued || !companion.alive) continue;
+    const cellX = Math.floor(companion.position.x / cellSize);
+    const cellY = Math.floor(companion.position.y / cellSize);
+    signature ^= cellY * widthCells + cellX;
+    signature = Math.imul(signature, 0x01000193);
+    for (let index = 0; index < companion.id.length; index += 1) {
+      signature ^= companion.id.charCodeAt(index);
+      signature = Math.imul(signature, 0x01000193);
+    }
+  }
+  return signature >>> 0;
 }
 
 function lerp(from: number, to: number, amount: number): number {

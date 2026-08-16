@@ -1,5 +1,6 @@
 import { COMPANION_MOVEMENT, MAP_HEIGHT_TILES, MAP_WIDTH_TILES, TILE_SIZE } from "../config/game-config";
 import type { CompanionCommand } from "../entities/companion";
+import type { WeaponDefinition } from "../data/weapon-definitions";
 import type { Point } from "./zombie-ai-system";
 
 export interface CompanionNavigationState {
@@ -187,6 +188,50 @@ export function shouldOverrideCompanionGoalForCombat(
 ): boolean {
   if (command === "focus" && explicitFocus) return true;
   return command === "follow" && shouldPursueAutomaticTarget(catchUpMode, targetDistance);
+}
+
+export interface CompanionTargetCandidate {
+  id: string;
+  position: Point;
+}
+
+export function selectCompanionCombatTarget<T extends CompanionTargetCandidate>(
+  candidates: readonly T[],
+  origin: Point,
+  currentTargetId: string | undefined,
+  focusTarget: T | undefined,
+  maximumDistance: number,
+): T | undefined {
+  if (focusTarget) return focusTarget;
+  const maximumDistanceSquared = maximumDistance * maximumDistance;
+  let current: T | undefined;
+  let currentDistanceSquared = Number.POSITIVE_INFINITY;
+  let nearest: T | undefined;
+  let nearestDistanceSquared = maximumDistanceSquared;
+  for (const candidate of candidates) {
+    const distanceSquared = squaredDistance(origin.x, origin.y, candidate.position.x, candidate.position.y);
+    if (candidate.id === currentTargetId) { current = candidate; currentDistanceSquared = distanceSquared; }
+    if (distanceSquared > nearestDistanceSquared) continue;
+    nearest = candidate;
+    nearestDistanceSquared = distanceSquared;
+  }
+  if (current && currentDistanceSquared <= maximumDistanceSquared
+    && currentDistanceSquared <= nearestDistanceSquared * 1.35) return current;
+  return nearest;
+}
+
+export type CompanionCombatMovement = "approach" | "hold" | "retreat";
+
+export function getCompanionCombatMovement(
+  weapon: WeaponDefinition,
+  targetDistance: number,
+  command: CompanionCommand,
+  mayPursue: boolean,
+): CompanionCombatMovement {
+  if (weapon.kind === "melee") return targetDistance > weapon.range ? "approach" : "hold";
+  if (command !== "hold" && targetDistance < weapon.range * 0.6) return "retreat";
+  if (targetDistance > weapon.range * 0.82 && mayPursue && command !== "hold") return "approach";
+  return "hold";
 }
 
 function resetProgress(state: CompanionNavigationState, position: Point, now: number): void {

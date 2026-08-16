@@ -14,7 +14,7 @@ export interface VisionSource {
   y: number;
   radius: number;
   intensity: number;
-  sourceType: "player" | "proximity" | "ambient-cone" | "torch" | "flashlight" | "fire";
+  sourceType: "player" | "proximity" | "ambient-cone" | "torch" | "flashlight" | "fire" | "companion";
   direction?: number;
   coneAngle?: number;
 }
@@ -33,6 +33,7 @@ export interface FogInvalidationInput {
   flashlightActive: boolean;
   flashlightRadiusBucket: number;
   torchActive: boolean;
+  companionVisionSignature: number;
 }
 
 export class FogInvalidationTracker {
@@ -44,6 +45,7 @@ export class FogInvalidationTracker {
   private lastFlashlightActive = false;
   private lastFlashlightRadiusBucket = -1;
   private lastTorchActive = false;
+  private lastCompanionVisionSignature = -1;
   private invalidated = true;
 
   shouldRecompute(input: FogInvalidationInput, force = false): boolean {
@@ -55,7 +57,8 @@ export class FogInvalidationTracker {
       || input.ambientAngleBucket !== this.lastAmbientAngleBucket
       || input.flashlightActive !== this.lastFlashlightActive
       || input.flashlightRadiusBucket !== this.lastFlashlightRadiusBucket
-      || input.torchActive !== this.lastTorchActive;
+      || input.torchActive !== this.lastTorchActive
+      || input.companionVisionSignature !== this.lastCompanionVisionSignature;
   }
 
   commit(input: FogInvalidationInput): void {
@@ -67,6 +70,7 @@ export class FogInvalidationTracker {
     this.lastFlashlightActive = input.flashlightActive;
     this.lastFlashlightRadiusBucket = input.flashlightRadiusBucket;
     this.lastTorchActive = input.torchActive;
+    this.lastCompanionVisionSignature = input.companionVisionSignature;
     this.invalidated = false;
   }
 
@@ -83,6 +87,7 @@ export class FogInvalidationTracker {
     this.lastFlashlightActive = false;
     this.lastFlashlightRadiusBucket = -1;
     this.lastTorchActive = false;
+    this.lastCompanionVisionSignature = -1;
     this.invalidated = true;
   }
 }
@@ -105,6 +110,7 @@ const SOURCE_SALTS = {
   torch: 0x2468ac,
   flashlight: 0x3579bd,
   fire: 0x468ace,
+  companion: 0x579bdf,
 } as const;
 
 export class FogOfWarSystem {

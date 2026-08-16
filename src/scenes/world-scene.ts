@@ -26,17 +26,18 @@ import { BarricadeView } from "../rendering/obstacle-views";
 import { AudioSystem } from "../systems/audio-system";
 import { CameraController, configurePaddedCameraBounds } from "../systems/camera-controller";
 import { CollisionSystem } from "../systems/collision-system";
-import { pointSegmentDistanceSquared } from "../systems/collision-geometry";
+import { pointSegmentDistanceSquared, visibilityProbeTowardPoint } from "../systems/collision-geometry";
 import { distance, firstTargetOnLine, targetsInMeleeArc } from "../systems/combat-system";
-import { chooseLocalSteering, findNearestWalkableGoal, getCompanionFollowSpeed, getCompanionStuckDuration, getWorldTileIndex, markCompanionBlocked, markCompanionRepath, shouldOverrideCompanionGoalForCombat, updateCatchUpMode, updateCompanionStuckState } from "../systems/companion-navigation";
+import { chooseLocalSteering, findNearestWalkableGoal, getCompanionCombatMovement, getCompanionFollowSpeed, getCompanionStuckDuration, getWorldTileIndex, markCompanionBlocked, markCompanionRepath, selectCompanionCombatTarget, shouldOverrideCompanionGoalForCombat, updateCatchUpMode, updateCompanionStuckState } from "../systems/companion-navigation";
 import { createFormationState, getFormationSlot, updateFormationDirection, type FormationState } from "../systems/companion-system";
 import { CraftingSystem } from "../systems/crafting-system";
-import { FogInvalidationTracker, FogOfWarSystem, VisibilityState } from "../systems/fog-of-war-system";
+import { FogInvalidationTracker, FogOfWarSystem, VisibilityState, type VisionSource } from "../systems/fog-of-war-system";
 import { InfectionSystem } from "../systems/infection-system";
 import { InventorySystem } from "../systems/inventory-system";
-import { buildVisionSources, getVisionProfile, shouldConsumeFlashlightCharge, type ActiveFire } from "../systems/lighting-system";
+import { buildVisionSources, getCompanionVisionSignature, getVisionProfile, shouldConsumeFlashlightCharge, type ActiveFire } from "../systems/lighting-system";
 import { InteractionSystem } from "../systems/interaction-system";
 import { NoiseSystem, NOISE_LEVELS } from "../systems/noise-system";
+import { initializeNewGameLoadout } from "../systems/new-game-loadout";
 import { findTilePath, findWeightedTilePath } from "../systems/pathfinding-system";
 import { SaveSystem } from "../systems/save-system";
 import { WorldObjectRegistry } from "../systems/world-object-registry";
@@ -108,6 +109,8 @@ export class WorldScene extends Phaser.Scene {
   private readonly rescuedCompanions: Companion[] = [];
   private zombies: Zombie[] = [];
   private readonly minimapZombieSources: Zombie[] = [];
+  private readonly teamVisibleZombies: Zombie[] = [];
+  private nextTeamTargetScanAt = 0;
   private drops: ItemDrop[] = [];
   private inventory!: InventorySystem;
   private crafting = new CraftingSystem(RECIPE_DEFINITIONS);
@@ -141,6 +144,7 @@ export class WorldScene extends Phaser.Scene {
   private nextFootstepAt = 0;
   private nextHudAt = 0;
   private readonly fogInvalidation = new FogInvalidationTracker();
+  private readonly visionSources: VisionSource[] = [];
   private nextNightSpawnAt = 0;
   private nextDefenseSpawnAt = 0;
   private dropCounter = 0;
@@ -199,11 +203,6 @@ export class WorldScene extends Phaser.Scene {
     for (const barricade of saved?.barricades ?? []) this.restoreBarricade(barricade);
 
     this.inventory = new InventorySystem(BALANCE.inventorySlots, saved?.inventory);
-    if (!saved) {
-      this.inventory.add("bandage", 1);
-      this.inventory.add("water", 1);
-      this.inventory.add("ammo", 6);
-    }
     this.quickslots = saved?.quickslots.slice(0, 5) ?? ["bandage", "medicine", "torch", "molotov", "barricade"];
     while (this.quickslots.length < 5) this.quickslots.push(null);
     this.collectedParts = new Set(saved?.collectedParts ?? []);
@@ -215,6 +214,7 @@ export class WorldScene extends Phaser.Scene {
     const playerPosition = saved?.player ?? this.map.playerSpawn;
     this.player = new Player(this, playerPosition);
     if (saved) this.restorePlayer(saved);
+    else initializeNewGameLoadout(this.inventory, this.player);
     this.createCompanions(saved);
 
     this.createZombies(saved);
@@ -273,6 +273,7 @@ export class WorldScene extends Phaser.Scene {
 
     this.updatePlayer(deltaSeconds);
     this.updateFires(deltaSeconds);
+    this.refreshTeamVisibleZombies();
     this.updateCompanions(time, deltaSeconds);
     this.updateZombies(time, deltaSeconds);
     this.updateObstacleViews();
@@ -339,6 +340,8 @@ export class WorldScene extends Phaser.Scene {
   private resetRuntimeCollections(): void {
     this.zombies = [];
     this.minimapZombieSources.length = 0;
+    this.teamVisibleZombies.length = 0;
+    this.nextTeamTargetScanAt = 0;
     this.drops = [];
     this.companions = [];
     this.companionsById.clear();
@@ -350,6 +353,7 @@ export class WorldScene extends Phaser.Scene {
     this.nextFootstepAt = 0;
     this.nextHudAt = 0;
     this.fogInvalidation.reset();
+    this.visionSources.length = 0;
     this.nextNightSpawnAt = 0;
     this.nextDefenseSpawnAt = 0;
     this.dropCounter = 0;
@@ -405,9 +409,11 @@ export class WorldScene extends Phaser.Scene {
       const view = this.mapViews.doorViews.get(door.id);
       if (!view) continue;
       const position = { x: tileCenter(door.tileX), y: tileCenter(door.tileY) };
+      const visibilityProbe = { x: position.x, y: position.y };
       const object = this.makeWorldObject(door.id, "door", view, () => position, () => !door.destroyed, {
         range: 34, requiresLineOfSight: false, selectionPriority: 10,
-        distanceSquaredTo: door.segment ? (origin) => pointSegmentDistanceSquared(origin, door.segment!) : undefined,
+        distanceSquaredTo: (origin) => pointSegmentDistanceSquared(origin, door.segment!),
+        getVisibilityProbe: (origin) => visibilityProbeTowardPoint(origin, door.segment!, door.segment!.thickness / 2 + FOG_CELL_SIZE * 0.75, visibilityProbe),
         isEnabled: () => !door.destroyed,
         getPrompt: () => `[E] 문 ${door.open ? "닫기" : "열기"}`,
         execute: () => this.toggleDoor(door),
@@ -771,7 +777,7 @@ export class WorldScene extends Phaser.Scene {
       });
     } else {
       this.zombies = [];
-      this.activateDormantZombieSpawns(28, ZOMBIE_ACTIVATION_RADIUS);
+      this.activateDormantZombieSpawns(40, ZOMBIE_ACTIVATION_RADIUS);
     }
     this.activeZombieCount = 0;
     for (const zombie of this.zombies) if (zombie.isAlive()) this.activeZombieCount += 1;
@@ -1071,6 +1077,7 @@ export class WorldScene extends Phaser.Scene {
       const died = companion?.damage(zombie.definition.damage + (isBite ? 3 : 0), this.simulationTime) ?? false;
       if (died && companion) {
         this.refreshRescuedCompanions();
+        this.fogInvalidation.invalidate();
         this.worldObjects.setInteractable(companion.id, false);
         this.hud.showMessage(`${companion.id} 동료가 쓰러졌습니다.`, 3_500);
       }
@@ -1128,6 +1135,16 @@ export class WorldScene extends Phaser.Scene {
     return candidateComparisons;
   }
 
+  private refreshTeamVisibleZombies(): void {
+    if (this.simulationTime < this.nextTeamTargetScanAt) return;
+    this.nextTeamTargetScanAt = this.simulationTime + 100;
+    this.teamVisibleZombies.length = 0;
+    for (const zombie of this.zombies) {
+      if (!zombie.isAlive() || this.isZombieDormant(zombie)) continue;
+      if (this.fog.getStateAtWorld(zombie.position.x, zombie.position.y) === VisibilityState.Visible) this.teamVisibleZombies.push(zombie);
+    }
+  }
+
   private updateCompanions(time: number, deltaSeconds: number): void {
     this.formation = updateFormationDirection(this.formation, this.player.movement, deltaSeconds * 1_000);
     for (const companion of this.companions) {
@@ -1152,37 +1169,49 @@ export class WorldScene extends Phaser.Scene {
       this.companion.command,
     );
 
-    const explicitFocus = this.companion.command === "focus" && Boolean(this.companion.focusTargetId);
-    let combatTarget = explicitFocus
+    const companionWeapon = WEAPON_DEFINITIONS.pistol;
+    let explicitFocus = this.companion.command === "focus" && Boolean(this.companion.focusTargetId);
+    let focusTarget = explicitFocus
       ? this.zombies.find((zombie) => zombie.id === this.companion.focusTargetId && zombie.isAlive())
       : undefined;
-    if (explicitFocus && !combatTarget) {
+    if (focusTarget && this.teamVisibleZombies.includes(focusTarget)) this.companion.combatTargetLastVisibleAt = this.simulationTime;
+    if (focusTarget && this.simulationTime - this.companion.combatTargetLastVisibleAt > 1_500) focusTarget = undefined;
+    if (explicitFocus && !focusTarget) {
       this.companion.command = "follow";
       this.companion.focusTargetId = undefined;
+      this.companion.combatTargetId = undefined;
       this.companion.navigation.catchUpMode = updateCatchUpMode(false, distanceToPlayer, "follow");
+      explicitFocus = false;
     }
-    if (!combatTarget && this.companion.command !== "focus") {
-      const automaticTargetDistance = this.companion.navigation.catchUpMode
-        ? COMPANION_MOVEMENT.immediateThreatDistance
-        : 105;
-      let nearestDistanceSquared = automaticTargetDistance * automaticTargetDistance;
-      for (const zombie of this.zombies) {
-        if (!zombie.isAlive()) continue;
-        const candidateDistance = squaredDistance(this.companion.position, zombie.position);
-        if (candidateDistance > nearestDistanceSquared) continue;
-        nearestDistanceSquared = candidateDistance;
-        combatTarget = zombie;
-      }
+    const automaticTargetDistance = this.companion.navigation.catchUpMode || this.companion.command === "move"
+      ? COMPANION_MOVEMENT.immediateThreatDistance
+      : companionWeapon.range;
+    let combatTarget = selectCompanionCombatTarget(
+      this.teamVisibleZombies,
+      this.companion.position,
+      this.companion.combatTargetId,
+      focusTarget,
+      automaticTargetDistance,
+    );
+    if (combatTarget && this.teamVisibleZombies.includes(combatTarget)) {
+      this.companion.combatTargetId = combatTarget.id;
+      this.companion.combatTargetLastVisibleAt = this.simulationTime;
+    } else if (!combatTarget && this.companion.combatTargetId
+      && this.simulationTime - this.companion.combatTargetLastVisibleAt <= 900) {
+      combatTarget = this.zombies.find((zombie) => zombie.id === this.companion.combatTargetId && zombie.isAlive());
     }
+    if (!combatTarget) this.companion.combatTargetId = undefined;
 
-    if (combatTarget && this.collision.hasLineOfSight(this.companion.position, combatTarget.position) && distance(this.companion.position, combatTarget.position) <= 88) {
+    const combatDistance = combatTarget ? distance(this.companion.position, combatTarget.position) : Number.POSITIVE_INFINITY;
+    const combatHasLineOfSight = Boolean(combatTarget && this.collision.hasLineOfSight(this.companion.position, combatTarget.position));
+    if (combatTarget && combatHasLineOfSight && combatDistance <= companionWeapon.range) {
       this.companion.aimAngle = Math.atan2(combatTarget.position.y - this.companion.position.y, combatTarget.position.x - this.companion.position.x);
       if (this.simulationTime >= this.companion.nextAttackAt) {
-        this.companion.nextAttackAt = this.simulationTime + 720;
+        this.companion.nextAttackAt = this.simulationTime + companionWeapon.cooldownMs;
         const direction = normalize({ x: combatTarget.position.x - this.companion.position.x, y: combatTarget.position.y - this.companion.position.y });
         const impactX = combatTarget.position.x;
         const impactY = combatTarget.position.y;
-        this.damageZombie(combatTarget, 13, { x: direction.x * 4, y: direction.y * 4 });
+        this.damageZombie(combatTarget, companionWeapon.damage, { x: direction.x * companionWeapon.knockback, y: direction.y * companionWeapon.knockback });
         this.attackEffects.play({
           weapon: "pistol",
           originX: this.companion.position.x,
@@ -1193,7 +1222,7 @@ export class WorldScene extends Phaser.Scene {
           endpointY: impactY,
           impacts: [{ x: impactX, y: impactY, kind: "zombie" }],
         });
-        this.noise.emit({ x: this.companion.position.x, y: this.companion.position.y, intensity: 12, category: "melee", createdAt: this.simulationTime });
+        this.noise.emit({ x: this.companion.position.x, y: this.companion.position.y, intensity: companionWeapon.noise, category: "gunshot", createdAt: this.simulationTime });
       }
     }
 
@@ -1207,15 +1236,27 @@ export class WorldScene extends Phaser.Scene {
     if (this.companion.command === "focus" && combatTarget) requestedGoal = combatTarget.position;
     if (this.companion.command === "hold") requestedGoal = this.companion.commandTarget;
     if (combatTarget && this.companion.health > 24) {
-      const targetDistance = distance(this.companion.position, combatTarget.position);
       const shouldChase = shouldOverrideCompanionGoalForCombat(
         this.companion.command,
         explicitFocus,
         this.companion.navigation.catchUpMode,
-        targetDistance,
+        combatDistance,
       );
-      if (targetDistance > 70 && shouldChase) {
+      const combatMovement = !combatHasLineOfSight && shouldChase
+        ? "approach"
+        : getCompanionCombatMovement(companionWeapon, combatDistance, this.companion.command, shouldChase);
+      if (combatMovement === "approach") {
         requestedGoal = combatTarget.position;
+      } else if (combatMovement === "retreat") {
+        const deltaX = this.companion.position.x - combatTarget.position.x;
+        const deltaY = this.companion.position.y - combatTarget.position.y;
+        const length = Math.hypot(deltaX, deltaY) || 1;
+        this.companion.combatGoalScratch.x = this.companion.position.x + deltaX / length * 36;
+        this.companion.combatGoalScratch.y = this.companion.position.y + deltaY / length * 36;
+        requestedGoal = this.companion.combatGoalScratch;
+      } else if (this.companion.command === "focus"
+        || (this.companion.command === "follow" && distanceToPlayer <= COMPANION_MOVEMENT.catchUpExitDistance)) {
+        requestedGoal = undefined;
       }
     }
 
@@ -1377,6 +1418,8 @@ export class WorldScene extends Phaser.Scene {
       for (const companion of this.rescuedCompanions) {
         companion.command = "focus";
         companion.focusTargetId = target.id;
+        companion.combatTargetId = target.id;
+        companion.combatTargetLastVisibleAt = this.simulationTime;
       }
       this.hud.showMessage("동료 전체: 저 적을 집중 공격합니다.");
     }
@@ -1455,6 +1498,7 @@ export class WorldScene extends Phaser.Scene {
     this.worldObjects.unregister(companion.id);
     this.registerCompanionObject(companion);
     this.refreshRescuedCompanions();
+    this.fogInvalidation.invalidate();
     this.hud.showMessage(`생존자를 구조했습니다. 현재 동료 ${this.rescuedCompanions.length}/4`, 4_000);
     this.saveGame(false);
     this.interactionSystem.invalidate();
@@ -1710,7 +1754,7 @@ export class WorldScene extends Phaser.Scene {
 
   private spawnWave(kind: ZombieKind, count: number, center: Point, radius: number): void {
     for (let index = 0; index < count; index += 1) {
-      if (this.countLivingZombies() >= BALANCE.maxActiveZombies) return;
+      if (this.countActiveLivingZombies() >= BALANCE.maxActiveZombies) return;
       for (let attempt = 0; attempt < 12; attempt += 1) {
         const angle = this.rng.next() * Math.PI * 2;
         const x = Math.max(12, Math.min(WORLD_WIDTH - 12, center.x + Math.cos(angle) * radius));
@@ -1727,26 +1771,28 @@ export class WorldScene extends Phaser.Scene {
   }
 
   private activateDormantZombieSpawns(targetLivingCount: number, radius: number): void {
-    let living = this.countLivingZombies();
+    let living = this.countActiveLivingZombies();
     if (living >= Math.min(targetLivingCount, BALANCE.maxActiveZombies)) return;
-    const candidates = this.map.zombieSpawns
-      .filter((spawn) => !this.consumedZombieSpawnIds.has(spawn.id))
-      .map((spawn) => ({ spawn, distance: Math.hypot(tileCenter(spawn.tileX) - this.player.position.x, tileCenter(spawn.tileY) - this.player.position.y) }))
-      .filter((candidate) => candidate.distance <= radius)
-      .sort((first, second) => first.distance - second.distance);
-    for (const { spawn } of candidates) {
+    const radiusSquared = radius * radius;
+    for (const spawn of this.map.zombieSpawns) {
       if (living >= Math.min(targetLivingCount, BALANCE.maxActiveZombies)) break;
+      if (this.consumedZombieSpawnIds.has(spawn.id)) continue;
+      const spawnX = tileCenter(spawn.tileX);
+      const spawnY = tileCenter(spawn.tileY);
+      const deltaX = spawnX - this.player.position.x;
+      const deltaY = spawnY - this.player.position.y;
+      if (deltaX * deltaX + deltaY * deltaY > radiusSquared) continue;
       this.consumedZombieSpawnIds.add(spawn.id);
-      const zombie = new Zombie(this, spawn.id, spawn.kind, { x: tileCenter(spawn.tileX), y: tileCenter(spawn.tileY) });
+      const zombie = new Zombie(this, spawn.id, spawn.kind, { x: spawnX, y: spawnY });
       this.zombies.push(zombie);
       if (this.worldObjects.size > 0) this.registerZombieObject(zombie);
       living += 1;
     }
   }
 
-  private countLivingZombies(): number {
+  private countActiveLivingZombies(): number {
     let count = 0;
-    for (const zombie of this.zombies) if (zombie.isAlive()) count += 1;
+    for (const zombie of this.zombies) if (zombie.isAlive() && !this.isZombieDormant(zombie)) count += 1;
     return count;
   }
 
@@ -1769,6 +1815,7 @@ export class WorldScene extends Phaser.Scene {
       flashlightActive,
       flashlightRadiusBucket: flashlightActive ? Math.round(vision.effectiveFlashlightRadius / FOG_CELL_SIZE) : -1,
       torchActive: this.player.torchRemaining > 0,
+      companionVisionSignature: getCompanionVisionSignature(this.rescuedCompanions, FOG_CELL_SIZE, this.fog.widthCells),
     };
     if (!this.fogInvalidation.shouldRecompute(input, force)) return;
 
@@ -1779,7 +1826,7 @@ export class WorldScene extends Phaser.Scene {
       aimAngle: this.player.aimAngle,
       flashlightOn: flashlightActive,
       torchRemaining: this.player.torchRemaining,
-    }, this.clock, this.fires), this.collision);
+    }, this.clock, this.fires, this.rescuedCompanions, this.visionSources), this.collision);
     const calculationFinished = performance.now();
     this.fogRenderer.render();
     this.minimap.markFogDirty(this.fog.getChangedIndices());

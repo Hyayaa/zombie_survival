@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { MAX_PATHFINDING_PER_FRAME } from "../config/game-config";
 import { COMPANION_MOVEMENT, TILE_SIZE } from "../config/game-config";
-import { chooseLocalSteering, createCompanionNavigationState, findNearestWalkableGoal, getCompanionFollowSpeed, getCompanionStuckDuration, shouldOverrideCompanionGoalForCombat, shouldPursueAutomaticTarget, updateCatchUpMode, updateCompanionStuckState } from "../systems/companion-navigation";
+import { WEAPON_DEFINITIONS } from "../data/weapon-definitions";
+import { chooseLocalSteering, createCompanionNavigationState, findNearestWalkableGoal, getCompanionCombatMovement, getCompanionFollowSpeed, getCompanionStuckDuration, selectCompanionCombatTarget, shouldOverrideCompanionGoalForCombat, shouldPursueAutomaticTarget, updateCatchUpMode, updateCompanionStuckState } from "../systems/companion-navigation";
 
 describe("companion navigation", () => {
   it("keeps the shared pathfinding budget capped at four jobs per frame", () => {
@@ -69,5 +70,22 @@ describe("companion navigation", () => {
     expect(shouldOverrideCompanionGoalForCombat("move", false, false, 20)).toBe(false);
     expect(shouldOverrideCompanionGoalForCombat("hold", false, false, 20)).toBe(false);
     expect(shouldOverrideCompanionGoalForCombat("focus", true, false, 200)).toBe(true);
+  });
+
+  it("shares visible targets, retains a valid current target, and prioritizes focus", () => {
+    const alpha = { id: "alpha", position: { x: 80, y: 0 } };
+    const beta = { id: "beta", position: { x: 70, y: 0 } };
+    expect(selectCompanionCombatTarget([alpha, beta], { x: 0, y: 0 }, "alpha", undefined, 100)).toBe(alpha);
+    expect(selectCompanionCombatTarget([alpha], { x: 0, y: 0 }, undefined, beta, 100)).toBe(beta);
+    expect(selectCompanionCombatTarget([], { x: 0, y: 0 }, undefined, undefined, 100)).toBeUndefined();
+  });
+
+  it("uses weapon definitions to approach, hold ideal range, retreat, and preserve melee behavior", () => {
+    const pistol = WEAPON_DEFINITIONS.pistol;
+    expect(getCompanionCombatMovement(pistol, 250, "follow", true)).toBe("approach");
+    expect(getCompanionCombatMovement(pistol, 210, "follow", true)).toBe("hold");
+    expect(getCompanionCombatMovement(pistol, 100, "follow", true)).toBe("retreat");
+    expect(getCompanionCombatMovement(pistol, 300, "hold", true)).toBe("hold");
+    expect(getCompanionCombatMovement(WEAPON_DEFINITIONS.knife, 40, "follow", true)).toBe("approach");
   });
 });

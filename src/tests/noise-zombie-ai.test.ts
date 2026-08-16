@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { NoiseSystem } from "../systems/noise-system";
 import { createZombieMind, updateZombieMind } from "../systems/zombie-ai-system";
+import { ZOMBIE_DEFINITIONS } from "../data/zombie-definitions";
 
 describe("noise and zombie perception", () => {
   it("alerts a zombie inside the noise radius but not one outside", () => {
@@ -26,6 +27,13 @@ describe("noise and zombie perception", () => {
     const searching = updateZombieMind(chasing, { canSeeTarget: false });
     expect(searching.state).toBe("SearchLastKnownPosition");
     expect(searching.lastSeenTargetPosition).toEqual({ x: 20, y: 10 });
+  });
+
+  it("reduces long-range perception while keeping runners more sensitive", () => {
+    expect(ZOMBIE_DEFINITIONS.walker.sightRadius).toBeLessThanOrEqual(82);
+    expect(ZOMBIE_DEFINITIONS.walker.hearingMultiplier).toBeLessThanOrEqual(0.7);
+    expect(ZOMBIE_DEFINITIONS.runner.sightRadius).toBeGreaterThan(ZOMBIE_DEFINITIONS.walker.sightRadius);
+    expect(ZOMBIE_DEFINITIONS.runner.hearingMultiplier).toBeGreaterThan(ZOMBIE_DEFINITIONS.walker.hearingMultiplier);
   });
 });
 

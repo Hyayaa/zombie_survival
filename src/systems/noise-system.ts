@@ -35,7 +35,12 @@ export class NoiseSystem {
   }
 
   prune(now: number, lifetimeMs = 4_000): void {
-    this.events = this.events.filter((event) => now - event.createdAt <= lifetimeMs);
+    let writeIndex = 0;
+    for (let readIndex = 0; readIndex < this.events.length; readIndex += 1) {
+      const event = this.events[readIndex]!;
+      if (now - event.createdAt <= lifetimeMs) this.events[writeIndex++] = event;
+    }
+    this.events.length = writeIndex;
   }
 
   loudestHeard(x: number, y: number, hearingMultiplier: number, now: number): HeardNoise | undefined {

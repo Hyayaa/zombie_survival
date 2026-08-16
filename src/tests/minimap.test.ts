@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { FOG_CELL_SIZE, LOCAL_MINIMAP_ZOOM_LEVELS, MINIMAP, WORLD_HEIGHT, WORLD_WIDTH } from "../config/game-config";
 import { createCityBlockMap, TerrainType } from "../data/map-definitions";
 import { FogOfWarSystem, VisibilityState } from "../systems/fog-of-war-system";
-import { cameraViewportToFullMap, cycleMapMode, getFullMapFogStyle, getLocalMapWindow, getLocalMarkerPosition, getLocalMinimapPixelsPerTile, getMinimapTerrain, getMinimapTileColor, getMinimapTileState, MINIMAP_COLORS, MinimapFogTracker, MinimapTerrain, MinimapTileState, shouldIterateZombieMarkers, shouldPauseSimulationForMap, shouldShowCompanion, shouldShowExtraction, shouldShowFullCompanion, shouldShowLocalZombie, shouldUpdateMinimap, stepLocalMinimapTiles, worldToFullMap } from "../ui/minimap";
+import { cameraViewportToFullMap, cycleMapMode, getFullMapFogStyle, getLocalMapWindow, getLocalMarkerPosition, getLocalMinimapPixelsPerTile, getMinimapTerrain, getMinimapTileColor, getMinimapTileState, MINIMAP_COLORS, MinimapFogTracker, MinimapTerrain, MinimapTileState, shouldIterateZombieMarkers, shouldPauseSimulationForMap, shouldShowCompanion, shouldShowExtraction, shouldShowFullCompanion, shouldShowLocalCompanion, shouldShowLocalZombie, shouldUpdateMinimap, stepLocalMinimapTiles, worldToFullMap } from "../ui/minimap";
 
 function fakeFog(states: Map<string, VisibilityState>): { getStateAtCell(x: number, y: number): VisibilityState } { return { getStateAtCell: (x, y) => states.get(`${x},${y}`) ?? VisibilityState.Unknown }; }
 
@@ -124,6 +124,9 @@ describe("local and full map data", () => {
     expect(shouldShowCompanion(false, true)).toBe(false);
     expect(shouldShowCompanion(true, true)).toBe(true);
     expect(shouldShowCompanion(true, false)).toBe(false);
+    expect(shouldShowLocalCompanion(true)).toBe(true);
+    expect(shouldShowLocalCompanion(false)).toBe(false);
+    expect(MINIMAP_COLORS.survivor).not.toBe(MINIMAP_COLORS.companion);
     expect(shouldShowFullCompanion(false, true)).toBe(false);
     expect(shouldShowFullCompanion(true, true)).toBe(true);
     expect(shouldShowFullCompanion(true, false)).toBe(false);

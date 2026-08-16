@@ -158,10 +158,11 @@ export function createCityBlockMap(mapSeed = 0x51a7c1): MapDefinition {
         const doorX = entrance % widthTiles;
         const doorY = Math.floor(entrance / widthTiles);
         const doorId = `door-${id}`;
+        const orientationValue = diagonalGeometry ? doorOrientationFromSegment(diagonalGeometry.door) : doorOrientation(orientation);
         doors.push({
           kind: "door", id: doorId, buildingId: id, tileX: doorX, tileY: doorY,
-          orientation: diagonalGeometry ? doorOrientationFromSegment(diagonalGeometry.door) : doorOrientation(orientation),
-          segment: diagonalGeometry?.door,
+          orientation: orientationValue,
+          segment: diagonalGeometry?.door ?? createTileDoorSegment(doorX, doorY, orientationValue),
           open: isDoorInitiallyOpen(mapSeed, doorId), health: OBSTACLE_BALANCE.doorHealth,
           maxHealth: OBSTACLE_BALANCE.doorHealth, destroyed: false,
         });
@@ -349,6 +350,14 @@ function doorOrientationFromSegment(segment: SegmentGeometry): DoorOrientation {
   return sameSign ? "diagonal-down" : "diagonal-up";
 }
 
+function createTileDoorSegment(tileX: number, tileY: number, orientation: DoorOrientation): SegmentGeometry {
+  const centerX = (tileX + 0.5) * TILE_SIZE;
+  const centerY = (tileY + 0.5) * TILE_SIZE;
+  const halfLength = DOOR_LENGTH / 2;
+  if (orientation === "vertical") return { startX: centerX, startY: centerY - halfLength, endX: centerX, endY: centerY + halfLength, thickness: DOOR_THICKNESS };
+  return { startX: centerX - halfLength, startY: centerY, endX: centerX + halfLength, endY: centerY, thickness: DOOR_THICKNESS };
+}
+
 function canPlaceBuilding(footprint: readonly number[], terrain: Uint8Array, occupied: Uint8Array, width: number, height: number): boolean {
   for (const index of footprint) {
     const x = index % width; const y = Math.floor(index / width);
@@ -440,7 +449,7 @@ function createZombieSpawns(terrain: Uint8Array, occupied: Uint8Array, width: nu
     if (hash % 7 === 0) candidates.push({ index, hash });
   }
   candidates.sort((a, b) => a.hash - b.hash);
-  return candidates.slice(0, 112).map((candidate, index) => ({
+  return candidates.slice(0, 272).map((candidate, index) => ({
     id: `zombie-spawn-${index}`, tileX: candidate.index % width, tileY: Math.floor(candidate.index / width),
     kind: candidate.hash % 5 === 0 ? "runner" : "walker",
   }));

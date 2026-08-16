@@ -4,7 +4,7 @@ import { GameClock } from "../core/game-clock";
 import { createCityBlockMap } from "../data/map-definitions";
 import { CollisionSystem } from "../systems/collision-system";
 import { FogInvalidationTracker, FogOfWarSystem, VisibilityState, type FogInvalidationInput, type VisionGrid, type VisionSource } from "../systems/fog-of-war-system";
-import { buildVisionSources, getVisionProfile, shouldConsumeFlashlightCharge } from "../systems/lighting-system";
+import { buildVisionSources, getCompanionVisionSignature, getVisionProfile, shouldConsumeFlashlightCharge } from "../systems/lighting-system";
 
 function source(overrides: Partial<VisionSource> = {}): VisionSource {
   return { id: "test-source", x: 51, y: 63, radius: 42, intensity: 1, sourceType: "player", ...overrides };
@@ -66,6 +66,7 @@ describe("FogOfWarSystem", () => {
     const input: FogInvalidationInput = {
       playerCell: 10, ambientAimBucket: 3, visionRevision: 2, ambientRadiusBucket: 50,
       ambientAngleBucket: 22, flashlightActive: false, flashlightRadiusBucket: -1, torchActive: false,
+      companionVisionSignature: 0,
     };
     expect(tracker.shouldRecompute(input)).toBe(true);
     tracker.commit(input);
@@ -76,8 +77,31 @@ describe("FogOfWarSystem", () => {
     expect(idleRecomputes).toBe(0);
     expect(tracker.shouldRecompute({ ...input, playerCell: 11 })).toBe(true);
     expect(tracker.shouldRecompute({ ...input, flashlightActive: false })).toBe(false);
+    expect(tracker.shouldRecompute({ ...input, companionVisionSignature: 1 })).toBe(true);
     tracker.invalidate();
     expect(tracker.shouldRecompute(input)).toBe(true);
+  });
+
+  it("adds stable 96px omnidirectional sources only for rescued living companions", () => {
+    const clock = new GameClock();
+    const companions = [
+      { id: "companion-0", position: { x: 120, y: 120 }, rescued: true, alive: true },
+      { id: "companion-1", position: { x: 240, y: 120 }, rescued: false, alive: true },
+      { id: "companion-2", position: { x: 360, y: 120 }, rescued: true, alive: false },
+    ];
+    const sources = buildVisionSources({ x: 20, y: 20, aimAngle: Math.PI, flashlightOn: false, torchRemaining: 0 }, clock, [], companions);
+    const companionSource = sources.find((candidate) => candidate.sourceType === "companion");
+    expect(companionSource).toMatchObject({ id: "companion:companion-0", x: 120, y: 120, radius: 96 });
+    expect(companionSource?.direction).toBeUndefined();
+    expect(sources.filter((candidate) => candidate.sourceType === "companion")).toHaveLength(1);
+    const fog = new FogOfWarSystem(300, 300, FOG_CELL_SIZE, 91);
+    fog.recompute(sources, grid());
+    expect(fog.getStateAtWorld(60, 120)).toBe(VisibilityState.Visible);
+    expect(fog.getStateAtWorld(180, 120)).toBe(VisibilityState.Visible);
+    const signature = getCompanionVisionSignature(companions, FOG_CELL_SIZE, fog.widthCells);
+    expect(getCompanionVisionSignature(companions, FOG_CELL_SIZE, fog.widthCells)).toBe(signature);
+    companions[0]!.position.x += FOG_CELL_SIZE;
+    expect(getCompanionVisionSignature(companions, FOG_CELL_SIZE, fog.widthCells)).not.toBe(signature);
   });
 
   it("marks nearby cells visible and leaves distant cells unknown", () => {

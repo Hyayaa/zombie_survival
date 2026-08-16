@@ -37,12 +37,13 @@ export class InteractionSystem {
       const interaction = object.interaction;
       if (!interaction || !object.isActive() || !object.isVisible() || !interaction.isEnabled(context)) continue;
       const position = object.getPosition();
-      if (context.fog.getStateAtWorld(position.x, position.y) !== VisibilityState.Visible) continue;
+      const visibilityProbe = interaction.getVisibilityProbe?.(context.playerPosition) ?? position;
+      if (context.fog.getStateAtWorld(visibilityProbe.x, visibilityProbe.y) !== VisibilityState.Visible) continue;
       const deltaX = position.x - context.playerPosition.x;
       const deltaY = position.y - context.playerPosition.y;
       const distanceSquared = interaction.distanceSquaredTo?.(context.playerPosition) ?? deltaX * deltaX + deltaY * deltaY;
       if (distanceSquared > interaction.range * interaction.range) continue;
-      if (interaction.requiresLineOfSight && !context.collision.hasLineOfSight(context.playerPosition, position)) continue;
+      if (interaction.requiresLineOfSight && !context.collision.hasLineOfSight(context.playerPosition, visibilityProbe)) continue;
       const priority = interaction.selectionPriority;
       if (priority > bestPriority) continue;
       if (priority === bestPriority && distanceSquared > bestDistanceSquared) continue;

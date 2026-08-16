@@ -27,6 +27,23 @@ export function closestPointOnSegment(point: Point, segment: SegmentGeometry, ou
   return out;
 }
 
+export function visibilityProbeTowardPoint(
+  origin: Point,
+  segment: SegmentGeometry,
+  offset: number,
+  out: Point = { x: 0, y: 0 },
+): Point {
+  closestPointOnSegment(origin, segment, out);
+  const deltaX = origin.x - out.x;
+  const deltaY = origin.y - out.y;
+  const length = Math.hypot(deltaX, deltaY);
+  if (length > 0.001) {
+    out.x += deltaX / length * offset;
+    out.y += deltaY / length * offset;
+  }
+  return out;
+}
+
 export function pointSegmentDistanceSquared(point: Point, segment: SegmentGeometry): number {
   return pointCoordinatesSegmentDistanceSquared(point.x, point.y, segment);
 }

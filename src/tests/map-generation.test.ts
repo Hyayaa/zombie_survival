@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { FOG_CELL_SIZE, MAP_HEIGHT_TILES, MAP_WIDTH_TILES, WORLD_HEIGHT, WORLD_WIDTH } from "../config/game-config";
+import { BALANCE, FOG_CELL_SIZE, MAP_HEIGHT_TILES, MAP_WIDTH_TILES, TILE_SIZE, WORLD_HEIGHT, WORLD_WIDTH } from "../config/game-config";
 import { createCityBlockMap, isDoorInitiallyOpen, TerrainType } from "../data/map-definitions";
 import { validateMap } from "../data/map-validation";
 
@@ -63,8 +63,17 @@ describe("expanded road-first city map", () => {
     expect(map.containers.length).toBeGreaterThanOrEqual(45);
     expect(map.containers.length).toBeLessThanOrEqual(65);
     expect(map.groundItems.length).toBeGreaterThanOrEqual(12);
-    expect(map.zombieSpawns.length).toBeGreaterThanOrEqual(90);
-    expect(map.zombieSpawns.length).toBeLessThanOrEqual(140);
+    expect(map.zombieSpawns.length).toBeGreaterThanOrEqual(240);
+    expect(map.zombieSpawns.length).toBeLessThanOrEqual(300);
+    expect(BALANCE.maxActiveZombies).toBe(64);
+    expect(map.zombieSpawns.every((spawn) => Math.hypot(
+      spawn.tileX * TILE_SIZE + TILE_SIZE / 2 - map.playerSpawn.x,
+      spawn.tileY * TILE_SIZE + TILE_SIZE / 2 - map.playerSpawn.y,
+    ) >= 16 * TILE_SIZE)).toBe(true);
+    expect(map.zombieSpawns.filter((spawn) => Math.hypot(
+      spawn.tileX * TILE_SIZE + TILE_SIZE / 2 - map.playerSpawn.x,
+      spawn.tileY * TILE_SIZE + TILE_SIZE / 2 - map.playerSpawn.y,
+    ) <= 760).length).toBeGreaterThanOrEqual(40);
     const parts = map.containers.filter((container) => container.part);
     expect(parts).toHaveLength(3);
     for (let first = 0; first < parts.length; first += 1) for (let second = first + 1; second < parts.length; second += 1) {

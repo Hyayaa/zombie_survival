@@ -15,6 +15,8 @@ export class Companion {
   command: CompanionCommand = "follow";
   commandTarget?: Point;
   focusTargetId?: string;
+  combatTargetId?: string;
+  combatTargetLastVisibleAt = 0;
   aimAngle = 0;
   nextAttackAt = 0;
   path: Point[] = [];
@@ -23,6 +25,7 @@ export class Companion {
   readonly navigation: CompanionNavigationState;
   readonly goalScratch: Point = { x: 0, y: 0 };
   readonly steeringScratch: Point = { x: 0, y: 0 };
+  readonly combatGoalScratch: Point = { x: 0, y: 0 };
 
   constructor(scene: Phaser.Scene, readonly id: string, position: Point, readonly formationSlotIndex = 0) {
     this.position = { ...position };
