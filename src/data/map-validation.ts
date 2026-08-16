@@ -1,4 +1,5 @@
 import { TILE_SIZE } from "../config/game-config";
+import { segmentsIntersect } from "../systems/collision-geometry";
 import { TerrainType, type MapDefinition } from "./map-definitions";
 
 export interface MapValidationResult { valid: boolean; errors: string[] }
@@ -25,6 +26,21 @@ export function validateMap(map: MapDefinition): MapValidationResult {
     }
     for (const entrance of building.entranceTiles) {
       if (!building.footprintTiles.includes(entrance) || building.wallTiles.includes(entrance)) errors.push(`${building.id}: invalid entrance ${formatIndex(entrance, map.widthTiles)}`);
+    }
+    if (building.orientation === 45 || building.orientation === 135) {
+      const door = map.doors.find((candidate) => candidate.buildingId === building.id);
+      if (building.wallSegments.length < 4) errors.push(`${building.id}: incomplete diagonal wall segments`);
+      if (!door?.segment) errors.push(`${building.id}: missing diagonal door segment`);
+      else {
+        const deltaX = door.segment.endX - door.segment.startX;
+        const deltaY = door.segment.endY - door.segment.startY;
+        if (door.orientation === "diagonal-down" && deltaX * deltaY < 0) errors.push(`${building.id}: door orientation mismatch`);
+        if (door.orientation === "diagonal-up" && deltaX * deltaY > 0) errors.push(`${building.id}: door orientation mismatch`);
+        if (building.wallSegments.some((wall) => segmentsIntersect(door.segment!, wall))) errors.push(`${building.id}: door overlaps wall segment`);
+        const expectedPerimeter = 2 * (building.widthTiles + building.depthTiles) * TILE_SIZE;
+        const actualPerimeter = segmentLengths(building.wallSegments) + Math.hypot(deltaX, deltaY);
+        if (Math.abs(expectedPerimeter - actualPerimeter) > 0.5) errors.push(`${building.id}: discontinuous diagonal exterior`);
+      }
     }
   });
 
@@ -146,3 +162,9 @@ function worldIndex(map: MapDefinition, worldX: number, worldY: number): number 
 }
 
 function formatIndex(index: number, width: number): string { return index < 0 ? "outside" : `${index % width},${Math.floor(index / width)}`; }
+
+function segmentLengths(segments: readonly { startX: number; startY: number; endX: number; endY: number }[]): number {
+  let total = 0;
+  for (const segment of segments) total += Math.hypot(segment.endX - segment.startX, segment.endY - segment.startY);
+  return total;
+}

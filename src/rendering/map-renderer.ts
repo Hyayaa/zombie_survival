@@ -95,6 +95,26 @@ export function createMapRendering(scene: Phaser.Scene, map: MapDefinition): Map
     }
   }
 
+  if (map.wallSegments.length > 0) {
+    const diagonalWalls = scene.add.graphics().setDepth(DEPTH.propBack);
+    staticChunkCount += 1;
+    for (const segment of map.wallSegments) {
+      const deltaX = segment.endX - segment.startX;
+      const deltaY = segment.endY - segment.startY;
+      const length = Math.hypot(deltaX, deltaY) || 1;
+      const normalX = -deltaY / length;
+      const normalY = deltaX / length;
+      diagonalWalls.lineStyle(segment.thickness, COLORS.wall, 1)
+        .beginPath().moveTo(segment.startX, segment.startY).lineTo(segment.endX, segment.endY).strokePath();
+      diagonalWalls.lineStyle(2, COLORS.wallTop, 1)
+        .beginPath().moveTo(segment.startX - normalX * 2, segment.startY - normalY * 2)
+        .lineTo(segment.endX - normalX * 2, segment.endY - normalY * 2).strokePath();
+      diagonalWalls.lineStyle(2, 0x343936, 1)
+        .beginPath().moveTo(segment.startX + normalX * 2, segment.startY + normalY * 2)
+        .lineTo(segment.endX + normalX * 2, segment.endY + normalY * 2).strokePath();
+    }
+  }
+
   const laneMarkings = scene.add.graphics().setDepth(DEPTH.ground + 1);
   laneMarkings.fillStyle(COLORS.roadLine, 0.78);
   for (const road of map.roadSegments) {

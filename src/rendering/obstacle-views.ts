@@ -72,22 +72,28 @@ abstract class DestructibleObstacleView implements OutlineableEntityView {
 }
 
 export class DoorView extends DestructibleObstacleView {
+  private readonly geometryBaseAngle?: number;
+  private readonly closedLength: number;
+
   constructor(scene: Phaser.Scene, door: DoorDefinition) {
-    const x = door.tileX * TILE_SIZE + TILE_SIZE / 2;
-    const y = door.tileY * TILE_SIZE + TILE_SIZE / 2;
-    const body = scene.add.rectangle(x, y, TILE_SIZE - 5, 5, 0x604a34)
+    const x = door.segment ? (door.segment.startX + door.segment.endX) / 2 : door.tileX * TILE_SIZE + TILE_SIZE / 2;
+    const y = door.segment ? (door.segment.startY + door.segment.endY) / 2 : door.tileY * TILE_SIZE + TILE_SIZE / 2;
+    const closedLength = door.segment ? Math.hypot(door.segment.endX - door.segment.startX, door.segment.endY - door.segment.startY) : TILE_SIZE - 5;
+    const body = scene.add.rectangle(x, y, closedLength, door.segment?.thickness ?? 5, 0x604a34)
       .setStrokeStyle(1, ENTITY_OUTLINE.normal)
       .setDepth(DEPTH.actor + (door.tileY + 1) * TILE_SIZE);
     super(body, scene, x, y, 14);
+    this.closedLength = closedLength;
+    this.geometryBaseAngle = door.segment ? Math.atan2(door.segment.endY - door.segment.startY, door.segment.endX - door.segment.startX) : undefined;
     this.setDoorState(door.open, door.destroyed, door.orientation);
     this.setHealth(door.health, door.maxHealth, 0);
   }
 
   setDoorState(open: boolean, destroyed: boolean, orientation: DoorDefinition["orientation"]): void {
-    const baseAngle = orientation === "vertical" ? 90 : orientation === "diagonal-down" ? 45 : orientation === "diagonal-up" ? -45 : 0;
-    this.body.setRotation((baseAngle + (open ? 90 : 0)) * Math.PI / 180);
-    this.body.setSize(destroyed ? 11 : TILE_SIZE - 5, 5);
-    this.body.setDisplaySize(destroyed ? 11 : TILE_SIZE - 5, destroyed ? 3 : 5);
+    const fallbackAngle = (orientation === "vertical" ? 90 : orientation === "diagonal-down" ? 45 : orientation === "diagonal-up" ? -45 : 0) * Math.PI / 180;
+    this.body.setRotation((this.geometryBaseAngle ?? fallbackAngle) + (open ? Math.PI / 2 : 0));
+    this.body.setSize(destroyed ? 11 : this.closedLength, 5);
+    this.body.setDisplaySize(destroyed ? 11 : this.closedLength, destroyed ? 3 : 5);
     this.body.setFillStyle(destroyed ? 0x4a3b2e : open ? 0x806848 : 0x604a34);
     this.body.setAlpha(destroyed ? 0.55 : 1);
     this.disableHealthBar(destroyed);

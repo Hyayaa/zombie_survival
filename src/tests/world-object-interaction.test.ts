@@ -88,4 +88,28 @@ describe("WorldObjectRegistry and InteractionSystem", () => {
     expect(system.refreshNow(context(false))).toBeUndefined();
     expect((target.view as FakeView).outlines.at(-1)).toBe("normal");
   });
+
+  it("selects a door by nearest segment distance while preserving tie-breaking and one target", () => {
+    const registry = new WorldObjectRegistry();
+    const segmentDoor = object("segment-door", "door", 60, {
+      ...interaction(4),
+      distanceSquaredTo: (origin) => (origin.x - 28) ** 2 + origin.y ** 2,
+    });
+    const centered = object("centered", "container", 30, interaction(4));
+    registry.register(centered); registry.register(segmentDoor);
+    const system = new InteractionSystem(registry);
+    expect(system.refreshNow(context())?.id).toBe("segment-door");
+    expect((segmentDoor.view as FakeView).outlines.at(-1)).toBe("interactable");
+    expect((centered.view as FakeView).outlines).toEqual([]);
+    expect(system.getCurrent()?.interaction?.getPrompt()).toBe("[E] test");
+  });
+
+  it("rejects a door when its nearest segment point is outside interaction range", () => {
+    const registry = new WorldObjectRegistry();
+    registry.register(object("segment-door", "door", 20, {
+      ...interaction(4),
+      distanceSquaredTo: () => 41 ** 2,
+    }));
+    expect(new InteractionSystem(registry).refreshNow(context())).toBeUndefined();
+  });
 });

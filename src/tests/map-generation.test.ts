@@ -41,6 +41,10 @@ describe("expanded road-first city map", () => {
       expect(building.entranceTiles).toHaveLength(1);
       const door = map.doors.find((candidate) => candidate.buildingId === building.id);
       expect(door?.orientation).toMatch(/^diagonal-/);
+      expect(building.wallSegments.length).toBeGreaterThanOrEqual(4);
+      expect(door?.segment).toBeDefined();
+      expect(map.obstacles.some((obstacle) => obstacle.id.startsWith(`${building.id}-wall-`))).toBe(false);
+      expect(building.wallTiles.every((index) => map.minimapWallCoverage[index] === 1)).toBe(true);
     }
   });
 
@@ -74,12 +78,15 @@ describe("expanded road-first city map", () => {
     const first = createCityBlockMap(0x1234);
     const second = createCityBlockMap(0x1234);
     expect([...first.terrain]).toEqual([...second.terrain]);
+    expect([...first.minimapWallCoverage]).toEqual([...second.minimapWallCoverage]);
     expect(first.roadSegments).toEqual(second.roadSegments);
     expect(first.buildings.map(({ id, orientation, footprintTiles, entranceTiles }) => ({ id, orientation, footprintTiles, entranceTiles })))
       .toEqual(second.buildings.map(({ id, orientation, footprintTiles, entranceTiles }) => ({ id, orientation, footprintTiles, entranceTiles })));
     expect(first.containers).toEqual(second.containers);
     expect(first.zombieSpawns).toEqual(second.zombieSpawns);
     expect(first.companionSpawns).toEqual(second.companionSpawns);
+    expect(first.wallSegments).toEqual(second.wallSegments);
+    expect(first.doors.map((door) => door.segment)).toEqual(second.doors.map((door) => door.segment));
   });
 
   it("opens doors deterministically at an aggregate rate near 80 percent", () => {

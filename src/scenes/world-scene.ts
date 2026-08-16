@@ -26,6 +26,7 @@ import { BarricadeView } from "../rendering/obstacle-views";
 import { AudioSystem } from "../systems/audio-system";
 import { CameraController, configurePaddedCameraBounds } from "../systems/camera-controller";
 import { CollisionSystem } from "../systems/collision-system";
+import { pointSegmentDistanceSquared } from "../systems/collision-geometry";
 import { distance, firstTargetOnLine, targetsInMeleeArc } from "../systems/combat-system";
 import { chooseLocalSteering, findNearestWalkableGoal, getCompanionFollowSpeed, getCompanionStuckDuration, getWorldTileIndex, markCompanionBlocked, markCompanionRepath, shouldOverrideCompanionGoalForCombat, updateCatchUpMode, updateCompanionStuckState } from "../systems/companion-navigation";
 import { createFormationState, getFormationSlot, updateFormationDirection, type FormationState } from "../systems/companion-system";
@@ -183,7 +184,14 @@ export class WorldScene extends Phaser.Scene {
     this.map = createCityBlockMap(saved?.mapSeed ?? (this.seed ^ 0x6d617032));
     if ((import.meta as ImportMeta & { env?: { DEV?: boolean } }).env?.DEV) assertValidMap(this.map);
     if (saved) this.restoreDoorStates(saved);
-    this.collision = new CollisionSystem(this.map.obstacles, this.map.doors, this.map.widthTiles, this.map.heightTiles, TILE_SIZE);
+    this.collision = new CollisionSystem(
+      this.map.obstacles,
+      this.map.doors,
+      this.map.widthTiles,
+      this.map.heightTiles,
+      TILE_SIZE,
+      this.map.wallSegments,
+    );
     this.destructibles = new DestructibleObstacleSystem(this.map.doors, this.map.widthTiles);
     this.clock = new GameClock();
     if (saved) this.clock.restore(saved.clock);
@@ -399,6 +407,7 @@ export class WorldScene extends Phaser.Scene {
       const position = { x: tileCenter(door.tileX), y: tileCenter(door.tileY) };
       const object = this.makeWorldObject(door.id, "door", view, () => position, () => !door.destroyed, {
         range: 34, requiresLineOfSight: false, selectionPriority: 10,
+        distanceSquaredTo: door.segment ? (origin) => pointSegmentDistanceSquared(origin, door.segment!) : undefined,
         isEnabled: () => !door.destroyed,
         getPrompt: () => `[E] 문 ${door.open ? "닫기" : "열기"}`,
         execute: () => this.toggleDoor(door),
@@ -916,7 +925,15 @@ export class WorldScene extends Phaser.Scene {
     if (this.pathfindingWorkThisFrame >= MAX_PATHFINDING_PER_FRAME) return undefined;
     this.pathfindingWorkThisFrame += 1;
     this.performanceMonitor.recordPathfinding();
-    return findTilePath(start, goal, (x, y) => this.collision.isTileBlocked(x, y), maxVisited, this.map.widthTiles, this.map.heightTiles);
+    return findTilePath(
+      start,
+      goal,
+      (x, y) => this.collision.isTileBlocked(x, y),
+      maxVisited,
+      this.map.widthTiles,
+      this.map.heightTiles,
+      (fromX, fromY, toX, toY) => this.collision.canTraverseTileEdge(fromX, fromY, toX, toY, BALANCE.companionRadius),
+    );
   }
 
   private tryFindZombiePath(start: Point, goal: Point, maxVisited: number): Point[] | undefined {
@@ -930,6 +947,7 @@ export class WorldScene extends Phaser.Scene {
       maxVisited,
       this.map.widthTiles,
       this.map.heightTiles,
+      (fromX, fromY, toX, toY) => this.collision.canTraverseTileEdge(fromX, fromY, toX, toY, BALANCE.zombieRadius, true),
     );
   }
 
@@ -1373,8 +1391,7 @@ export class WorldScene extends Phaser.Scene {
 
   private toggleDoor(door: DoorDefinition): void {
     if (door.destroyed) return;
-    door.open = !door.open;
-    this.collision.setDoorOpen(door.id, door.open);
+    this.collision.setDoorOpen(door.id, !door.open);
     const view = this.mapViews.doorViews.get(door.id);
     if (view) updateDoorView(view, door.open, door.orientation, door.destroyed);
     this.noise.emit({ x: tileCenter(door.tileX), y: tileCenter(door.tileY), intensity: NOISE_LEVELS.door, category: "door", createdAt: this.simulationTime });

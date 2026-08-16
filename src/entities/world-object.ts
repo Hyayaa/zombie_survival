@@ -24,6 +24,7 @@ export interface InteractionComponent {
   readonly range: number;
   readonly requiresLineOfSight: boolean;
   readonly selectionPriority: number;
+  distanceSquaredTo?(origin: Point): number;
   isEnabled(context: InteractionContext): boolean;
   getPrompt(): string;
   execute(): void;

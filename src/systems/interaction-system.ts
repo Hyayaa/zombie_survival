@@ -40,7 +40,7 @@ export class InteractionSystem {
       if (context.fog.getStateAtWorld(position.x, position.y) !== VisibilityState.Visible) continue;
       const deltaX = position.x - context.playerPosition.x;
       const deltaY = position.y - context.playerPosition.y;
-      const distanceSquared = deltaX * deltaX + deltaY * deltaY;
+      const distanceSquared = interaction.distanceSquaredTo?.(context.playerPosition) ?? deltaX * deltaX + deltaY * deltaY;
       if (distanceSquared > interaction.range * interaction.range) continue;
       if (interaction.requiresLineOfSight && !context.collision.hasLineOfSight(context.playerPosition, position)) continue;
       const priority = interaction.selectionPriority;

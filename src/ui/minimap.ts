@@ -126,6 +126,7 @@ export function getMinimapTerrain(map: MapDefinition, tileX: number, tileY: numb
     if (tileX < obstacle.tileX || tileY < obstacle.tileY || tileX >= obstacle.tileX + obstacle.widthTiles || tileY >= obstacle.tileY + obstacle.heightTiles) continue;
     return obstacle.kind === "vehicle" ? MinimapTerrain.Vehicle : obstacle.kind === "wall" ? MinimapTerrain.Wall : MinimapTerrain.Floor;
   }
+  if (map.minimapWallCoverage[tileY * map.widthTiles + tileX]) return MinimapTerrain.Wall;
   const terrain = getTerrain(map, tileX, tileY);
   return terrain === TerrainType.Road ? MinimapTerrain.Road : terrain === TerrainType.Sidewalk ? MinimapTerrain.Sidewalk : terrain === TerrainType.Floor ? MinimapTerrain.Floor : MinimapTerrain.Ground;
 }

@@ -22,8 +22,9 @@ export function findTilePath(
   maxVisited = 800,
   widthTiles = MAP_WIDTH_TILES,
   heightTiles = MAP_HEIGHT_TILES,
+  canTraverseEdge?: (fromX: number, fromY: number, toX: number, toY: number) => boolean,
 ): Point[] {
-  return findWeightedTilePath(start, goal, (x, y) => isBlocked(x, y) ? Number.POSITIVE_INFINITY : 1, maxVisited, widthTiles, heightTiles);
+  return findWeightedTilePath(start, goal, (x, y) => isBlocked(x, y) ? Number.POSITIVE_INFINITY : 1, maxVisited, widthTiles, heightTiles, canTraverseEdge);
 }
 
 export function findWeightedTilePath(
@@ -33,6 +34,7 @@ export function findWeightedTilePath(
   maxVisited = 800,
   widthTiles = MAP_WIDTH_TILES,
   heightTiles = MAP_HEIGHT_TILES,
+  canTraverseEdge?: (fromX: number, fromY: number, toX: number, toY: number) => boolean,
 ): Point[] {
   const startX = Math.floor(start.x / TILE_SIZE);
   const startY = Math.floor(start.y / TILE_SIZE);
@@ -66,6 +68,7 @@ export function findWeightedTilePath(
       const x = current.x + deltaX;
       const y = current.y + deltaY;
       if (x < 0 || y < 0 || x >= widthTiles || y >= heightTiles) continue;
+      if (canTraverseEdge && !canTraverseEdge(current.x, current.y, x, y)) continue;
       const traversalCost = getTraversalCost(x, y);
       if (!Number.isFinite(traversalCost) || traversalCost <= 0) continue;
       const index = y * widthTiles + x;

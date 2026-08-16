@@ -24,6 +24,19 @@ describe("findTilePath", () => {
     expect(path.some((point) => Math.floor(point.y / TILE_SIZE) !== 2)).toBe(true);
     expect(path.at(-1)).toEqual({ x: center(5), y: center(2) });
   });
+
+  it("uses edge traversal geometry without marking the destination tile fully blocked", () => {
+    const path = findTilePath(
+      { x: center(1), y: center(2) },
+      { x: center(4), y: center(2) },
+      () => false,
+      200,
+      6,
+      5,
+      (fromX, fromY, toX, toY) => !(fromY === 2 && toY === 2 && ((fromX === 2 && toX === 3) || (fromX === 3 && toX === 2))),
+    );
+    expect(path.some((point) => Math.floor(point.y / TILE_SIZE) !== 2)).toBe(true);
+  });
 });
 
 describe("findWeightedTilePath", () => {
