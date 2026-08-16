@@ -15,6 +15,12 @@ export class PerformanceMonitor {
   private fogRecomputeCount = 0;
   private pathfindingWork = 0;
   private separationCandidates = 0;
+  private cameraZoom = 1;
+  private minimapOpen = false;
+  private companionDistance = 0;
+  private companionCatchUp = false;
+  private companionStuckMs = 0;
+  private companionRepathCount = 0;
 
   constructor(scene: Phaser.Scene, parent: HTMLElement) {
     if (!this.enabled) return;
@@ -61,6 +67,20 @@ export class PerformanceMonitor {
     if (this.enabled) this.separationCandidates = count;
   }
 
+  recordCameraAndMinimap(zoom: number, minimapOpen: boolean): void {
+    if (!this.enabled) return;
+    this.cameraZoom = zoom;
+    this.minimapOpen = minimapOpen;
+  }
+
+  recordCompanion(distance: number, catchUp: boolean, stuckMs: number, repathCount: number): void {
+    if (!this.enabled) return;
+    this.companionDistance = distance;
+    this.companionCatchUp = catchUp;
+    this.companionStuckMs = stuckMs;
+    this.companionRepathCount = repathCount;
+  }
+
   update(now: number, activeZombies: number): void {
     if (!this.enabled || !this.overlay) return;
     if (this.toggleKey && Phaser.Input.Keyboard.JustDown(this.toggleKey)) this.overlay.hidden = !this.overlay.hidden;
@@ -80,6 +100,12 @@ export class PerformanceMonitor {
       `active zombies ${activeZombies}`,
       `pathfinding/frame ${this.pathfindingWork}`,
       `separation candidates ${this.separationCandidates}`,
+      `camera zoom ${this.cameraZoom.toFixed(2)}`,
+      `minimap ${this.minimapOpen ? "open" : "closed"}`,
+      `companion distance ${this.companionDistance.toFixed(1)}`,
+      `companion catch-up ${this.companionCatchUp ? "yes" : "no"}`,
+      `companion stuck ${this.companionStuckMs.toFixed(0)} ms`,
+      `companion repaths ${this.companionRepathCount}`,
     ].join("\n");
   }
 

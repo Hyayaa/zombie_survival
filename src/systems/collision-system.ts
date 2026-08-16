@@ -59,6 +59,24 @@ export class CollisionSystem implements VisionGrid {
     return false;
   }
 
+  canOccupyCircle(x: number, y: number, radius: number): boolean {
+    return !this.isMovementBlockedWorld(x, y, radius);
+  }
+
+  canTraverseCircle(from: Point, to: Point, radius: number, sampleStep = 4): boolean {
+    const distance = Math.hypot(to.x - from.x, to.y - from.y);
+    const steps = Math.max(1, Math.ceil(distance / sampleStep));
+    for (let step = 1; step <= steps; step += 1) {
+      const amount = step / steps;
+      if (this.isMovementBlockedWorld(
+        from.x + (to.x - from.x) * amount,
+        from.y + (to.y - from.y) * amount,
+        radius,
+      )) return false;
+    }
+    return true;
+  }
+
   moveCircle(position: Point, deltaX: number, deltaY: number, radius: number): Point {
     let x = position.x;
     let y = position.y;

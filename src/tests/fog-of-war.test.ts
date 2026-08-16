@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { FLASHLIGHT_AIM_BUCKETS, FOG_CELL_SIZE, FOG_CELLS_PER_TILE, MAP_TILES, TILE_SIZE, WORLD_SIZE } from "../config/game-config";
+import { BALANCE, FLASHLIGHT_AIM_BUCKETS, FOG_CELL_SIZE, FOG_CELLS_PER_TILE, MAP_TILES, TILE_SIZE, VISION, WORLD_SIZE } from "../config/game-config";
 import { GameClock } from "../core/game-clock";
 import { createCityBlockMap } from "../data/map-definitions";
 import { CollisionSystem } from "../systems/collision-system";
@@ -15,6 +15,23 @@ function grid(blocked: (x: number, y: number) => boolean = () => false): VisionG
 }
 
 describe("FogOfWarSystem", () => {
+  it("uses the reduced base vision and extended flashlight values", () => {
+    const clock = new GameClock();
+    expect(clock.getBaseVisionRadius()).toBe(138);
+    clock.restore({ elapsedSeconds: BALANCE.daySeconds + BALANCE.duskSeconds - 0.001 });
+    expect(clock.getBaseVisionRadius()).toBeCloseTo(84, 2);
+    clock.restore({ elapsedSeconds: BALANCE.daySeconds + BALANCE.duskSeconds });
+    expect(clock.getBaseVisionRadius()).toBe(68);
+    clock.restore({ elapsedSeconds: BALANCE.daySeconds + BALANCE.duskSeconds + BALANCE.nightSeconds + BALANCE.dawnSeconds });
+    expect(clock.getBaseVisionRadius()).toBe(118);
+
+    const sources = buildVisionSources({ x: 12, y: 12, aimAngle: 0, flashlightOn: true, torchRemaining: 1 }, clock, [{ x: 30, y: 30, remaining: 1 }]);
+    expect(sources.find((candidate) => candidate.sourceType === "flashlight")).toMatchObject({ radius: 300, coneAngle: VISION.flashlightConeAngle });
+    expect(sources.find((candidate) => candidate.sourceType === "torch")?.radius).toBe(170);
+    expect(sources.find((candidate) => candidate.sourceType === "fire")?.radius).toBe(76);
+    expect(VISION.flashlightRadius).toBeGreaterThan(VISION.dayRadius);
+  });
+
   it("uses eight 3px fog cells per 24px world tile", () => {
     const fog = new FogOfWarSystem(WORLD_SIZE, WORLD_SIZE, FOG_CELL_SIZE, 1);
     expect(TILE_SIZE).toBe(24);

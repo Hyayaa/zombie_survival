@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { BALANCE, DEPTH, FLASHLIGHT_AIM_BUCKETS, FOG_CELL_SIZE, LOGICAL_HEIGHT, LOGICAL_WIDTH, SAVE_KEY, SAVE_VERSION, TILE_SIZE, WORLD_SIZE } from "../config/game-config";
+import { BALANCE, COMPANION_MOVEMENT, DEPTH, FLASHLIGHT_AIM_BUCKETS, FOG_CELL_SIZE, LOGICAL_HEIGHT, LOGICAL_WIDTH, SAVE_KEY, SAVE_VERSION, TILE_SIZE, WORLD_SIZE } from "../config/game-config";
 import { GameClock } from "../core/game-clock";
 import type { SaveGame } from "../core/save-state";
 import { SeededRng } from "../core/seeded-rng";
@@ -19,8 +19,10 @@ import { Zombie } from "../entities/zombie";
 import { FogRenderer } from "../rendering/fog-renderer";
 import { createMapRendering, updateDoorView, type MapViews } from "../rendering/map-renderer";
 import { AudioSystem } from "../systems/audio-system";
+import { CameraController } from "../systems/camera-controller";
 import { CollisionSystem } from "../systems/collision-system";
 import { distance, firstTargetOnLine, targetsInMeleeArc } from "../systems/combat-system";
+import { chooseLocalSteering, findNearestWalkableGoal, getCompanionFollowSpeed, getCompanionStuckDuration, getWorldTileIndex, markCompanionBlocked, markCompanionRepath, shouldOverrideCompanionGoalForCombat, updateCatchUpMode, updateCompanionStuckState } from "../systems/companion-navigation";
 import { createFormationState, getFormationSlot, updateFormationDirection, type FormationState } from "../systems/companion-system";
 import { CraftingSystem } from "../systems/crafting-system";
 import { FogInvalidationTracker, FogOfWarSystem, VisibilityState } from "../systems/fog-of-war-system";
@@ -35,6 +37,7 @@ import { CompanionCommandPanel } from "../ui/companion-command-panel";
 import { Hud } from "../ui/hud";
 import { InventoryPanel, type InventoryPanelState } from "../ui/inventory-panel";
 import { PauseMenu } from "../ui/pause-menu";
+import { MinimapPanel } from "../ui/minimap";
 
 interface WorldSceneData {
   load?: boolean;
@@ -51,6 +54,7 @@ interface WorldKeys {
   flashlight: Phaser.Input.Keyboard.Key;
   command: Phaser.Input.Keyboard.Key;
   inventory: Phaser.Input.Keyboard.Key;
+  map: Phaser.Input.Keyboard.Key;
   pause: Phaser.Input.Keyboard.Key;
   quick1: Phaser.Input.Keyboard.Key;
   quick2: Phaser.Input.Keyboard.Key;
@@ -89,6 +93,7 @@ export class WorldScene extends Phaser.Scene {
   private clock!: GameClock;
   private fog!: FogOfWarSystem;
   private fogRenderer!: FogRenderer;
+  private cameraController!: CameraController;
   private mapViews!: MapViews;
   private player!: Player;
   private companion!: Companion;
@@ -113,6 +118,7 @@ export class WorldScene extends Phaser.Scene {
   private inventoryPanel!: InventoryPanel;
   private commandPanel!: CompanionCommandPanel;
   private pauseMenu!: PauseMenu;
+  private minimap!: MinimapPanel;
   private tintOverlay!: Phaser.GameObjects.Rectangle;
   private telegraphGraphics!: Phaser.GameObjects.Graphics;
   private performanceMonitor!: PerformanceMonitor;
@@ -136,6 +142,10 @@ export class WorldScene extends Phaser.Scene {
   private readonly separationBuckets: number[][] = [];
   private readonly separationUsedBuckets: number[] = [];
   private lastTintAlpha = Number.NaN;
+  private readonly pointerWorldSnapshot = new Phaser.Math.Vector2();
+  private pointerInsideGame = false;
+  private readonly companionGoal = { x: 0, y: 0 };
+  private readonly companionSteering = { x: 0, y: 0 };
 
   constructor() {
     super("world");
@@ -179,7 +189,10 @@ export class WorldScene extends Phaser.Scene {
     this.player = new Player(this, playerPosition);
     if (saved) this.restorePlayer(saved);
     this.companion = new Companion(this, saved?.companion ?? this.map.survivorSpawn);
-    if (saved) this.restoreCompanion(saved);
+    if (saved) {
+      this.restoreCompanion(saved);
+      this.recoverCompanionFromBlockedSave();
+    }
     this.mapViews.survivorMarker.setVisible(!this.companion.rescued && this.companion.alive);
 
     this.createZombies(saved);
@@ -212,8 +225,11 @@ export class WorldScene extends Phaser.Scene {
     this.performanceMonitor.beginFrame(rawDelta);
     this.pathfindingWorkThisFrame = 0;
     this.handlePanelKeys();
+    this.capturePointerWorldSnapshot();
     if (this.inventoryPanel.isOpen() || this.pauseMenu.isOpen()) {
       this.player.updateView(this.simulationTime);
+      this.updateCamera(rawDelta, false);
+      this.recordNavigationDiagnostics();
       this.performanceMonitor.update(time, this.activeZombieCount);
       return;
     }
@@ -236,6 +252,18 @@ export class WorldScene extends Phaser.Scene {
     this.noise.prune(this.simulationTime);
     this.updateWorldTint();
     this.recomputeFog(false);
+    this.updateCamera(rawDelta, this.pointerInsideGame);
+    if (this.minimap.isOpen()) {
+      this.minimap.update(time, {
+        player: this.player.position,
+        companion: this.companion.position,
+        companionRescued: this.companion.rescued,
+        companionAlive: this.companion.alive,
+        collectedParts: this.collectedParts.size,
+        defenseActive: this.defenseActive,
+        cameraWorldView: this.cameras.main.worldView,
+      });
+    }
     this.updateInteractionPrompt();
 
     if (this.simulationTime >= this.nextHudAt) {
@@ -245,7 +273,34 @@ export class WorldScene extends Phaser.Scene {
     if (this.infection.isGameOver(this.player.vitals)) {
       this.finishGame(false, this.player.vitals.infection >= 100 ? "감염이 전신으로 퍼졌습니다." : "도시에서 쓰러졌습니다.");
     }
+    this.recordNavigationDiagnostics();
     this.performanceMonitor.update(time, this.activeZombieCount);
+  }
+
+  private capturePointerWorldSnapshot(): void {
+    const pointer = this.input.activePointer;
+    this.cameras.main.getWorldPoint(pointer.x, pointer.y, this.pointerWorldSnapshot);
+    this.pointerInsideGame = this.cameraController.isPointerInsideGame() && document.hasFocus();
+  }
+
+  private updateCamera(deltaMs: number, allowCursorLead: boolean): void {
+    this.cameraController.update({
+      playerX: this.player.position.x,
+      playerY: this.player.position.y,
+      pointerX: this.pointerWorldSnapshot.x,
+      pointerY: this.pointerWorldSnapshot.y,
+      pointerInsideGame: allowCursorLead,
+    }, deltaMs);
+  }
+
+  private recordNavigationDiagnostics(): void {
+    this.performanceMonitor.recordCameraAndMinimap(this.cameraController.getZoom(), this.minimap.isOpen());
+    this.performanceMonitor.recordCompanion(
+      distance(this.player.position, this.companion.position),
+      this.companion.navigation.catchUpMode,
+      getCompanionStuckDuration(this.companion.navigation, this.simulationTime),
+      this.companion.navigation.repathCount,
+    );
   }
 
   private resetRuntimeCollections(): void {
@@ -273,8 +328,11 @@ export class WorldScene extends Phaser.Scene {
     const camera = this.cameras.main;
     camera.setBounds(0, 0, WORLD_SIZE, WORLD_SIZE);
     camera.setRoundPixels(true);
-    camera.startFollow(this.player.view.container, true, 0.16, 0.16);
+    camera.stopFollow();
     camera.setBackgroundColor(0x080b0d);
+    this.cameraController = new CameraController(camera, this.game.canvas, () => (
+      !this.inventoryPanel?.isOpen() && !this.pauseMenu?.isOpen() && !this.gameEnded
+    ));
   }
 
   private configureInput(): void {
@@ -283,12 +341,13 @@ export class WorldScene extends Phaser.Scene {
     this.keys = keyboard.addKeys({
       up: "W", down: "S", left: "A", right: "D", run: "SHIFT",
       interact: "E", reload: "R", flashlight: "F", command: "Q",
-      inventory: "TAB", pause: "ESC",
+      inventory: "TAB", map: "M", pause: "ESC",
       quick1: "ONE", quick2: "TWO", quick3: "THREE", quick4: "FOUR", quick5: "FIVE",
     }) as unknown as WorldKeys;
     this.input.on("pointerdown", (pointer: Phaser.Input.Pointer) => {
       if (pointer.button !== 0 || this.inventoryPanel?.isOpen() || this.pauseMenu?.isOpen()) return;
-      const world = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
+      const world = this.cameras.main.getWorldPoint(pointer.x, pointer.y, this.pointerWorldSnapshot);
+      this.player.aimAngle = Math.atan2(world.y - this.player.position.y, world.x - this.player.position.x);
       if (this.pendingCompanionCommand) {
         this.applyPendingCompanionCommand(world);
         return;
@@ -304,6 +363,7 @@ export class WorldScene extends Phaser.Scene {
     this.uiRoot.className = "game-ui-root";
     parent.append(this.uiRoot);
     this.hud = new Hud(this.uiRoot);
+    this.minimap = new MinimapPanel(this.uiRoot, this.map, this.fog);
     this.inventoryPanel = new InventoryPanel(this.uiRoot, {
       onClose: () => this.inventoryPanel.hide(),
       onCraft: (recipeId) => this.craft(recipeId),
@@ -327,17 +387,24 @@ export class WorldScene extends Phaser.Scene {
     if (Phaser.Input.Keyboard.JustDown(this.keys.inventory) && !this.pauseMenu.isOpen()) {
       if (this.inventoryPanel.isOpen()) this.inventoryPanel.hide();
       else {
+        this.minimap.hide();
         this.commandPanel.hide();
         this.pendingCompanionCommand = undefined;
         this.inventoryPanel.show(this.getInventoryPanelState());
       }
     }
-    if (Phaser.Input.Keyboard.JustDown(this.keys.pause) && !this.inventoryPanel.isOpen()) {
+    if (Phaser.Input.Keyboard.JustDown(this.keys.pause)) {
+      if (this.minimap.isOpen()) {
+        this.minimap.hide();
+        return;
+      }
+      if (this.inventoryPanel.isOpen()) return;
       this.commandPanel.hide();
       this.pendingCompanionCommand = undefined;
       this.pauseMenu.toggle();
     }
     if (this.inventoryPanel.isOpen() || this.pauseMenu.isOpen()) return;
+    if (Phaser.Input.Keyboard.JustDown(this.keys.map)) this.minimap.toggle();
     if (Phaser.Input.Keyboard.JustDown(this.keys.command)) {
       if (!this.companion.rescued || !this.companion.alive) this.hud.showMessage("먼저 생존자를 구조해야 합니다.");
       else {
@@ -348,9 +415,10 @@ export class WorldScene extends Phaser.Scene {
   }
 
   private updatePlayer(deltaSeconds: number): void {
-    const pointer = this.input.activePointer;
-    const worldPointer = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
-    this.player.aimAngle = Math.atan2(worldPointer.y - this.player.position.y, worldPointer.x - this.player.position.x);
+    this.player.aimAngle = Math.atan2(
+      this.pointerWorldSnapshot.y - this.player.position.y,
+      this.pointerWorldSnapshot.x - this.player.position.x,
+    );
 
     if (this.player.reloadingUntil > 0 && this.simulationTime >= this.player.reloadingUntil) this.finishReload();
     if (Phaser.Input.Keyboard.JustDown(this.keys.reload)) this.startReload();
@@ -733,9 +801,27 @@ export class WorldScene extends Phaser.Scene {
       return;
     }
     this.formation = updateFormationDirection(this.formation, this.player.movement, deltaSeconds * 1_000);
-    let combatTarget = this.companion.focusTargetId ? this.zombies.find((zombie) => zombie.id === this.companion.focusTargetId && zombie.isAlive()) : undefined;
-    if (!combatTarget) {
-      let nearestDistanceSquared = 105 * 105;
+    const distanceToPlayer = distance(this.companion.position, this.player.position);
+    this.companion.navigation.catchUpMode = updateCatchUpMode(
+      this.companion.navigation.catchUpMode,
+      distanceToPlayer,
+      this.companion.command,
+    );
+
+    const explicitFocus = this.companion.command === "focus" && Boolean(this.companion.focusTargetId);
+    let combatTarget = explicitFocus
+      ? this.zombies.find((zombie) => zombie.id === this.companion.focusTargetId && zombie.isAlive())
+      : undefined;
+    if (explicitFocus && !combatTarget) {
+      this.companion.command = "follow";
+      this.companion.focusTargetId = undefined;
+      this.companion.navigation.catchUpMode = updateCatchUpMode(false, distanceToPlayer, "follow");
+    }
+    if (!combatTarget && this.companion.command !== "focus") {
+      const automaticTargetDistance = this.companion.navigation.catchUpMode
+        ? COMPANION_MOVEMENT.immediateThreatDistance
+        : 105;
+      let nearestDistanceSquared = automaticTargetDistance * automaticTargetDistance;
       for (const zombie of this.zombies) {
         if (!zombie.isAlive()) continue;
         const candidateDistance = squaredDistance(this.companion.position, zombie.position);
@@ -743,10 +829,6 @@ export class WorldScene extends Phaser.Scene {
         nearestDistanceSquared = candidateDistance;
         combatTarget = zombie;
       }
-    }
-    if (this.companion.command === "focus" && this.companion.focusTargetId && !this.zombies.some((zombie) => zombie.id === this.companion.focusTargetId && zombie.isAlive())) {
-      this.companion.command = "follow";
-      this.companion.focusTargetId = undefined;
     }
 
     if (combatTarget && this.collision.hasLineOfSight(this.companion.position, combatTarget.position) && distance(this.companion.position, combatTarget.position) <= 88) {
@@ -771,36 +853,132 @@ export class WorldScene extends Phaser.Scene {
       }
     }
 
-    let goal: Point | undefined;
-    if (this.companion.command === "follow") goal = getFormationSlot(this.player.position, this.formation);
-    if (this.companion.command === "move") goal = this.companion.commandTarget;
-    if (this.companion.command === "focus" && combatTarget) goal = combatTarget.position;
-    if (this.companion.command === "hold") goal = this.companion.commandTarget;
-    if (combatTarget && this.companion.health > 24 && distance(this.companion.position, combatTarget.position) > 70 && this.companion.command !== "hold") goal = combatTarget.position;
+    let requestedGoal: Point | undefined;
+    if (this.companion.command === "follow") {
+      const formationDistance = this.companion.navigation.catchUpMode ? 20 : 28;
+      requestedGoal = getFormationSlot(this.player.position, this.formation, formationDistance);
+      if (distanceToPlayer >= COMPANION_MOVEMENT.emergencyDistance) requestedGoal = this.player.position;
+    }
+    if (this.companion.command === "move") requestedGoal = this.companion.commandTarget;
+    if (this.companion.command === "focus" && combatTarget) requestedGoal = combatTarget.position;
+    if (this.companion.command === "hold") requestedGoal = this.companion.commandTarget;
+    if (combatTarget && this.companion.health > 24) {
+      const targetDistance = distance(this.companion.position, combatTarget.position);
+      const shouldChase = shouldOverrideCompanionGoalForCombat(
+        this.companion.command,
+        explicitFocus,
+        this.companion.navigation.catchUpMode,
+        targetDistance,
+      );
+      if (targetDistance > 70 && shouldChase) {
+        requestedGoal = combatTarget.position;
+      }
+    }
+
+    const stuckDuration = getCompanionStuckDuration(this.companion.navigation, this.simulationTime);
+    const searchRadius = stuckDuration >= COMPANION_MOVEMENT.severeStuckThresholdMs
+      || distanceToPlayer >= COMPANION_MOVEMENT.emergencyDistance ? 4 : 2;
+    const goal = requestedGoal
+      ? findNearestWalkableGoal(
+        requestedGoal,
+        (x, y) => this.collision.canOccupyCircle(x, y, BALANCE.companionRadius),
+        searchRadius,
+        this.companionGoal,
+      ) ?? undefined
+      : undefined;
 
     let moving = false;
     if (goal && distance(this.companion.position, goal) > 10 && !(this.companion.command === "hold" && combatTarget)) {
-      moving = true;
+      const goalTile = getWorldTileIndex(goal);
+      if (goalTile !== this.companion.navigation.lastGoalTile) {
+        this.companion.navigation.lastGoalTile = goalTile;
+        this.companion.path = [];
+        this.companion.pathIndex = 0;
+        this.companion.nextPathAt = Math.min(this.companion.nextPathAt, this.simulationTime);
+      }
+      const currentWaypoint = this.companion.path[this.companion.pathIndex];
+      if (currentWaypoint && !this.collision.canOccupyCircle(currentWaypoint.x, currentWaypoint.y, BALANCE.companionRadius)) {
+        this.companion.path = [];
+        this.companion.pathIndex = 0;
+        this.companion.nextPathAt = this.simulationTime;
+      }
+
       if (this.simulationTime >= this.companion.nextPathAt) {
         const nextPath = this.tryFindPath(this.companion.position, goal, 700);
-        if (nextPath) {
-          this.companion.nextPathAt = this.simulationTime + 500;
+        if (nextPath !== undefined) {
+          const repathDelay = stuckDuration > 0 ? 120 : this.companion.navigation.catchUpMode ? 280 : 500;
+          this.companion.nextPathAt = this.simulationTime + repathDelay;
           this.companion.path = nextPath;
           this.companion.pathIndex = 0;
-        } else {
-          this.companion.nextPathAt = this.simulationTime + 60;
+          markCompanionRepath(this.companion.navigation);
         }
       }
-      const waypoint = this.companion.path[this.companion.pathIndex] ?? goal;
-      if (distance(this.companion.position, waypoint) < 7 && this.companion.pathIndex < this.companion.path.length - 1) this.companion.pathIndex += 1;
+
+      while (this.companion.pathIndex < this.companion.path.length - 1) {
+        const waypoint = this.companion.path[this.companion.pathIndex];
+        const nextWaypoint = this.companion.path[this.companion.pathIndex + 1];
+        if (!waypoint || !nextWaypoint) break;
+        if (distance(this.companion.position, waypoint) < 7
+          || this.collision.canTraverseCircle(this.companion.position, nextWaypoint, BALANCE.companionRadius)) {
+          this.companion.pathIndex += 1;
+        } else break;
+      }
+      const finalWaypoint = this.companion.path[this.companion.path.length - 1];
+      if (finalWaypoint && this.companion.pathIndex === this.companion.path.length - 1
+        && distance(this.companion.position, finalWaypoint) < 7) {
+        this.companion.path = [];
+        this.companion.pathIndex = 0;
+      }
+
       const target = this.companion.path[this.companion.pathIndex] ?? goal;
-      const direction = normalize({ x: target.x - this.companion.position.x, y: target.y - this.companion.position.y });
-      this.companion.position = this.collision.moveCircle(this.companion.position, direction.x * 68 * deltaSeconds, direction.y * 68 * deltaSeconds, BALANCE.companionRadius);
-      if (!combatTarget) this.companion.aimAngle = Math.atan2(direction.y, direction.x);
+      const hasSafeTarget = this.companion.path.length > 0
+        || this.collision.canTraverseCircle(this.companion.position, target, BALANCE.companionRadius);
+      if (hasSafeTarget) {
+        const followSpeed = this.companion.command === "follow"
+          ? getCompanionFollowSpeed(distanceToPlayer)
+          : COMPANION_MOVEMENT.baseSpeed;
+        const targetDistance = distance(this.companion.position, target);
+        const arrivalScale = Math.max(0.35, Math.min(1, targetDistance / 18));
+        const stepDistance = Math.min(followSpeed * arrivalScale * deltaSeconds, 7);
+        const direction = chooseLocalSteering(
+          this.companion.position,
+          target,
+          stepDistance,
+          (x, y) => this.collision.canOccupyCircle(x, y, BALANCE.companionRadius),
+          this.companionSteering,
+        );
+        if (direction) {
+          const previousX = this.companion.position.x;
+          const previousY = this.companion.position.y;
+          this.companion.position = this.collision.moveCircle(
+            this.companion.position,
+            direction.x * stepDistance,
+            direction.y * stepDistance,
+            BALANCE.companionRadius,
+          );
+          moving = Math.hypot(this.companion.position.x - previousX, this.companion.position.y - previousY) >= 0.05;
+          if (!moving) {
+            markCompanionBlocked(this.companion.navigation);
+            this.companion.nextPathAt = Math.min(this.companion.nextPathAt, this.simulationTime + 60);
+          }
+          if (!combatTarget) this.companion.aimAngle = Math.atan2(direction.y, direction.x);
+        } else {
+          markCompanionBlocked(this.companion.navigation);
+          this.companion.nextPathAt = Math.min(this.companion.nextPathAt, this.simulationTime + 60);
+        }
+      }
+
+      if (updateCompanionStuckState(this.companion.navigation, this.companion.position, this.simulationTime, true)) {
+        this.companion.path = [];
+        this.companion.pathIndex = 0;
+        this.companion.nextPathAt = Math.min(this.companion.nextPathAt, this.simulationTime + 80);
+      }
       if (this.companion.command === "move" && distance(this.companion.position, goal) < 12) {
         this.companion.command = "hold";
         this.companion.commandTarget = { ...this.companion.position };
       }
+    } else {
+      updateCompanionStuckState(this.companion.navigation, this.companion.position, this.simulationTime, false);
     }
     this.companion.updateView(time, this.fog.getStateAtWorld(this.companion.position.x, this.companion.position.y) === VisibilityState.Visible, moving);
   }
@@ -906,6 +1084,7 @@ export class WorldScene extends Phaser.Scene {
     if (view) updateDoorView(view, door.open);
     this.noise.emit({ x: tileCenter(door.tileX), y: tileCenter(door.tileY), intensity: NOISE_LEVELS.door, category: "door", createdAt: this.simulationTime });
     this.audio.play("door");
+    this.minimap.markWorldTileDirty(door.tileX, door.tileY);
     this.fogInvalidation.invalidate();
   }
 
@@ -1216,6 +1395,7 @@ export class WorldScene extends Phaser.Scene {
     }, this.clock, this.fires), this.collision);
     const calculationFinished = performance.now();
     this.fogRenderer.render();
+    this.minimap.markFogDirty(this.fog.getChangedIndices());
     const textureFinished = performance.now();
     this.performanceMonitor.recordFog(calculationFinished - calculationStarted, textureFinished - calculationFinished);
     this.fogInvalidation.commit(input);
@@ -1347,6 +1527,22 @@ export class WorldScene extends Phaser.Scene {
     if (!this.companion.alive) this.companion.view.setDead(true);
   }
 
+  private recoverCompanionFromBlockedSave(): void {
+    if (this.collision.canOccupyCircle(this.companion.position.x, this.companion.position.y, BALANCE.companionRadius)) return;
+    const recovered = findNearestWalkableGoal(
+      this.companion.position,
+      (x, y) => this.collision.canOccupyCircle(x, y, BALANCE.companionRadius),
+      6,
+      this.companionGoal,
+    );
+    if (!recovered) return;
+    this.companion.position = { x: recovered.x, y: recovered.y };
+    this.companion.navigation.lastProgressX = recovered.x;
+    this.companion.navigation.lastProgressY = recovered.y;
+    this.companion.navigation.lastProgressAt = this.simulationTime;
+    this.companion.view.setPosition(recovered.x, recovered.y);
+  }
+
   private applySearchedContainerViews(): void {
     this.searchedContainers.forEach((id) => this.mapViews.containerViews.get(id)?.setAlpha(0.4));
   }
@@ -1378,6 +1574,7 @@ export class WorldScene extends Phaser.Scene {
   }
 
   private shutdownUi(): void {
+    this.cameraController?.destroy();
     this.performanceMonitor?.destroy();
     this.effects?.destroy();
     this.fogRenderer?.destroy();
@@ -1385,6 +1582,7 @@ export class WorldScene extends Phaser.Scene {
     this.inventoryPanel?.destroy();
     this.commandPanel?.destroy();
     this.pauseMenu?.destroy();
+    this.minimap?.destroy();
     this.uiRoot?.remove();
   }
 }

@@ -1,6 +1,7 @@
 import type Phaser from "phaser";
 import { ACTOR_PALETTES, TopDownActorView } from "../rendering/generated-sprites";
 import type { Point } from "../systems/zombie-ai-system";
+import { createCompanionNavigationState, type CompanionNavigationState } from "../systems/companion-navigation";
 
 export type CompanionCommand = "follow" | "hold" | "move" | "focus";
 
@@ -20,9 +21,11 @@ export class Companion {
   path: Point[] = [];
   pathIndex = 0;
   nextPathAt = 0;
+  readonly navigation: CompanionNavigationState;
 
   constructor(scene: Phaser.Scene, position: Point) {
     this.position = { ...position };
+    this.navigation = createCompanionNavigationState(this.position);
     this.view = new TopDownActorView(scene, position.x, position.y, ACTOR_PALETTES.companion, true);
   }
 

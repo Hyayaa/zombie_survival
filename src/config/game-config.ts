@@ -10,6 +10,43 @@ export const FLASHLIGHT_AIM_BUCKETS = 32;
 export const SAVE_KEY = "last-block-save-v1";
 export const SAVE_VERSION = 2;
 
+export const CAMERA = {
+  zoomLevels: [0.55, 0.7, 0.85, 1, 1.2, 1.45, 1.7, 2] as const,
+  defaultZoom: 1,
+  maxCursorLead: 132,
+  followLerp: 0.17,
+} as const;
+
+export const VISION = {
+  dayRadius: 138,
+  duskEndRadius: 84,
+  nightRadius: 68,
+  dawnEndRadius: 118,
+  torchRadius: 170,
+  flashlightRadius: 300,
+  flashlightConeAngle: Math.PI * 0.34,
+  fireRadius: 76,
+  fireIntensity: 0.9,
+} as const;
+
+export const COMPANION_MOVEMENT = {
+  baseSpeed: 70,
+  catchUpEnterDistance: 120,
+  catchUpExitDistance: 72,
+  fullCatchUpDistance: 210,
+  maxCatchUpSpeed: 136,
+  emergencyDistance: 260,
+  immediateThreatDistance: 36,
+  stuckThresholdMs: 250,
+  severeStuckThresholdMs: 700,
+} as const;
+
+export const MINIMAP = {
+  size: MAP_TILES * 4,
+  pixelsPerTile: 4,
+  updateIntervalMs: 100,
+} as const;
+
 export const DEPTH = {
   ground: 0,
   item: 50,
