@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { LOCAL_MINIMAP_ZOOM_LEVELS, MINIMAP, WORLD_HEIGHT, WORLD_WIDTH } from "../config/game-config";
+import { FOG_CELL_SIZE, LOCAL_MINIMAP_ZOOM_LEVELS, MINIMAP, WORLD_HEIGHT, WORLD_WIDTH } from "../config/game-config";
 import { createCityBlockMap, TerrainType } from "../data/map-definitions";
-import { VisibilityState } from "../systems/fog-of-war-system";
-import { cameraViewportToFullMap, cycleMapMode, getLocalMapWindow, getLocalMarkerPosition, getLocalMinimapPixelsPerTile, getMinimapTerrain, getMinimapTileColor, getMinimapTileState, MINIMAP_COLORS, MinimapFogTracker, MinimapTerrain, MinimapTileState, shouldIterateZombieMarkers, shouldPauseSimulationForMap, shouldShowCompanion, shouldShowExtraction, shouldShowLocalZombie, shouldUpdateMinimap, stepLocalMinimapTiles, worldToFullMap } from "../ui/minimap";
+import { FogOfWarSystem, VisibilityState } from "../systems/fog-of-war-system";
+import { cameraViewportToFullMap, cycleMapMode, getFullMapFogStyle, getLocalMapWindow, getLocalMarkerPosition, getLocalMinimapPixelsPerTile, getMinimapTerrain, getMinimapTileColor, getMinimapTileState, MINIMAP_COLORS, MinimapFogTracker, MinimapTerrain, MinimapTileState, shouldIterateZombieMarkers, shouldPauseSimulationForMap, shouldShowCompanion, shouldShowExtraction, shouldShowFullCompanion, shouldShowLocalZombie, shouldUpdateMinimap, stepLocalMinimapTiles, worldToFullMap } from "../ui/minimap";
 
 function fakeFog(states: Map<string, VisibilityState>): { getStateAtCell(x: number, y: number): VisibilityState } { return { getStateAtCell: (x, y) => states.get(`${x},${y}`) ?? VisibilityState.Unknown }; }
 
@@ -73,19 +73,36 @@ describe("local and full map data", () => {
     const active = { position: { x: 64 * 24, y: 64 * 24 }, isAlive: () => true };
     const dead = { position: active.position, isAlive: () => false };
     const outside = { position: { x: 10 * 24, y: 10 * 24 }, isAlive: () => true };
-    expect(shouldShowLocalZombie(active, window)).toBe(true);
-    expect(shouldShowLocalZombie(dead, window)).toBe(false);
-    expect(shouldShowLocalZombie(outside, window)).toBe(false);
+    const visibleFog = { getStateAtWorld: () => VisibilityState.Visible };
+    const exploredFog = { getStateAtWorld: () => VisibilityState.Explored };
+    const unknownFog = { getStateAtWorld: () => VisibilityState.Unknown };
+    expect(shouldShowLocalZombie(active, window, visibleFog)).toBe(true);
+    expect(shouldShowLocalZombie(active, window, exploredFog)).toBe(false);
+    expect(shouldShowLocalZombie(active, window, unknownFog)).toBe(false);
+    expect(shouldShowLocalZombie(dead, window, visibleFog)).toBe(false);
+    expect(shouldShowLocalZombie(outside, window, visibleFog)).toBe(false);
     expect(shouldIterateZombieMarkers("local")).toBe(true);
     expect(shouldIterateZombieMarkers("hidden")).toBe(false);
     expect(shouldIterateZombieMarkers("full")).toBe(false);
     expect(MINIMAP_COLORS.zombie).toBe(0xc9403c);
   });
 
-  it("never leaks terrain color for unknown local tiles while full uses bright terrain", () => {
+  it("covers full-map terrain with distinct unknown and explored fog overlays", () => {
     expect(getMinimapTileColor(MinimapTerrain.Road, MinimapTileState.Unknown)).toBe(MINIMAP_COLORS.unknown);
     expect(getMinimapTileColor(MinimapTerrain.Wall, MinimapTileState.Unknown)).toBe(MINIMAP_COLORS.unknown);
     expect(getMinimapTileColor(MinimapTerrain.Floor, MinimapTileState.Visible)).toBe(MINIMAP_COLORS.floorVisible);
+    expect(getFullMapFogStyle(MinimapTileState.Unknown)).toContain("0.98");
+    expect(getFullMapFogStyle(MinimapTileState.Explored)).toContain("0.74");
+    expect(getFullMapFogStyle(MinimapTileState.Visible)).toBeUndefined();
+  });
+
+  it("reads full-map fog without mutating the real exploration state", () => {
+    const fog = new FogOfWarSystem(96, 96, FOG_CELL_SIZE, 44);
+    const before = fog.exportExplored();
+    for (let tileY = 0; tileY < 4; tileY += 1) {
+      for (let tileX = 0; tileX < 4; tileX += 1) getMinimapTileState(fog, tileX, tileY);
+    }
+    expect(fog.exportExplored()).toEqual(before);
   });
 
   it("maps all 128 tiles into the 512px full canvas", () => {
@@ -107,6 +124,9 @@ describe("local and full map data", () => {
     expect(shouldShowCompanion(false, true)).toBe(false);
     expect(shouldShowCompanion(true, true)).toBe(true);
     expect(shouldShowCompanion(true, false)).toBe(false);
+    expect(shouldShowFullCompanion(false, true)).toBe(false);
+    expect(shouldShowFullCompanion(true, true)).toBe(true);
+    expect(shouldShowFullCompanion(true, false)).toBe(false);
     expect(shouldShowExtraction(MinimapTileState.Unknown, 2, false)).toBe(false);
     expect(shouldShowExtraction(MinimapTileState.Explored, 0, false)).toBe(true);
   });

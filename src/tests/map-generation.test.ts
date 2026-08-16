@@ -49,6 +49,13 @@ describe("expanded road-first city map", () => {
     const result = validateMap(map);
     expect(result.errors, result.errors.join("\n")).toEqual([]);
     expect(result.valid).toBe(true);
+    expect(map.companionSpawns).toHaveLength(4);
+    expect(new Set(map.companionSpawns.map((spawn) => spawn.id)).size).toBe(4);
+    expect(new Set(map.companionSpawns.map((spawn) => `${spawn.tileX},${spawn.tileY}`)).size).toBe(4);
+    const companionBuildings = map.companionSpawns.map((spawn) => map.buildings.find((building) => building.footprintTiles.includes(spawn.tileY * map.widthTiles + spawn.tileX))!);
+    expect(new Set(companionBuildings.map((building) => building.id)).size).toBe(4);
+    expect(companionBuildings.some((building) => building.orientation === 45 || building.orientation === 135)).toBe(true);
+    expect(companionBuildings.every((building) => building.kind !== "safehouse")).toBe(true);
     expect(map.containers.length).toBeGreaterThanOrEqual(45);
     expect(map.containers.length).toBeLessThanOrEqual(65);
     expect(map.groundItems.length).toBeGreaterThanOrEqual(12);
@@ -72,6 +79,7 @@ describe("expanded road-first city map", () => {
       .toEqual(second.buildings.map(({ id, orientation, footprintTiles, entranceTiles }) => ({ id, orientation, footprintTiles, entranceTiles })));
     expect(first.containers).toEqual(second.containers);
     expect(first.zombieSpawns).toEqual(second.zombieSpawns);
+    expect(first.companionSpawns).toEqual(second.companionSpawns);
   });
 
   it("opens doors deterministically at an aggregate rate near 80 percent", () => {

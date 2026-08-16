@@ -1,8 +1,12 @@
 import { describe, expect, it } from "vitest";
+import { MAX_PATHFINDING_PER_FRAME } from "../config/game-config";
 import { COMPANION_MOVEMENT, TILE_SIZE } from "../config/game-config";
 import { chooseLocalSteering, createCompanionNavigationState, findNearestWalkableGoal, getCompanionFollowSpeed, getCompanionStuckDuration, shouldOverrideCompanionGoalForCombat, shouldPursueAutomaticTarget, updateCatchUpMode, updateCompanionStuckState } from "../systems/companion-navigation";
 
 describe("companion navigation", () => {
+  it("keeps the shared pathfinding budget capped at four jobs per frame", () => {
+    expect(MAX_PATHFINDING_PER_FRAME).toBe(4);
+  });
   it("keeps an open formation slot and replaces a blocked slot with a nearby tile center", () => {
     const requested = { x: 100, y: 100 };
     expect(findNearestWalkableGoal(requested, () => true)).toEqual(requested);

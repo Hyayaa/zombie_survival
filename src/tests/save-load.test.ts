@@ -25,7 +25,7 @@ function saveFixture(): SaveGame {
     clock: { elapsedSeconds: 52 },
     inventory: [{ itemId: "cloth", quantity: 2 }, null],
     quickslots: ["bandage", null, null, null, null],
-    companion: { x: 30, y: 40, health: 80, rescued: false, alive: true, command: "follow" },
+    companions: [0, 1, 2, 3].map((index) => ({ id: `companion-${index}`, x: 30 + index * 4, y: 40 + index * 4, health: 80, rescued: index === 0, alive: true, command: "follow" as const })),
     collectedParts: [],
     searchedContainers: ["drawer-1"],
     openedDoors: [],
@@ -64,12 +64,14 @@ describe("SaveSystem", () => {
     const storage = new MemoryStorage();
     const saves = new SaveSystem(storage, "test");
     const fixture = saveFixture();
-    const legacy = { ...fixture, version: 3, player: { ...fixture.player, health: 67 }, openedDoors: ["door-building-00"] } as Record<string, unknown>;
+    const { id: _id, ...legacyCompanion } = fixture.companions[0]!;
+    const legacy = { ...fixture, version: 3, companion: legacyCompanion, player: { ...fixture.player, health: 67 }, openedDoors: ["door-building-00"] } as Record<string, unknown>;
+    delete legacy.companions;
     delete legacy.doorStates;
     delete legacy.barricades;
     storage.setItem("test", JSON.stringify(legacy));
     const loaded = saves.load();
-    expect(loaded?.version).toBe(4);
+    expect(loaded?.version).toBe(5);
     expect(loaded?.player.health).toBe(67);
     expect(loaded?.inventory).toEqual(fixture.inventory);
     expect(loaded?.exploredFog).toEqual(fixture.exploredFog);
@@ -77,20 +79,31 @@ describe("SaveSystem", () => {
     expect(loaded?.doorStates.find((door) => door.id === "door-building-00")).toMatchObject({ open: true, health: 48, destroyed: false });
     expect(loaded?.doorStates.find((door) => door.id !== "door-building-00")?.open).toBe(false);
     expect(loaded?.barricades).toEqual([]);
+    expect(loaded?.companions).toHaveLength(4);
+    expect(loaded?.companions[0]).toMatchObject({ id: "companion-0", health: 80, rescued: true });
     expect(saves.consumeIncompatibleMapReset()).toBe(false);
   });
 
-  it("round-trips damaged doors and barricades in v4", () => {
+  it("migrates a v4 single companion while preserving obstacle state", () => {
     const storage = new MemoryStorage();
     const saves = new SaveSystem(storage, "test");
+    const current = saveFixture();
+    const { id: _id, ...legacyCompanion } = current.companions[0]!;
     const fixture = {
-      ...saveFixture(),
+      ...current,
+      version: 4,
+      companions: undefined,
+      companion: { ...legacyCompanion, health: 63, targetX: 88, targetY: 92 },
       doorStates: [{ id: "door-building-00", open: false, health: 17, destroyed: false }],
       barricades: [{ id: "b-1", tileX: 10, tileY: 11, health: 31, maxHealth: 96 }],
     };
-    expect(saves.save(fixture)).toBe(true);
-    expect(saves.load()?.doorStates[0]?.health).toBe(17);
-    expect(saves.load()?.barricades[0]).toMatchObject({ id: "b-1", health: 31, maxHealth: 96 });
+    storage.setItem("test", JSON.stringify(fixture));
+    const loaded = saves.load();
+    expect(loaded?.version).toBe(5);
+    expect(loaded?.companions[0]).toMatchObject({ id: "companion-0", health: 63, targetX: 88, targetY: 92 });
+    expect(loaded?.companions.slice(1).every((companion) => !companion.rescued && companion.health === 80)).toBe(true);
+    expect(loaded?.doorStates[0]?.health).toBe(17);
+    expect(loaded?.barricades[0]).toMatchObject({ id: "b-1", health: 31, maxHealth: 96 });
   });
 
   it("round-trips empty and fully explored fog with RLE", () => {

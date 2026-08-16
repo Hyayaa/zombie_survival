@@ -4,10 +4,10 @@ import { GameClock } from "../core/game-clock";
 import { createCityBlockMap } from "../data/map-definitions";
 import { CollisionSystem } from "../systems/collision-system";
 import { FogInvalidationTracker, FogOfWarSystem, VisibilityState, type FogInvalidationInput, type VisionGrid, type VisionSource } from "../systems/fog-of-war-system";
-import { buildVisionSources } from "../systems/lighting-system";
+import { buildVisionSources, getVisionProfile, shouldConsumeFlashlightCharge } from "../systems/lighting-system";
 
 function source(overrides: Partial<VisionSource> = {}): VisionSource {
-  return { x: 51, y: 63, radius: 42, intensity: 1, sourceType: "player", ...overrides };
+  return { id: "test-source", x: 51, y: 63, radius: 42, intensity: 1, sourceType: "player", ...overrides };
 }
 
 function grid(blocked: (x: number, y: number) => boolean = () => false): VisionGrid {
@@ -15,21 +15,39 @@ function grid(blocked: (x: number, y: number) => boolean = () => false): VisionG
 }
 
 describe("FogOfWarSystem", () => {
-  it("uses the reduced base vision and extended flashlight values", () => {
+  it("uses phase-based ambient cones and disables flashlight contribution in full daylight", () => {
     const clock = new GameClock();
-    expect(clock.getBaseVisionRadius()).toBe(138);
-    clock.restore({ elapsedSeconds: BALANCE.daySeconds + BALANCE.duskSeconds - 0.001 });
-    expect(clock.getBaseVisionRadius()).toBeCloseTo(84, 2);
-    clock.restore({ elapsedSeconds: BALANCE.daySeconds + BALANCE.duskSeconds });
-    expect(clock.getBaseVisionRadius()).toBe(68);
-    clock.restore({ elapsedSeconds: BALANCE.daySeconds + BALANCE.duskSeconds + BALANCE.nightSeconds + BALANCE.dawnSeconds });
-    expect(clock.getBaseVisionRadius()).toBe(118);
+    expect(getVisionProfile(clock)).toMatchObject({ darknessFactor: 0, ambientRadius: 420, ambientConeAngle: 2.2, flashlightFactor: 0 });
+    const dayOff = buildVisionSources({ x: 12, y: 12, aimAngle: 0, flashlightOn: false, torchRemaining: 1 }, clock, [{ id: "fire-a", x: 30, y: 30, remaining: 1 }]);
+    const dayOn = buildVisionSources({ x: 12, y: 12, aimAngle: 0, flashlightOn: true, torchRemaining: 1 }, clock, [{ id: "fire-a", x: 30, y: 30, remaining: 1 }]);
+    expect(dayOn).toEqual(dayOff);
+    expect(dayOn.find((candidate) => candidate.sourceType === "ambient-cone")).toMatchObject({ radius: 420, coneAngle: 2.2 });
+    expect(dayOn.find((candidate) => candidate.sourceType === "proximity")?.radius).toBe(36);
+    expect(shouldConsumeFlashlightCharge(true, 100, clock)).toBe(false);
 
-    const sources = buildVisionSources({ x: 12, y: 12, aimAngle: 0, flashlightOn: true, torchRemaining: 1 }, clock, [{ x: 30, y: 30, remaining: 1 }]);
-    expect(sources.find((candidate) => candidate.sourceType === "flashlight")).toMatchObject({ radius: 300, coneAngle: VISION.flashlightConeAngle });
-    expect(sources.find((candidate) => candidate.sourceType === "torch")?.radius).toBe(170);
-    expect(sources.find((candidate) => candidate.sourceType === "fire")?.radius).toBe(76);
-    expect(VISION.flashlightRadius).toBeGreaterThan(VISION.dayRadius);
+    clock.restore({ elapsedSeconds: BALANCE.daySeconds + BALANCE.duskSeconds });
+    expect(getVisionProfile(clock)).toMatchObject({ darknessFactor: 1, ambientRadius: 78, ambientConeAngle: 0.78, flashlightFactor: 1 });
+    const night = buildVisionSources({ x: 12, y: 12, aimAngle: 0, flashlightOn: true, torchRemaining: 1 }, clock, []);
+    expect(night.find((candidate) => candidate.sourceType === "flashlight")).toMatchObject({ radius: 300, coneAngle: VISION.flashlightConeAngle });
+    expect(shouldConsumeFlashlightCharge(true, 100, clock)).toBe(true);
+    expect(VISION.dayConeRadius).toBeGreaterThan(VISION.flashlightRadius);
+    expect(VISION.flashlightRadius).toBeGreaterThan(VISION.nightBareConeRadius);
+    expect(VISION.dayConeAngle).toBeGreaterThan(VISION.flashlightConeAngle);
+    expect(VISION.flashlightConeAngle).toBeGreaterThan(VISION.nightBareConeAngle);
+  });
+
+  it("interpolates darkness smoothly through dusk and dawn", () => {
+    const clock = new GameClock();
+    clock.restore({ elapsedSeconds: BALANCE.daySeconds + BALANCE.duskSeconds / 2 });
+    const dusk = getVisionProfile(clock);
+    expect(dusk.darknessFactor).toBeCloseTo(0.5, 4);
+    expect(dusk.ambientRadius).toBeLessThan(VISION.dayConeRadius);
+    expect(dusk.ambientRadius).toBeGreaterThan(VISION.nightBareConeRadius);
+    expect(dusk.flashlightFactor).toBeGreaterThan(0);
+    clock.restore({ elapsedSeconds: BALANCE.daySeconds + BALANCE.duskSeconds + BALANCE.nightSeconds + BALANCE.dawnSeconds / 2 });
+    const dawn = getVisionProfile(clock);
+    expect(dawn.darknessFactor).toBeCloseTo(0.5, 4);
+    expect(dawn.ambientRadius).toBeCloseTo(dusk.ambientRadius, 4);
   });
 
   it("uses eight 3px fog cells per 24px world tile", () => {
@@ -45,7 +63,10 @@ describe("FogOfWarSystem", () => {
 
   it("does zero idle recomputes until a fog input is invalidated", () => {
     const tracker = new FogInvalidationTracker();
-    const input: FogInvalidationInput = { playerCell: 10, aimBucket: -1, visionRevision: 2, radiusBucket: 50, torchActive: false };
+    const input: FogInvalidationInput = {
+      playerCell: 10, ambientAimBucket: 3, visionRevision: 2, ambientRadiusBucket: 50,
+      ambientAngleBucket: 22, flashlightActive: false, flashlightRadiusBucket: -1, torchActive: false,
+    };
     expect(tracker.shouldRecompute(input)).toBe(true);
     tracker.commit(input);
     let idleRecomputes = 0;
@@ -54,6 +75,7 @@ describe("FogOfWarSystem", () => {
     }
     expect(idleRecomputes).toBe(0);
     expect(tracker.shouldRecompute({ ...input, playerCell: 11 })).toBe(true);
+    expect(tracker.shouldRecompute({ ...input, flashlightActive: false })).toBe(false);
     tracker.invalidate();
     expect(tracker.shouldRecompute(input)).toBe(true);
   });
@@ -63,6 +85,28 @@ describe("FogOfWarSystem", () => {
     fog.recompute([source()], grid());
     expect(fog.getStateAtWorld(51, 63)).toBe(VisibilityState.Visible);
     expect(fog.getStateAtWorld(114, 6)).toBe(VisibilityState.Unknown);
+  });
+
+  it("reveals a long day cone, keeps distant rear cells hidden, and preserves rear proximity", () => {
+    const fog = new FogOfWarSystem(1_000, 1_000, FOG_CELL_SIZE, 811);
+    const clock = new GameClock();
+    const player = { x: 500, y: 500, aimAngle: 0, flashlightOn: false, torchRemaining: 0 };
+    fog.recompute(buildVisionSources(player, clock, []), grid());
+    expect(fog.getStateAtWorld(780, 500)).toBe(VisibilityState.Visible);
+    expect(fog.getStateAtWorld(250, 500)).not.toBe(VisibilityState.Visible);
+    expect(fog.getStateAtWorld(480, 500)).toBe(VisibilityState.Visible);
+  });
+
+  it("requires the flashlight for distant forward vision at night", () => {
+    const clock = new GameClock();
+    clock.restore({ elapsedSeconds: BALANCE.daySeconds + BALANCE.duskSeconds });
+    const player = { x: 400, y: 400, aimAngle: 0, flashlightOn: false, torchRemaining: 0 };
+    const bare = new FogOfWarSystem(900, 900, FOG_CELL_SIZE, 812);
+    bare.recompute(buildVisionSources(player, clock, []), grid());
+    expect(bare.getStateAtWorld(600, 400)).not.toBe(VisibilityState.Visible);
+    const lit = new FogOfWarSystem(900, 900, FOG_CELL_SIZE, 812);
+    lit.recompute(buildVisionSources({ ...player, flashlightOn: true }, clock, []), grid());
+    expect(lit.getStateAtWorld(600, 400)).toBe(VisibilityState.Visible);
   });
 
   it("keeps previously seen cells explored after the source moves", () => {
@@ -92,6 +136,22 @@ describe("FogOfWarSystem", () => {
     const firstStates = Array.from({ length: first.widthCells * first.heightCells }, (_, index) => first.getStateAtCell(index % first.widthCells, Math.floor(index / first.widthCells)));
     const secondStates = Array.from({ length: second.widthCells * second.heightCells }, (_, index) => second.getStateAtCell(index % second.widthCells, Math.floor(index / second.widthCells)));
     expect(firstStates).toEqual(secondStates);
+  });
+
+  it("keeps multi-source visibility stable when source order changes", () => {
+    const sources = [
+      source({ id: "ambient", x: 90, y: 90, radius: 66, sourceType: "ambient-cone", direction: 0, coneAngle: 2.2 }),
+      source({ id: "torch", x: 120, y: 72, radius: 45, sourceType: "torch" }),
+      source({ id: "fire:stable", x: 54, y: 108, radius: 36, sourceType: "fire" }),
+    ];
+    const forward = new FogOfWarSystem(180, 180, FOG_CELL_SIZE, 778);
+    const reversed = new FogOfWarSystem(180, 180, FOG_CELL_SIZE, 778);
+    forward.recompute(sources, grid());
+    reversed.recompute([...sources].reverse(), grid());
+    for (let index = 0; index < forward.widthCells * forward.heightCells; index += 1) {
+      expect(forward.getStateAtCell(index % forward.widthCells, Math.floor(index / forward.widthCells)))
+        .toBe(reversed.getStateAtCell(index % reversed.widthCells, Math.floor(index / reversed.widthCells)));
+    }
   });
 
   it("keeps cells outside the flashlight cone hidden", () => {
