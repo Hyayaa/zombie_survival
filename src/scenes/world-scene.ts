@@ -1,9 +1,10 @@
 import Phaser from "phaser";
-import { BALANCE, COMPANION_MOVEMENT, DEPTH, FLASHLIGHT_AIM_BUCKETS, FOG_CELL_SIZE, LOGICAL_HEIGHT, LOGICAL_WIDTH, SAVE_KEY, SAVE_VERSION, TILE_SIZE, WORLD_SIZE } from "../config/game-config";
+import { BALANCE, COMPANION_MOVEMENT, DEPTH, FLASHLIGHT_AIM_BUCKETS, FOG_CELL_SIZE, LOGICAL_HEIGHT, LOGICAL_WIDTH, MAP_ID, MAP_VERSION, SAVE_KEY, SAVE_VERSION, TILE_SIZE, WORLD_HEIGHT, WORLD_WIDTH } from "../config/game-config";
 import { GameClock } from "../core/game-clock";
 import type { SaveGame } from "../core/save-state";
 import { SeededRng } from "../core/seeded-rng";
 import { createCityBlockMap, type ContainerDefinition, type DoorDefinition, type WorldObstacle } from "../data/map-definitions";
+import { assertValidMap } from "../data/map-validation";
 import { getItemDefinition } from "../data/item-definitions";
 import { RECIPE_DEFINITIONS } from "../data/recipe-definitions";
 import { WEAPON_DEFINITIONS, type WeaponId } from "../data/weapon-definitions";
@@ -19,7 +20,7 @@ import { Zombie } from "../entities/zombie";
 import { FogRenderer } from "../rendering/fog-renderer";
 import { createMapRendering, updateDoorView, type MapViews } from "../rendering/map-renderer";
 import { AudioSystem } from "../systems/audio-system";
-import { CameraController } from "../systems/camera-controller";
+import { CameraController, configurePaddedCameraBounds } from "../systems/camera-controller";
 import { CollisionSystem } from "../systems/collision-system";
 import { distance, firstTargetOnLine, targetsInMeleeArc } from "../systems/combat-system";
 import { chooseLocalSteering, findNearestWalkableGoal, getCompanionFollowSpeed, getCompanionStuckDuration, getWorldTileIndex, markCompanionBlocked, markCompanionRepath, shouldOverrideCompanionGoalForCombat, updateCatchUpMode, updateCompanionStuckState } from "../systems/companion-navigation";
@@ -37,7 +38,7 @@ import { CompanionCommandPanel } from "../ui/companion-command-panel";
 import { Hud } from "../ui/hud";
 import { InventoryPanel, type InventoryPanelState } from "../ui/inventory-panel";
 import { PauseMenu } from "../ui/pause-menu";
-import { MinimapPanel } from "../ui/minimap";
+import { MinimapPanel, shouldPauseSimulationForMap } from "../ui/minimap";
 
 interface WorldSceneData {
   load?: boolean;
@@ -84,11 +85,13 @@ interface AttackableTarget {
 
 const MAX_PATHFINDING_PER_FRAME = 4;
 const SEPARATION_CELL_SIZE = 12;
-const SEPARATION_BUCKET_COLUMNS = Math.ceil(WORLD_SIZE / SEPARATION_CELL_SIZE);
+const SEPARATION_BUCKET_COLUMNS = Math.ceil(WORLD_WIDTH / SEPARATION_CELL_SIZE);
+const ZOMBIE_ACTIVATION_RADIUS = 760;
+const ZOMBIE_DORMANT_RADIUS = 960;
 
 export class WorldScene extends Phaser.Scene {
   private loadRequested = false;
-  private map = createCityBlockMap();
+  private map!: ReturnType<typeof createCityBlockMap>;
   private collision!: CollisionSystem;
   private clock!: GameClock;
   private fog!: FogOfWarSystem;
@@ -146,6 +149,8 @@ export class WorldScene extends Phaser.Scene {
   private pointerInsideGame = false;
   private readonly companionGoal = { x: 0, y: 0 };
   private readonly companionSteering = { x: 0, y: 0 };
+  private readonly consumedZombieSpawnIds = new Set<string>();
+  private nextDormantActivationAt = 0;
 
   constructor() {
     super("world");
@@ -159,14 +164,16 @@ export class WorldScene extends Phaser.Scene {
     this.resetRuntimeCollections();
     this.saveSystem = new SaveSystem(window.localStorage, SAVE_KEY);
     const saved = this.loadRequested ? this.saveSystem.load() : null;
+    const mapReset = this.saveSystem.consumeIncompatibleMapReset();
     this.seed = saved?.seed ?? ((Date.now() ^ 0x5f3759df) >>> 0);
     this.rng = new SeededRng(saved?.rngState ?? this.seed);
-    this.map = createCityBlockMap();
+    this.map = createCityBlockMap(saved?.mapSeed ?? (this.seed ^ 0x6d617032));
+    if ((import.meta as ImportMeta & { env?: { DEV?: boolean } }).env?.DEV) assertValidMap(this.map);
     if (saved) {
       const opened = new Set(saved.openedDoors);
       this.map.doors.forEach((door) => { door.open = opened.has(door.id); });
     }
-    this.collision = new CollisionSystem(this.map.obstacles, this.map.doors);
+    this.collision = new CollisionSystem(this.map.obstacles, this.map.doors, this.map.widthTiles, this.map.heightTiles, TILE_SIZE);
     this.clock = new GameClock();
     if (saved) this.clock.restore(saved.clock);
     this.mapViews = createMapRendering(this, this.map);
@@ -199,7 +206,7 @@ export class WorldScene extends Phaser.Scene {
     this.createGroundItems();
     this.applySearchedContainerViews();
 
-    this.fog = new FogOfWarSystem(WORLD_SIZE, WORLD_SIZE, FOG_CELL_SIZE, this.seed);
+    this.fog = new FogOfWarSystem(WORLD_WIDTH, WORLD_HEIGHT, FOG_CELL_SIZE, this.seed);
     if (saved) this.fog.importExplored(saved.exploredFog);
     this.fogRenderer = new FogRenderer(this, this.fog);
     this.effects = new PixelEffectSystem(this, (x, y) => this.fog.getStateAtWorld(x, y) === VisibilityState.Visible);
@@ -216,7 +223,7 @@ export class WorldScene extends Phaser.Scene {
     this.recomputeFog(true);
     this.updateHud();
     this.wasInSafehouse = this.isInsideSafehouse(this.player.position);
-    this.hud.showMessage(saved ? "저장된 생존 기록을 불러왔습니다." : "해가 지기 전에 탈출 부품 3개와 생존자를 찾으세요.", 4_000);
+    this.hud.showMessage(mapReset ? "도시 확장으로 기존 기록을 초기화하고 새 게임을 시작했습니다." : saved ? "저장된 생존 기록을 불러왔습니다." : "해가 지기 전에 탈출 부품 3개와 생존자를 찾으세요.", 4_000);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.shutdownUi());
   }
 
@@ -226,6 +233,12 @@ export class WorldScene extends Phaser.Scene {
     this.pathfindingWorkThisFrame = 0;
     this.handlePanelKeys();
     this.capturePointerWorldSnapshot();
+    if (shouldPauseSimulationForMap(this.minimap.getMode())) {
+      this.minimap.update(time, this.getMinimapDynamicState());
+      this.recordNavigationDiagnostics();
+      this.performanceMonitor.update(time, this.activeZombieCount);
+      return;
+    }
     if (this.inventoryPanel.isOpen() || this.pauseMenu.isOpen()) {
       this.player.updateView(this.simulationTime);
       this.updateCamera(rawDelta, false);
@@ -253,17 +266,7 @@ export class WorldScene extends Phaser.Scene {
     this.updateWorldTint();
     this.recomputeFog(false);
     this.updateCamera(rawDelta, this.pointerInsideGame);
-    if (this.minimap.isOpen()) {
-      this.minimap.update(time, {
-        player: this.player.position,
-        companion: this.companion.position,
-        companionRescued: this.companion.rescued,
-        companionAlive: this.companion.alive,
-        collectedParts: this.collectedParts.size,
-        defenseActive: this.defenseActive,
-        cameraWorldView: this.cameras.main.worldView,
-      });
-    }
+    if (this.minimap.isVisible()) this.minimap.update(time, this.getMinimapDynamicState());
     this.updateInteractionPrompt();
 
     if (this.simulationTime >= this.nextHudAt) {
@@ -303,6 +306,18 @@ export class WorldScene extends Phaser.Scene {
     );
   }
 
+  private getMinimapDynamicState() {
+    return {
+      player: this.player.position,
+      companion: this.companion.position,
+      companionRescued: this.companion.rescued,
+      companionAlive: this.companion.alive,
+      collectedParts: this.collectedParts.size,
+      defenseActive: this.defenseActive,
+      cameraWorldView: this.cameras.main.worldView,
+    };
+  }
+
   private resetRuntimeCollections(): void {
     this.zombies = [];
     this.drops = [];
@@ -322,17 +337,19 @@ export class WorldScene extends Phaser.Scene {
     this.pathfindingWorkThisFrame = 0;
     this.separationUsedBuckets.length = 0;
     this.lastTintAlpha = Number.NaN;
+    this.consumedZombieSpawnIds.clear();
+    this.nextDormantActivationAt = 0;
   }
 
   private configureCamera(): void {
     const camera = this.cameras.main;
-    camera.setBounds(0, 0, WORLD_SIZE, WORLD_SIZE);
+    configurePaddedCameraBounds(camera, WORLD_WIDTH, WORLD_HEIGHT);
     camera.setRoundPixels(true);
     camera.stopFollow();
     camera.setBackgroundColor(0x080b0d);
     this.cameraController = new CameraController(camera, this.game.canvas, () => (
-      !this.inventoryPanel?.isOpen() && !this.pauseMenu?.isOpen() && !this.gameEnded
-    ));
+      !this.inventoryPanel?.isOpen() && !this.pauseMenu?.isOpen() && !this.minimap?.isFull() && !this.gameEnded
+    ), WORLD_WIDTH, WORLD_HEIGHT);
   }
 
   private configureInput(): void {
@@ -345,7 +362,7 @@ export class WorldScene extends Phaser.Scene {
       quick1: "ONE", quick2: "TWO", quick3: "THREE", quick4: "FOUR", quick5: "FIVE",
     }) as unknown as WorldKeys;
     this.input.on("pointerdown", (pointer: Phaser.Input.Pointer) => {
-      if (pointer.button !== 0 || this.inventoryPanel?.isOpen() || this.pauseMenu?.isOpen()) return;
+      if (pointer.button !== 0 || this.inventoryPanel?.isOpen() || this.pauseMenu?.isOpen() || this.minimap?.isFull()) return;
       const world = this.cameras.main.getWorldPoint(pointer.x, pointer.y, this.pointerWorldSnapshot);
       this.player.aimAngle = Math.atan2(world.y - this.player.position.y, world.x - this.player.position.x);
       if (this.pendingCompanionCommand) {
@@ -384,6 +401,17 @@ export class WorldScene extends Phaser.Scene {
   }
 
   private handlePanelKeys(): void {
+    if (this.minimap.isVisible()) {
+      if (Phaser.Input.Keyboard.JustDown(this.keys.pause)) {
+        this.minimap.hide();
+        return;
+      }
+      if (Phaser.Input.Keyboard.JustDown(this.keys.map)) {
+        this.minimap.cycleMode();
+        return;
+      }
+      if (this.minimap.isFull()) return;
+    }
     if (Phaser.Input.Keyboard.JustDown(this.keys.inventory) && !this.pauseMenu.isOpen()) {
       if (this.inventoryPanel.isOpen()) this.inventoryPanel.hide();
       else {
@@ -394,17 +422,13 @@ export class WorldScene extends Phaser.Scene {
       }
     }
     if (Phaser.Input.Keyboard.JustDown(this.keys.pause)) {
-      if (this.minimap.isOpen()) {
-        this.minimap.hide();
-        return;
-      }
       if (this.inventoryPanel.isOpen()) return;
       this.commandPanel.hide();
       this.pendingCompanionCommand = undefined;
       this.pauseMenu.toggle();
     }
     if (this.inventoryPanel.isOpen() || this.pauseMenu.isOpen()) return;
-    if (Phaser.Input.Keyboard.JustDown(this.keys.map)) this.minimap.toggle();
+    if (Phaser.Input.Keyboard.JustDown(this.keys.map)) this.minimap.setMode("local");
     if (Phaser.Input.Keyboard.JustDown(this.keys.command)) {
       if (!this.companion.rescued || !this.companion.alive) this.hud.showMessage("먼저 생존자를 구조해야 합니다.");
       else {
@@ -567,18 +591,15 @@ export class WorldScene extends Phaser.Scene {
 
   private createZombies(saved: SaveGame | null): void {
     if (saved) {
+      saved.consumedZombieSpawnIds.forEach((id) => this.consumedZombieSpawnIds.add(id));
       this.zombies = saved.zombies.map((state) => {
         const zombie = new Zombie(this, state.id, state.kind, state, state.state);
         zombie.health = state.health;
         return zombie;
       });
     } else {
-      this.zombies = this.map.zombieSpawns.map((spawn) => new Zombie(
-        this,
-        spawn.id,
-        spawn.kind,
-        { x: tileCenter(spawn.tileX), y: tileCenter(spawn.tileY) },
-      ));
+      this.zombies = [];
+      this.activateDormantZombieSpawns(28, ZOMBIE_ACTIVATION_RADIUS);
     }
     this.activeZombieCount = 0;
     for (const zombie of this.zombies) if (zombie.isAlive()) this.activeZombieCount += 1;
@@ -590,6 +611,10 @@ export class WorldScene extends Phaser.Scene {
     this.zombies.forEach((zombie, index) => {
       if (!zombie.isAlive()) {
         zombie.updateView(time, this.fog.getStateAtWorld(zombie.position.x, zombie.position.y) === VisibilityState.Visible);
+        return;
+      }
+      if (this.isZombieDormant(zombie)) {
+        zombie.view.setVisible(false);
         return;
       }
       this.activeZombieCount += 1;
@@ -707,7 +732,7 @@ export class WorldScene extends Phaser.Scene {
     if (this.pathfindingWorkThisFrame >= MAX_PATHFINDING_PER_FRAME) return undefined;
     this.pathfindingWorkThisFrame += 1;
     this.performanceMonitor.recordPathfinding();
-    return findTilePath(start, goal, (x, y) => this.collision.isTileBlocked(x, y), maxVisited);
+    return findTilePath(start, goal, (x, y) => this.collision.isTileBlocked(x, y), maxVisited, this.map.widthTiles, this.map.heightTiles);
   }
 
   private updateZombieAttack(zombie: Zombie, target: AttackableTarget): void {
@@ -748,7 +773,7 @@ export class WorldScene extends Phaser.Scene {
 
     for (let index = 0; index < this.zombies.length; index += 1) {
       const zombie = this.zombies[index];
-      if (!zombie?.isAlive()) continue;
+      if (!zombie?.isAlive() || this.isZombieDormant(zombie)) continue;
       const bucketX = Math.floor(zombie.position.x / SEPARATION_CELL_SIZE);
       const bucketY = Math.floor(zombie.position.y / SEPARATION_CELL_SIZE);
       const bucketIndex = bucketY * SEPARATION_BUCKET_COLUMNS + bucketX;
@@ -764,7 +789,7 @@ export class WorldScene extends Phaser.Scene {
     let candidateComparisons = 0;
     for (let index = 0; index < this.zombies.length; index += 1) {
       const first = this.zombies[index];
-      if (!first?.isAlive()) continue;
+      if (!first?.isAlive() || this.isZombieDormant(first)) continue;
       const bucketX = Math.floor(first.position.x / SEPARATION_CELL_SIZE);
       const bucketY = Math.floor(first.position.y / SEPARATION_CELL_SIZE);
       for (let offsetY = -1; offsetY <= 1; offsetY += 1) {
@@ -1081,7 +1106,7 @@ export class WorldScene extends Phaser.Scene {
     door.open = !door.open;
     this.collision.setDoorOpen(door.id, door.open);
     const view = this.mapViews.doorViews.get(door.id);
-    if (view) updateDoorView(view, door.open);
+    if (view) updateDoorView(view, door.open, door.orientation);
     this.noise.emit({ x: tileCenter(door.tileX), y: tileCenter(door.tileY), intensity: NOISE_LEVELS.door, category: "door", createdAt: this.simulationTime });
     this.audio.play("door");
     this.minimap.markWorldTileDirty(door.tileX, door.tileY);
@@ -1344,6 +1369,10 @@ export class WorldScene extends Phaser.Scene {
   }
 
   private updateSpawning(): void {
+    if (this.simulationTime >= this.nextDormantActivationAt) {
+      this.nextDormantActivationAt = this.simulationTime + 500;
+      this.activateDormantZombieSpawns(BALANCE.maxActiveZombies, ZOMBIE_ACTIVATION_RADIUS);
+    }
     if (this.activeZombieCount >= BALANCE.maxActiveZombies) return;
     if (this.defenseActive && this.simulationTime >= this.nextDefenseSpawnAt) {
       this.nextDefenseSpawnAt = this.simulationTime + 2_400;
@@ -1358,10 +1387,11 @@ export class WorldScene extends Phaser.Scene {
 
   private spawnWave(kind: ZombieKind, count: number, center: Point, radius: number): void {
     for (let index = 0; index < count; index += 1) {
+      if (this.countLivingZombies() >= BALANCE.maxActiveZombies) return;
       for (let attempt = 0; attempt < 12; attempt += 1) {
         const angle = this.rng.next() * Math.PI * 2;
-        const x = Math.max(12, Math.min(WORLD_SIZE - 12, center.x + Math.cos(angle) * radius));
-        const y = Math.max(12, Math.min(WORLD_SIZE - 12, center.y + Math.sin(angle) * radius));
+        const x = Math.max(12, Math.min(WORLD_WIDTH - 12, center.x + Math.cos(angle) * radius));
+        const y = Math.max(12, Math.min(WORLD_HEIGHT - 12, center.y + Math.sin(angle) * radius));
         if (this.collision.isMovementBlockedWorld(x, y, BALANCE.zombieRadius)) continue;
         const zombie = new Zombie(this, `spawned-${Math.round(this.simulationTime)}-${index}-${attempt}`, kind, { x, y }, "InvestigateNoise");
         zombie.mind.lastHeardNoisePosition = { ...center };
@@ -1370,6 +1400,32 @@ export class WorldScene extends Phaser.Scene {
         break;
       }
     }
+  }
+
+  private activateDormantZombieSpawns(targetLivingCount: number, radius: number): void {
+    let living = this.countLivingZombies();
+    if (living >= Math.min(targetLivingCount, BALANCE.maxActiveZombies)) return;
+    const candidates = this.map.zombieSpawns
+      .filter((spawn) => !this.consumedZombieSpawnIds.has(spawn.id))
+      .map((spawn) => ({ spawn, distance: Math.hypot(tileCenter(spawn.tileX) - this.player.position.x, tileCenter(spawn.tileY) - this.player.position.y) }))
+      .filter((candidate) => candidate.distance <= radius)
+      .sort((first, second) => first.distance - second.distance);
+    for (const { spawn } of candidates) {
+      if (living >= Math.min(targetLivingCount, BALANCE.maxActiveZombies)) break;
+      this.consumedZombieSpawnIds.add(spawn.id);
+      this.zombies.push(new Zombie(this, spawn.id, spawn.kind, { x: tileCenter(spawn.tileX), y: tileCenter(spawn.tileY) }));
+      living += 1;
+    }
+  }
+
+  private countLivingZombies(): number {
+    let count = 0;
+    for (const zombie of this.zombies) if (zombie.isAlive()) count += 1;
+    return count;
+  }
+
+  private isZombieDormant(zombie: Zombie): boolean {
+    return squaredDistance(zombie.position, this.player.position) > ZOMBIE_DORMANT_RADIUS * ZOMBIE_DORMANT_RADIUS;
   }
 
   private recomputeFog(force: boolean): void {
@@ -1460,6 +1516,9 @@ export class WorldScene extends Phaser.Scene {
   private saveGame(showFeedback: boolean): void {
     const data: SaveGame = {
       version: SAVE_VERSION,
+      mapId: MAP_ID,
+      mapVersion: MAP_VERSION,
+      mapSeed: this.map.mapSeed,
       seed: this.seed,
       rngState: this.rng.getSeedState(),
       savedAt: Date.now(),
@@ -1491,6 +1550,7 @@ export class WorldScene extends Phaser.Scene {
       collectedParts: [...this.collectedParts],
       searchedContainers: [...this.searchedContainers],
       openedDoors: this.map.doors.filter((door) => door.open).map((door) => door.id),
+      consumedZombieSpawnIds: [...this.consumedZombieSpawnIds],
       zombies: this.zombies.filter((zombie) => zombie.isAlive()).map((zombie) => ({
         id: zombie.id,
         kind: zombie.kind,

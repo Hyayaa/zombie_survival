@@ -1,4 +1,4 @@
-import { MAP_TILES, TILE_SIZE } from "../config/game-config";
+import { MAP_HEIGHT_TILES, MAP_WIDTH_TILES, TILE_SIZE } from "../config/game-config";
 import type { Point } from "./zombie-ai-system";
 
 interface Node {
@@ -9,17 +9,25 @@ interface Node {
   parent?: Node;
 }
 
-const CELL_COUNT = MAP_TILES * MAP_TILES;
+const CELL_COUNT = MAP_WIDTH_TILES * MAP_HEIGHT_TILES;
 const bestCosts = new Uint16Array(CELL_COUNT);
 const bestGenerations = new Uint32Array(CELL_COUNT);
 const closedGenerations = new Uint32Array(CELL_COUNT);
 let pathGeneration = 0;
 
-export function findTilePath(start: Point, goal: Point, isBlocked: (x: number, y: number) => boolean, maxVisited = 800): Point[] {
+export function findTilePath(
+  start: Point,
+  goal: Point,
+  isBlocked: (x: number, y: number) => boolean,
+  maxVisited = 800,
+  widthTiles = MAP_WIDTH_TILES,
+  heightTiles = MAP_HEIGHT_TILES,
+): Point[] {
   const startX = Math.floor(start.x / TILE_SIZE);
   const startY = Math.floor(start.y / TILE_SIZE);
-  const goalX = Math.max(0, Math.min(MAP_TILES - 1, Math.floor(goal.x / TILE_SIZE)));
-  const goalY = Math.max(0, Math.min(MAP_TILES - 1, Math.floor(goal.y / TILE_SIZE)));
+  if (startX < 0 || startY < 0 || startX >= widthTiles || startY >= heightTiles) return [];
+  const goalX = Math.max(0, Math.min(widthTiles - 1, Math.floor(goal.x / TILE_SIZE)));
+  const goalY = Math.max(0, Math.min(heightTiles - 1, Math.floor(goal.y / TILE_SIZE)));
   pathGeneration += 1;
   if (pathGeneration === 0xffff_ffff) {
     bestGenerations.fill(0);
@@ -28,7 +36,7 @@ export function findTilePath(start: Point, goal: Point, isBlocked: (x: number, y
   }
   const open = new NodeHeap();
   open.push({ x: startX, y: startY, g: 0, f: heuristic(startX, startY, goalX, goalY) });
-  const startIndex = startY * MAP_TILES + startX;
+  const startIndex = startY * widthTiles + startX;
   bestGenerations[startIndex] = pathGeneration;
   bestCosts[startIndex] = 0;
   let closedCount = 0;
@@ -36,7 +44,7 @@ export function findTilePath(start: Point, goal: Point, isBlocked: (x: number, y
   while (open.size > 0 && closedCount < maxVisited) {
     const current = open.pop();
     if (!current) break;
-    const currentIndex = current.y * MAP_TILES + current.x;
+    const currentIndex = current.y * widthTiles + current.x;
     if (closedGenerations[currentIndex] === pathGeneration) continue;
     closedGenerations[currentIndex] = pathGeneration;
     closedCount += 1;
@@ -46,8 +54,8 @@ export function findTilePath(start: Point, goal: Point, isBlocked: (x: number, y
     for (const [deltaX, deltaY] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
       const x = current.x + deltaX;
       const y = current.y + deltaY;
-      if (x < 0 || y < 0 || x >= MAP_TILES || y >= MAP_TILES || isBlocked(x, y)) continue;
-      const index = y * MAP_TILES + x;
+      if (x < 0 || y < 0 || x >= widthTiles || y >= heightTiles || isBlocked(x, y)) continue;
+      const index = y * widthTiles + x;
       const g = current.g + 1;
       if (bestGenerations[index] === pathGeneration && g >= bestCosts[index]!) continue;
       bestGenerations[index] = pathGeneration;

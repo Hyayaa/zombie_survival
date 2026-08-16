@@ -295,10 +295,7 @@ button:focus-visible {
 
 .minimap-panel {
   position: absolute;
-  top: 46px;
-  right: 8px;
-  width: min(42cqh, 42cqw, 260px);
-  padding: 5px;
+  inset: 0;
   pointer-events: none;
 }
 
@@ -311,6 +308,31 @@ button:focus-visible {
   color: #aebdb6;
   font-size: clamp(8px, 1.45cqh, 11px);
   text-align: right;
+}
+
+.minimap-panel__local {
+  position: absolute;
+  top: 46px;
+  right: 8px;
+  width: min(42cqh, 42cqw, 260px);
+  padding: 5px;
+}
+
+.minimap-panel__full {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: min(88vw, 88vh, 768px);
+  max-width: 92%;
+  max-height: 92%;
+  padding: 8px;
+  transform: translate(-50%, -50%);
+  background: rgba(7, 11, 12, 0.98);
+}
+
+.minimap-panel__local[hidden],
+.minimap-panel__full[hidden] {
+  display: none;
 }
 
 .minimap-panel__canvas {
@@ -346,5 +368,5 @@ button:focus-visible {
   .inventory-grid { grid-template-columns: 1fr; }
   .inventory-slot small { display: none; }
   .hud__objective { top: 42px; max-width: 45%; }
-  .minimap-panel { top: 72px; width: min(38cqh, 46cqw, 190px); }
+  .minimap-panel__local { top: 72px; width: min(38cqh, 46cqw, 190px); }
 }

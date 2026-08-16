@@ -1,4 +1,4 @@
-import { CAMERA, WORLD_SIZE } from "../config/game-config";
+import { CAMERA, LOGICAL_HEIGHT, LOGICAL_WIDTH, WORLD_HEIGHT, WORLD_WIDTH } from "../config/game-config";
 import type { Point } from "./zombie-ai-system";
 
 export interface CameraViewport {
@@ -7,6 +7,8 @@ export interface CameraViewport {
   zoom: number;
   setZoom(zoom: number): unknown;
   setScroll(x: number, y: number): unknown;
+  centerOn?(x: number, y: number): unknown;
+  setBounds?(x: number, y: number, width: number, height: number): unknown;
 }
 
 export interface CameraFocusInput {
@@ -43,6 +45,11 @@ export function calculateCursorLedFocus(input: CameraFocusInput, output: Point =
   let leadX = (input.pointerX - input.playerX) * 0.5;
   let leadY = (input.pointerY - input.playerY) * 0.5;
   const leadLength = Math.hypot(leadX, leadY);
+  if (leadLength * 2 <= CAMERA.cursorDeadzone) {
+    output.x = input.playerX;
+    output.y = input.playerY;
+    return output;
+  }
   if (leadLength > CAMERA.maxCursorLead) {
     const scale = CAMERA.maxCursorLead / leadLength;
     leadX *= scale;
@@ -55,18 +62,37 @@ export function calculateCursorLedFocus(input: CameraFocusInput, output: Point =
 
 export function clampCameraFocus(
   focus: Point,
-  cameraWidth: number,
-  cameraHeight: number,
-  zoom: number,
-  worldWidth = WORLD_SIZE,
-  worldHeight = WORLD_SIZE,
+  _cameraWidth: number,
+  _cameraHeight: number,
+  _zoom: number,
+  worldWidth = WORLD_WIDTH,
+  worldHeight = WORLD_HEIGHT,
   output: Point = { x: 0, y: 0 },
 ): Point {
-  const halfWidth = Math.min(worldWidth / 2, cameraWidth / Math.max(0.01, zoom) / 2);
-  const halfHeight = Math.min(worldHeight / 2, cameraHeight / Math.max(0.01, zoom) / 2);
-  output.x = clamp(focus.x, halfWidth, worldWidth - halfWidth);
-  output.y = clamp(focus.y, halfHeight, worldHeight - halfHeight);
+  output.x = clamp(focus.x, 0, worldWidth);
+  output.y = clamp(focus.y, 0, worldHeight);
   return output;
+}
+
+export function calculateCameraPadding(
+  logicalWidth = LOGICAL_WIDTH,
+  logicalHeight = LOGICAL_HEIGHT,
+  minimumZoom = Math.min(...CAMERA.zoomLevels),
+): Point {
+  return {
+    x: Math.ceil(logicalWidth / minimumZoom / 2),
+    y: Math.ceil(logicalHeight / minimumZoom / 2),
+  };
+}
+
+export function configurePaddedCameraBounds(
+  camera: Pick<CameraViewport, "setBounds">,
+  worldWidth = WORLD_WIDTH,
+  worldHeight = WORLD_HEIGHT,
+): Point {
+  const padding = calculateCameraPadding();
+  camera.setBounds?.(-padding.x, -padding.y, worldWidth + padding.x * 2, worldHeight + padding.y * 2);
+  return padding;
 }
 
 export class CameraController {
@@ -87,8 +113,8 @@ export class CameraController {
     private readonly camera: CameraViewport,
     private readonly canvas: HTMLCanvasElement,
     private readonly canZoom: () => boolean,
-    private readonly worldWidth = WORLD_SIZE,
-    private readonly worldHeight = WORLD_SIZE,
+    private readonly worldWidth = WORLD_WIDTH,
+    private readonly worldHeight = WORLD_HEIGHT,
   ) {
     this.camera.setZoom(this.zoom);
     this.pointerInside = this.canvas.matches(":hover");
@@ -125,6 +151,8 @@ export class CameraController {
       const smoothing = 1 - Math.pow(1 - CAMERA.followLerp, Math.max(0, deltaMs) / (1_000 / 60));
       this.focus.x += (this.clampedTarget.x - this.focus.x) * smoothing;
       this.focus.y += (this.clampedTarget.y - this.focus.y) * smoothing;
+      if (Math.abs(this.clampedTarget.x - this.focus.x) < 0.5) this.focus.x = this.clampedTarget.x;
+      if (Math.abs(this.clampedTarget.y - this.focus.y) < 0.5) this.focus.y = this.clampedTarget.y;
     }
 
     clampCameraFocus(
@@ -139,9 +167,12 @@ export class CameraController {
     const pixelStep = 1 / this.zoom;
     const snappedX = Math.round(this.focus.x / pixelStep) * pixelStep;
     const snappedY = Math.round(this.focus.y / pixelStep) * pixelStep;
-    const halfWidth = this.camera.width / this.zoom / 2;
-    const halfHeight = this.camera.height / this.zoom / 2;
-    this.camera.setScroll(snappedX - halfWidth, snappedY - halfHeight);
+    if (this.camera.centerOn) this.camera.centerOn(snappedX, snappedY);
+    else {
+      const halfWidth = this.camera.width / this.zoom / 2;
+      const halfHeight = this.camera.height / this.zoom / 2;
+      this.camera.setScroll(snappedX - halfWidth, snappedY - halfHeight);
+    }
   }
 
   getZoom(): number {

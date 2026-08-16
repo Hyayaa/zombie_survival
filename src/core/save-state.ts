@@ -30,6 +30,9 @@ export interface SavedFogExploration {
 
 export interface SaveGame {
   version: number;
+  mapId: string;
+  mapVersion: number;
+  mapSeed: number;
   seed: number;
   rngState: number;
   savedAt: number;
@@ -49,6 +52,7 @@ export interface SaveGame {
   collectedParts: string[];
   searchedContainers: string[];
   openedDoors: string[];
+  consumedZombieSpawnIds: string[];
   zombies: SavedZombie[];
   exploredFog: SavedFogExploration;
   extraction: {

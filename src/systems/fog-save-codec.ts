@@ -1,10 +1,9 @@
-import { FOG_CELL_SIZE, FOG_CELLS_PER_TILE, MAP_TILES } from "../config/game-config";
+import { FOG_CELL_SIZE, FOG_CELLS_PER_TILE, MAP_HEIGHT_TILES, MAP_WIDTH_TILES } from "../config/game-config";
 import type { SavedFogExploration } from "../core/save-state";
 
-export const FOG_WIDTH_CELLS = MAP_TILES * FOG_CELLS_PER_TILE;
-export const FOG_TOTAL_CELLS = FOG_WIDTH_CELLS * FOG_WIDTH_CELLS;
-export const LEGACY_FOG_WIDTH_CELLS = FOG_WIDTH_CELLS / 2;
-const LEGACY_FOG_TOTAL_CELLS = LEGACY_FOG_WIDTH_CELLS * LEGACY_FOG_WIDTH_CELLS;
+export const FOG_WIDTH_CELLS = MAP_WIDTH_TILES * FOG_CELLS_PER_TILE;
+export const FOG_HEIGHT_CELLS = MAP_HEIGHT_TILES * FOG_CELLS_PER_TILE;
+export const FOG_TOTAL_CELLS = FOG_WIDTH_CELLS * FOG_HEIGHT_CELLS;
 
 export function emptyFogExploration(): SavedFogExploration {
   return { cellSize: FOG_CELL_SIZE, encoding: "rle-v1", runs: [] };
@@ -51,22 +50,4 @@ export function isValidExploredFog(value: unknown, totalCells = FOG_TOTAL_CELLS)
     previousEnd = end - 1;
   }
   return true;
-}
-
-export function migrateLegacyExploredFog(value: unknown): SavedFogExploration | null {
-  if (!Array.isArray(value)) return null;
-  const explored = new Uint8Array(FOG_TOTAL_CELLS);
-  for (const legacyIndex of value) {
-    if (!Number.isInteger(legacyIndex) || legacyIndex < 0 || legacyIndex >= LEGACY_FOG_TOTAL_CELLS) return null;
-    const oldX = legacyIndex % LEGACY_FOG_WIDTH_CELLS;
-    const oldY = Math.floor(legacyIndex / LEGACY_FOG_WIDTH_CELLS);
-    const newX = oldX * 2;
-    const newY = oldY * 2;
-    const topLeft = newY * FOG_WIDTH_CELLS + newX;
-    explored[topLeft] = 1;
-    explored[topLeft + 1] = 1;
-    explored[topLeft + FOG_WIDTH_CELLS] = 1;
-    explored[topLeft + FOG_WIDTH_CELLS + 1] = 1;
-  }
-  return encodeExploredFog(explored);
 }

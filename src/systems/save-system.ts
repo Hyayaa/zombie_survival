@@ -1,7 +1,7 @@
-import { SAVE_VERSION } from "../config/game-config";
+import { MAP_ID, MAP_VERSION, SAVE_VERSION } from "../config/game-config";
 import type { SaveGame } from "../core/save-state";
 import { ITEM_DEFINITIONS } from "../data/item-definitions";
-import { emptyFogExploration, isValidExploredFog, migrateLegacyExploredFog } from "./fog-save-codec";
+import { emptyFogExploration, isValidExploredFog } from "./fog-save-codec";
 
 export interface StorageLike {
   getItem(key: string): string | null;
@@ -10,6 +10,7 @@ export interface StorageLike {
 }
 
 export class SaveSystem {
+  private incompatibleMapReset = false;
   constructor(private readonly storage: StorageLike, private readonly key: string) {}
 
   save(data: SaveGame): boolean {
@@ -27,10 +28,13 @@ export class SaveSystem {
       const raw = this.storage.getItem(this.key);
       if (!raw) return null;
       const parsed = JSON.parse(raw) as SaveCandidate;
+      if (parsed.version !== SAVE_VERSION || parsed.mapId !== MAP_ID || parsed.mapVersion !== MAP_VERSION) {
+        this.storage.removeItem(this.key);
+        this.incompatibleMapReset = true;
+        return null;
+      }
       if (!this.isValidBase(parsed)) return null;
-      const exploredFog = parsed.version === 1
-        ? migrateLegacyExploredFog(parsed.exploredFog) ?? emptyFogExploration()
-        : isValidExploredFog(parsed.exploredFog) ? parsed.exploredFog : emptyFogExploration();
+      const exploredFog = isValidExploredFog(parsed.exploredFog) ? parsed.exploredFog : emptyFogExploration();
       return { ...parsed, version: SAVE_VERSION, exploredFog } as SaveGame;
     } catch {
       return null;
@@ -38,7 +42,20 @@ export class SaveSystem {
   }
 
   hasSave(): boolean {
-    return this.load() !== null;
+    try {
+      const raw = this.storage.getItem(this.key);
+      if (!raw) return false;
+      const parsed = JSON.parse(raw) as { version?: unknown };
+      return typeof parsed.version === "number";
+    } catch {
+      return false;
+    }
+  }
+
+  consumeIncompatibleMapReset(): boolean {
+    const value = this.incompatibleMapReset;
+    this.incompatibleMapReset = false;
+    return value;
   }
 
   clear(): void {
@@ -46,7 +63,10 @@ export class SaveSystem {
   }
 
   private isValidBase(value: SaveCandidate): boolean {
-    return (value.version === 1 || value.version === SAVE_VERSION)
+    return value.version === SAVE_VERSION
+      && value.mapId === MAP_ID
+      && value.mapVersion === MAP_VERSION
+      && typeof value.mapSeed === "number"
       && typeof value.seed === "number"
       && typeof value.rngState === "number"
       && typeof value.savedAt === "number"
@@ -75,6 +95,7 @@ export class SaveSystem {
       && Array.isArray(value.collectedParts)
       && Array.isArray(value.searchedContainers)
       && Array.isArray(value.openedDoors)
+      && Array.isArray(value.consumedZombieSpawnIds)
       && typeof value.extraction?.active === "boolean"
       && typeof value.extraction?.remainingSeconds === "number";
   }

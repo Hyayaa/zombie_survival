@@ -1,4 +1,4 @@
-import { COMPANION_MOVEMENT, MAP_TILES, TILE_SIZE } from "../config/game-config";
+import { COMPANION_MOVEMENT, MAP_HEIGHT_TILES, MAP_WIDTH_TILES, TILE_SIZE } from "../config/game-config";
 import type { CompanionCommand } from "../entities/companion";
 import type { Point } from "./zombie-ai-system";
 
@@ -84,7 +84,7 @@ export function findNearestWalkableGoal(
         if (Math.max(Math.abs(offsetX), Math.abs(offsetY)) !== radius) continue;
         const tileX = requestedTileX + offsetX;
         const tileY = requestedTileY + offsetY;
-        if (tileX < 0 || tileY < 0 || tileX >= MAP_TILES || tileY >= MAP_TILES) continue;
+        if (tileX < 0 || tileY < 0 || tileX >= MAP_WIDTH_TILES || tileY >= MAP_HEIGHT_TILES) continue;
         const x = tileCenter(tileX);
         const y = tileCenter(tileY);
         if (!canOccupy(x, y)) continue;
@@ -172,7 +172,7 @@ export function markCompanionRepath(state: CompanionNavigationState): void {
 export function getWorldTileIndex(point: Point): number {
   const x = clampTile(Math.floor(point.x / TILE_SIZE));
   const y = clampTile(Math.floor(point.y / TILE_SIZE));
-  return y * MAP_TILES + x;
+  return y * MAP_WIDTH_TILES + x;
 }
 
 export function shouldPursueAutomaticTarget(catchUpMode: boolean, targetDistance: number): boolean {
@@ -204,7 +204,7 @@ function squaredDistance(firstX: number, firstY: number, secondX: number, second
 }
 
 function clampTile(tile: number): number {
-  return Math.max(0, Math.min(MAP_TILES - 1, tile));
+  return Math.max(0, Math.min(MAP_WIDTH_TILES - 1, tile));
 }
 
 function tileCenter(tile: number): number {

@@ -1,24 +1,39 @@
-import { FOG_CELLS_PER_TILE, MAP_TILES, TILE_SIZE, WORLD_SIZE } from "../config/game-config";
+import { FOG_CELLS_PER_TILE, MAP_HEIGHT_TILES, MAP_WIDTH_TILES, TILE_SIZE } from "../config/game-config";
 import type { DoorDefinition, WorldObstacle } from "../data/map-definitions";
 import type { VisionGrid } from "./fog-of-war-system";
 import type { Point } from "./zombie-ai-system";
 
 const VISION_CELLS_PER_TILE = FOG_CELLS_PER_TILE;
-const VISION_WIDTH_CELLS = MAP_TILES * VISION_CELLS_PER_TILE;
-
 export class CollisionSystem implements VisionGrid {
   private readonly doors: DoorDefinition[];
   private readonly dynamicObstacles: WorldObstacle[] = [];
-  private readonly movementGrid = new Uint8Array(MAP_TILES * MAP_TILES);
-  private readonly visionGrid = new Uint8Array(MAP_TILES * MAP_TILES);
-  private readonly projectileGrid = new Uint8Array(MAP_TILES * MAP_TILES);
-  private readonly lowCoverGrid = new Uint8Array(MAP_TILES * MAP_TILES);
-  private readonly visionBlockCells = new Uint8Array(VISION_WIDTH_CELLS * VISION_WIDTH_CELLS);
-  private readonly lowCoverCells = new Uint8Array(VISION_WIDTH_CELLS * VISION_WIDTH_CELLS);
+  private readonly movementGrid: Uint8Array;
+  private readonly visionGrid: Uint8Array;
+  private readonly projectileGrid: Uint8Array;
+  private readonly lowCoverGrid: Uint8Array;
+  private readonly visionBlockCells: Uint8Array;
+  private readonly lowCoverCells: Uint8Array;
+  private readonly visionWidthCells: number;
+  private readonly visionHeightCells: number;
   private visionRevisionValue = 0;
 
-  constructor(obstacles: WorldObstacle[], doors: DoorDefinition[]) {
+  constructor(
+    obstacles: WorldObstacle[],
+    doors: DoorDefinition[],
+    private readonly widthTiles = MAP_WIDTH_TILES,
+    private readonly heightTiles = MAP_HEIGHT_TILES,
+    private readonly tileSize = TILE_SIZE,
+  ) {
     this.doors = doors;
+    const tileCount = widthTiles * heightTiles;
+    this.movementGrid = new Uint8Array(tileCount);
+    this.visionGrid = new Uint8Array(tileCount);
+    this.projectileGrid = new Uint8Array(tileCount);
+    this.lowCoverGrid = new Uint8Array(tileCount);
+    this.visionWidthCells = widthTiles * VISION_CELLS_PER_TILE;
+    this.visionHeightCells = heightTiles * VISION_CELLS_PER_TILE;
+    this.visionBlockCells = new Uint8Array(this.visionWidthCells * this.visionHeightCells);
+    this.lowCoverCells = new Uint8Array(this.visionWidthCells * this.visionHeightCells);
     obstacles.forEach((obstacle) => this.markObstacle(obstacle, true));
     doors.forEach((door) => this.markDoor(door));
   }
@@ -45,15 +60,15 @@ export class CollisionSystem implements VisionGrid {
   }
 
   isMovementBlockedWorld(x: number, y: number, radius = 0): boolean {
-    if (x - radius < 0 || y - radius < 0 || x + radius >= WORLD_SIZE || y + radius >= WORLD_SIZE) return true;
-    const minTileX = Math.floor((x - radius) / TILE_SIZE);
-    const maxTileX = Math.floor((x + radius) / TILE_SIZE);
-    const minTileY = Math.floor((y - radius) / TILE_SIZE);
-    const maxTileY = Math.floor((y + radius) / TILE_SIZE);
+    if (x - radius < 0 || y - radius < 0 || x + radius >= this.widthTiles * this.tileSize || y + radius >= this.heightTiles * this.tileSize) return true;
+    const minTileX = Math.floor((x - radius) / this.tileSize);
+    const maxTileX = Math.floor((x + radius) / this.tileSize);
+    const minTileY = Math.floor((y - radius) / this.tileSize);
+    const maxTileY = Math.floor((y + radius) / this.tileSize);
     for (let tileY = minTileY; tileY <= maxTileY; tileY += 1) {
       for (let tileX = minTileX; tileX <= maxTileX; tileX += 1) {
         if (!this.movementGrid[this.index(tileX, tileY)]) continue;
-        if (circleIntersectsTile(x, y, radius, tileX, tileY)) return true;
+        if (circleIntersectsTile(x, y, radius, tileX, tileY, this.tileSize)) return true;
       }
     }
     return false;
@@ -129,7 +144,7 @@ export class CollisionSystem implements VisionGrid {
   }
 
   isTileBlocked(tileX: number, tileY: number): boolean {
-    if (tileX < 0 || tileY < 0 || tileX >= MAP_TILES || tileY >= MAP_TILES) return true;
+    if (tileX < 0 || tileY < 0 || tileX >= this.widthTiles || tileY >= this.heightTiles) return true;
     return this.movementGrid[this.index(tileX, tileY)] === 1;
   }
 
@@ -137,7 +152,7 @@ export class CollisionSystem implements VisionGrid {
     let visionChanged = false;
     for (let y = obstacle.tileY; y < obstacle.tileY + obstacle.heightTiles; y += 1) {
       for (let x = obstacle.tileX; x < obstacle.tileX + obstacle.widthTiles; x += 1) {
-        if (x < 0 || y < 0 || x >= MAP_TILES || y >= MAP_TILES) continue;
+        if (x < 0 || y < 0 || x >= this.widthTiles || y >= this.heightTiles) continue;
         const index = this.index(x, y);
         if (obstacle.blocksMovement) this.movementGrid[index] = value ? 1 : 0;
         if (obstacle.blocksVision) this.visionGrid[index] = value ? 1 : 0;
@@ -177,30 +192,30 @@ export class CollisionSystem implements VisionGrid {
   }
 
   private isVisionCellInBounds(cellX: number, cellY: number): boolean {
-    return cellX >= 0 && cellY >= 0 && cellX < VISION_WIDTH_CELLS && cellY < VISION_WIDTH_CELLS;
+    return cellX >= 0 && cellY >= 0 && cellX < this.visionWidthCells && cellY < this.visionHeightCells;
   }
 
   private visionCellIndex(cellX: number, cellY: number): number {
-    return cellY * VISION_WIDTH_CELLS + cellX;
+    return cellY * this.visionWidthCells + cellX;
   }
 
   private gridValue(grid: Uint8Array, worldX: number, worldY: number): boolean {
-    const tileX = Math.floor(worldX / TILE_SIZE);
-    const tileY = Math.floor(worldY / TILE_SIZE);
-    if (tileX < 0 || tileY < 0 || tileX >= MAP_TILES || tileY >= MAP_TILES) return true;
+    const tileX = Math.floor(worldX / this.tileSize);
+    const tileY = Math.floor(worldY / this.tileSize);
+    if (tileX < 0 || tileY < 0 || tileX >= this.widthTiles || tileY >= this.heightTiles) return true;
     return grid[this.index(tileX, tileY)] === 1;
   }
 
   private index(tileX: number, tileY: number): number {
-    return tileY * MAP_TILES + tileX;
+    return tileY * this.widthTiles + tileX;
   }
 }
 
-function circleIntersectsTile(x: number, y: number, radius: number, tileX: number, tileY: number): boolean {
-  const left = tileX * TILE_SIZE;
-  const top = tileY * TILE_SIZE;
-  const closestX = Math.max(left, Math.min(x, left + TILE_SIZE));
-  const closestY = Math.max(top, Math.min(y, top + TILE_SIZE));
+function circleIntersectsTile(x: number, y: number, radius: number, tileX: number, tileY: number, tileSize: number): boolean {
+  const left = tileX * tileSize;
+  const top = tileY * tileSize;
+  const closestX = Math.max(left, Math.min(x, left + tileSize));
+  const closestY = Math.max(top, Math.min(y, top + tileSize));
   const deltaX = x - closestX;
   const deltaY = y - closestY;
   return deltaX * deltaX + deltaY * deltaY < radius * radius;

@@ -1,20 +1,28 @@
 export const LOGICAL_WIDTH = 480;
 export const LOGICAL_HEIGHT = 270;
 export const TILE_SIZE = 24;
-export const MAP_TILES = 48;
-export const WORLD_SIZE = MAP_TILES * TILE_SIZE;
+export const MAP_WIDTH_TILES = 128;
+export const MAP_HEIGHT_TILES = 128;
+export const WORLD_WIDTH = MAP_WIDTH_TILES * TILE_SIZE;
+export const WORLD_HEIGHT = MAP_HEIGHT_TILES * TILE_SIZE;
+// Compatibility aliases for older gameplay helpers. New dimension-aware code uses the axes above.
+export const MAP_TILES = MAP_WIDTH_TILES;
+export const WORLD_SIZE = WORLD_WIDTH;
 export const FOG_CELLS_PER_TILE = 8;
 export const FOG_CELL_SIZE = TILE_SIZE / FOG_CELLS_PER_TILE;
 if (!Number.isInteger(FOG_CELL_SIZE)) throw new Error("TILE_SIZE must divide evenly into FOG_CELLS_PER_TILE");
 export const FLASHLIGHT_AIM_BUCKETS = 32;
 export const SAVE_KEY = "last-block-save-v1";
-export const SAVE_VERSION = 2;
+export const SAVE_VERSION = 3;
+export const MAP_ID = "expanded-city-v2";
+export const MAP_VERSION = 2;
 
 export const CAMERA = {
   zoomLevels: [0.55, 0.7, 0.85, 1, 1.2, 1.45, 1.7, 2] as const,
   defaultZoom: 1,
   maxCursorLead: 132,
   followLerp: 0.17,
+  cursorDeadzone: 6,
 } as const;
 
 export const VISION = {
@@ -42,8 +50,11 @@ export const COMPANION_MOVEMENT = {
 } as const;
 
 export const MINIMAP = {
-  size: MAP_TILES * 4,
-  pixelsPerTile: 4,
+  localTiles: 32,
+  localSize: 192,
+  localPixelsPerTile: 6,
+  fullSize: 512,
+  fullPixelsPerTile: 4,
   updateIntervalMs: 100,
 } as const;
 
