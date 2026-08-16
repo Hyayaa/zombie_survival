@@ -1,4 +1,4 @@
-import { BALANCE, VISION } from "../config/game-config";
+import { BALANCE } from "../config/game-config";
 
 export type DayPhase = "day" | "dusk" | "night" | "dawn";
 
@@ -49,12 +49,12 @@ export class GameClock {
     return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
   }
 
-  getBaseVisionRadius(): number {
+  getDarknessFactor(): number {
     switch (this.getPhase()) {
-      case "day": return VISION.dayRadius;
-      case "dusk": return VISION.dayRadius + (VISION.duskEndRadius - VISION.dayRadius) * this.getPhaseProgress();
-      case "night": return VISION.nightRadius;
-      case "dawn": return VISION.nightRadius + (VISION.dawnEndRadius - VISION.nightRadius) * this.getPhaseProgress();
+      case "day": return 0;
+      case "dusk": return smoothstep(this.getPhaseProgress());
+      case "night": return 1;
+      case "dawn": return 1 - smoothstep(this.getPhaseProgress());
     }
   }
 
@@ -69,4 +69,9 @@ export class GameClock {
   restore(snapshot: ClockSnapshot): void {
     this.elapsedSeconds = Math.max(0, snapshot.elapsedSeconds);
   }
+}
+
+function smoothstep(value: number): number {
+  const clamped = Math.max(0, Math.min(1, value));
+  return clamped * clamped * (3 - 2 * clamped);
 }

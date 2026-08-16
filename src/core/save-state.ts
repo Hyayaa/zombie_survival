@@ -15,11 +15,13 @@ export interface SavedZombie extends SavedActor {
 }
 
 export interface SavedCompanion extends SavedActor {
+  id: string;
   rescued: boolean;
   alive: boolean;
   command: "follow" | "hold" | "move" | "focus";
   targetX?: number;
   targetY?: number;
+  focusTargetId?: string;
 }
 
 export interface SavedFogExploration {
@@ -63,7 +65,9 @@ export interface SaveGame {
   clock: ClockSnapshot;
   inventory: Array<InventorySlot | null>;
   quickslots: Array<string | null>;
-  companion: SavedCompanion;
+  companions: SavedCompanion[];
+  /** v4 migration input only. */
+  companion?: Omit<SavedCompanion, "id"> & { id?: string };
   collectedParts: string[];
   searchedContainers: string[];
   openedDoors: string[];

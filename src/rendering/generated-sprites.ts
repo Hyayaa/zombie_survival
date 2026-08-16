@@ -2,7 +2,7 @@ import Phaser from "phaser";
 import { DEPTH, ENTITY_OUTLINE } from "../config/game-config";
 import type { WeaponId } from "../data/weapon-definitions";
 import { swingOffsetAt } from "../effects/pixel-effect-math";
-import { entityOutlineColor, type EntityOutlineState, type OutlineableEntityView } from "./entity-outline";
+import { EntityOutlineController, type EntityOutlineState, type OutlineableEntityView } from "./entity-outline";
 
 export interface ActorPalette {
   skin: number;
@@ -54,7 +54,7 @@ export class TopDownActorView implements OutlineableEntityView {
   private lastAlwaysVisible = false;
   private visible = true;
   private dead = false;
-  private outlineState: EntityOutlineState = "normal";
+  private readonly outline: EntityOutlineController;
 
   constructor(scene: Phaser.Scene, x: number, y: number, palette: ActorPalette, armed = true) {
     this.container = scene.add.container(Math.round(x), Math.round(y));
@@ -72,6 +72,10 @@ export class TopDownActorView implements OutlineableEntityView {
     this.weaponTip = aimParts.weaponTip;
     this.fillOutlineShapes = [torsoOutline, headOutline, ...aimParts.fillOutlineShapes];
     this.strokeOutlineShapes = aimParts.strokeOutlineShapes;
+    this.outline = new EntityOutlineController((color) => {
+      for (const shape of this.fillOutlineShapes) shape.setFillStyle(color, 1);
+      for (const shape of this.strokeOutlineShapes) shape.setStrokeStyle(1, color, 1);
+    });
     this.healthBarBackground = scene.add.rectangle(-7, -13, 14, 2, 0x171a18, 0.9).setOrigin(0, 0);
     this.healthBarFill = scene.add.rectangle(-7, -13, 14, 2, 0x7aaa65, 1).setOrigin(0, 0);
     this.visual.add([torsoOutline, torso, torsoLight, headOutline, head, headLight, this.aimLayer, this.healthBarBackground, this.healthBarFill]);
@@ -82,15 +86,11 @@ export class TopDownActorView implements OutlineableEntityView {
   }
 
   setOutlineState(state: EntityOutlineState): void {
-    if (state === this.outlineState) return;
-    this.outlineState = state;
-    const color = entityOutlineColor(state);
-    for (const shape of this.fillOutlineShapes) shape.setFillStyle(color, 1);
-    for (const shape of this.strokeOutlineShapes) shape.setStrokeStyle(1, color, 1);
+    this.outline.setState(state);
   }
 
   getOutlineState(): EntityOutlineState {
-    return this.outlineState;
+    return this.outline.getState();
   }
 
   setPosition(x: number, y: number): void {

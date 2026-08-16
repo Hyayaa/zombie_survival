@@ -4,6 +4,7 @@ import type { VisionSource } from "./fog-of-war-system";
 import type { Point } from "./zombie-ai-system";
 
 export interface ActiveFire extends Point {
+  id?: string;
   remaining: number;
 }
 
@@ -13,22 +14,68 @@ export interface PlayerLightState extends Point {
   torchRemaining: number;
 }
 
+export interface VisionProfile {
+  darknessFactor: number;
+  ambientRadius: number;
+  ambientConeAngle: number;
+  flashlightFactor: number;
+  effectiveFlashlightRadius: number;
+}
+
+export function getVisionProfile(clock: Pick<GameClock, "getDarknessFactor">): VisionProfile {
+  const darknessFactor = clock.getDarknessFactor();
+  const ambientRadius = lerp(VISION.dayConeRadius, VISION.nightBareConeRadius, darknessFactor);
+  const ambientConeAngle = lerp(VISION.dayConeAngle, VISION.nightBareConeAngle, darknessFactor);
+  const flashlightFactor = smoothstepRange(0.15, 0.75, darknessFactor);
+  return {
+    darknessFactor,
+    ambientRadius,
+    ambientConeAngle,
+    flashlightFactor,
+    effectiveFlashlightRadius: VISION.flashlightRadius * flashlightFactor,
+  };
+}
+
+export function shouldConsumeFlashlightCharge(flashlightOn: boolean, flashlightCharge: number, clock: Pick<GameClock, "getDarknessFactor">): boolean {
+  return flashlightOn && flashlightCharge > 0 && getVisionProfile(clock).flashlightFactor > 0;
+}
+
 export function buildVisionSources(player: PlayerLightState, clock: GameClock, fires: readonly ActiveFire[]): VisionSource[] {
+  const profile = getVisionProfile(clock);
   const sources: VisionSource[] = [{
+    id: "player-proximity",
     x: player.x,
     y: player.y,
-    radius: clock.getBaseVisionRadius(),
+    radius: VISION.proximityRadius,
     intensity: 1,
-    sourceType: "player",
+    sourceType: "proximity",
+  }, {
+    id: "player-ambient-cone",
+    x: player.x,
+    y: player.y,
+    radius: profile.ambientRadius,
+    intensity: 1,
+    sourceType: "ambient-cone",
+    direction: player.aimAngle,
+    coneAngle: profile.ambientConeAngle,
   }];
   if (player.torchRemaining > 0) {
-    sources.push({ x: player.x, y: player.y, radius: VISION.torchRadius, intensity: 1, sourceType: "torch" });
+    sources.push({ id: "player-torch", x: player.x, y: player.y, radius: VISION.torchRadius, intensity: 1, sourceType: "torch" });
   }
-  if (player.flashlightOn) {
-    sources.push({ x: player.x, y: player.y, radius: VISION.flashlightRadius, intensity: 1, sourceType: "flashlight", direction: player.aimAngle, coneAngle: VISION.flashlightConeAngle });
+  if (player.flashlightOn && profile.flashlightFactor > 0) {
+    sources.push({ id: "player-flashlight", x: player.x, y: player.y, radius: profile.effectiveFlashlightRadius, intensity: 1, sourceType: "flashlight", direction: player.aimAngle, coneAngle: VISION.flashlightConeAngle });
   }
   for (const fire of fires) {
-    if (fire.remaining > 0) sources.push({ x: fire.x, y: fire.y, radius: VISION.fireRadius, intensity: VISION.fireIntensity, sourceType: "fire" });
+    if (fire.remaining > 0) sources.push({ id: `fire:${"id" in fire ? String(fire.id) : `${Math.round(fire.x)}:${Math.round(fire.y)}`}`, x: fire.x, y: fire.y, radius: VISION.fireRadius, intensity: VISION.fireIntensity, sourceType: "fire" });
   }
   return sources;
+}
+
+function lerp(from: number, to: number, amount: number): number {
+  return from + (to - from) * amount;
+}
+
+function smoothstepRange(edge0: number, edge1: number, value: number): number {
+  const amount = Math.max(0, Math.min(1, (value - edge0) / (edge1 - edge0)));
+  return amount * amount * (3 - 2 * amount);
 }

@@ -14,8 +14,7 @@ export interface HudState {
   torchRemaining: number;
   quickslots: Array<string | null>;
   collectedParts: number;
-  companionHealth?: number;
-  companionAlive?: boolean;
+  companions: ReadonlyArray<{ id: string; health: number; maxHealth: number; rescued: boolean; alive: boolean }>;
   objective: string;
   defenseRemaining?: number;
 }
@@ -51,9 +50,11 @@ export class Hud {
 
   update(state: HudState): void {
     const infectionClass = state.infection >= 70 ? "danger" : state.infection >= 40 ? "warn" : "";
-    const companion = state.companionHealth === undefined
-      ? ""
-      : ` · 동료 <span class="${state.companionAlive ? "" : "danger"}">${Math.ceil(state.companionHealth)}</span>`;
+    const rescuedCompanions = state.companions.filter((companion) => companion.rescued);
+    const companion = `<span class="companion-summary">동료 ${rescuedCompanions.length}/4 ${rescuedCompanions.map((entry, index) => {
+      const ratio = Math.max(0, Math.min(100, entry.health / entry.maxHealth * 100));
+      return `<span class="companion-chip ${entry.alive ? "" : "is-dead"}" title="${entry.id}">${index + 1}<i><b style="width:${ratio}%"></b></i>${entry.alive ? Math.ceil(entry.health) : "사망"}</span>`;
+    }).join("")}</span>`;
     this.status.innerHTML = `
       <span>체력 <b>${Math.ceil(state.health)}</b></span>
       <span>감염 <b class="${infectionClass}">${Math.ceil(state.infection)}%</b></span>
@@ -88,4 +89,3 @@ export class Hud {
     this.root.remove();
   }
 }
-

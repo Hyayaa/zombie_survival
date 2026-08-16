@@ -43,6 +43,7 @@ export interface ContainerDefinition {
 }
 export interface GroundItemDefinition extends LootStack { id: string; tileX: number; tileY: number }
 export interface ZombieSpawnDefinition { id: string; tileX: number; tileY: number; kind: ZombieKind }
+export interface CompanionSpawnDefinition { id: string; tileX: number; tileY: number }
 
 export interface MapDefinition {
   mapId: string; mapVersion: number; mapSeed: number;
@@ -50,7 +51,9 @@ export interface MapDefinition {
   roadSegments: RoadSegment[]; buildings: BuildingDefinition[]; structures: BuildingDefinition[];
   obstacles: WorldObstacle[]; doors: DoorDefinition[]; containers: ContainerDefinition[];
   groundItems: GroundItemDefinition[]; zombieSpawns: ZombieSpawnDefinition[];
-  playerSpawn: { x: number; y: number }; survivorSpawn: { x: number; y: number };
+  playerSpawn: { x: number; y: number }; companionSpawns: CompanionSpawnDefinition[];
+  /** v4 map compatibility alias for companion-0. */
+  survivorSpawn: { x: number; y: number };
   extractionZone: { x: number; y: number; radius: number };
   safehouseZone: { x: number; y: number; width: number; height: number };
 }
@@ -157,12 +160,26 @@ export function createCityBlockMap(mapSeed = 0x51a7c1): MapDefinition {
   const safehouse = nearestBuilding(buildings, 64, 64);
   safehouse.kind = "safehouse"; safehouse.name = "중앙 은신처";
   const playerTile = interiorTile(safehouse, 0.5);
-  const survivorBuilding = selectBuildingNearDistance(buildings, safehouse, 38, new Set([safehouse.id]));
-  survivorBuilding.kind = "house";
-  const survivorTile = interiorTile(survivorBuilding, 0.45);
   const diagonalBuildings = buildings.filter((building) => building.orientation === 45 || building.orientation === 135);
+  const usedCompanionBuildings = new Set([safehouse.id]);
+  const companionBuildings: BuildingDefinition[] = [];
+  const firstCompanionBuilding = selectBuildingNearDistance(buildings, safehouse, 38, usedCompanionBuildings);
+  companionBuildings.push(firstCompanionBuilding); usedCompanionBuildings.add(firstCompanionBuilding.id);
+  const diagonalCompanionBuilding = nearestAvailableBuilding(diagonalBuildings, 92, 38, usedCompanionBuildings);
+  companionBuildings.push(diagonalCompanionBuilding); usedCompanionBuildings.add(diagonalCompanionBuilding.id);
+  const southWestCompanionBuilding = nearestAvailableBuilding(buildings, 20, 108, usedCompanionBuildings);
+  companionBuildings.push(southWestCompanionBuilding); usedCompanionBuildings.add(southWestCompanionBuilding.id);
+  const northEastCompanionBuilding = nearestAvailableBuilding(buildings, 108, 20, usedCompanionBuildings);
+  companionBuildings.push(northEastCompanionBuilding); usedCompanionBuildings.add(northEastCompanionBuilding.id);
+  companionBuildings.forEach((building) => { building.kind = "house"; });
+  const companionSpawns = companionBuildings.map((building, index) => {
+    const tile = interiorTile(building, 0.38 + index * 0.09);
+    return { id: `companion-${index}`, tileX: tile % widthTiles, tileY: Math.floor(tile / widthTiles) };
+  });
+  const survivorTile = companionSpawns[0]!.tileY * widthTiles + companionSpawns[0]!.tileX;
+
   const batteryBuilding = nearestBuilding(diagonalBuildings, 108, 24);
-  const usedObjectives = new Set([safehouse.id, survivorBuilding.id, batteryBuilding.id]);
+  const usedObjectives = new Set([safehouse.id, firstCompanionBuilding.id, batteryBuilding.id]);
   const fuelBuilding = nearestAvailableBuilding(buildings, 108, 108, usedObjectives);
   usedObjectives.add(fuelBuilding.id);
   const engineBuilding = nearestAvailableBuilding(buildings, 20, 108, usedObjectives);
@@ -179,7 +196,7 @@ export function createCityBlockMap(mapSeed = 0x51a7c1): MapDefinition {
   return {
     mapId: MAP_ID, mapVersion: MAP_VERSION, mapSeed, widthTiles, heightTiles, terrain, roadSegments,
     buildings, structures: buildings, obstacles, doors, containers, groundItems, zombieSpawns,
-    playerSpawn: tileWorld(playerTile, widthTiles), survivorSpawn: tileWorld(survivorTile, widthTiles),
+    playerSpawn: tileWorld(playerTile, widthTiles), companionSpawns, survivorSpawn: tileWorld(survivorTile, widthTiles),
     extractionZone: { ...tileWorld(extractionTile, widthTiles), radius: 52 },
     safehouseZone: {
       x: safeBounds.minX * TILE_SIZE, y: safeBounds.minY * TILE_SIZE,

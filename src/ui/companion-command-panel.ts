@@ -8,7 +8,7 @@ export class CompanionCommandPanel {
     this.root.className = "command-panel pixel-panel";
     this.root.hidden = true;
     this.root.innerHTML = `
-      <b>동료 명령</b>
+      <b>동료 전체 명령</b>
       <button data-command="follow">따라오기</button>
       <button data-command="hold">현재 위치 사수</button>
       <button data-command="move">지정 위치로 이동</button>
@@ -39,4 +39,3 @@ export class CompanionCommandPanel {
     this.root.remove();
   }
 }
-

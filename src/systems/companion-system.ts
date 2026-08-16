@@ -22,10 +22,22 @@ export function updateFormationDirection(state: FormationState, movement: Point,
   return { stableDirection: candidateDirection, candidateDirection, candidateHeldMs: 0 };
 }
 
-export function getFormationSlot(player: Point, state: FormationState, distance = 28): Point {
+export function getFormationSlot(player: Point, state: FormationState, distance = 28, slotIndex = 0): Point {
+  const base = FORMATION_OFFSETS[Math.max(0, Math.min(FORMATION_OFFSETS.length - 1, slotIndex))]!;
+  const scale = distance / 28;
+  const backward = base.backward * scale;
+  const lateral = base.lateral * scale;
+  const perpendicularX = -state.stableDirection.y;
+  const perpendicularY = state.stableDirection.x;
   return {
-    x: player.x - state.stableDirection.x * distance,
-    y: player.y - state.stableDirection.y * distance,
+    x: player.x - state.stableDirection.x * backward + perpendicularX * lateral,
+    y: player.y - state.stableDirection.y * backward + perpendicularY * lateral,
   };
 }
 
+export const FORMATION_OFFSETS = [
+  { backward: 28, lateral: 0 },
+  { backward: 38, lateral: -18 },
+  { backward: 38, lateral: 18 },
+  { backward: 54, lateral: 0 },
+] as const;

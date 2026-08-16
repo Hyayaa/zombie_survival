@@ -9,11 +9,12 @@ export enum VisibilityState {
 }
 
 export interface VisionSource {
+  id?: string;
   x: number;
   y: number;
   radius: number;
   intensity: number;
-  sourceType: "player" | "torch" | "flashlight" | "fire";
+  sourceType: "player" | "proximity" | "ambient-cone" | "torch" | "flashlight" | "fire";
   direction?: number;
   coneAngle?: number;
 }
@@ -25,34 +26,46 @@ export interface VisionGrid {
 
 export interface FogInvalidationInput {
   playerCell: number;
-  aimBucket: number;
+  ambientAimBucket: number;
   visionRevision: number;
-  radiusBucket: number;
+  ambientRadiusBucket: number;
+  ambientAngleBucket: number;
+  flashlightActive: boolean;
+  flashlightRadiusBucket: number;
   torchActive: boolean;
 }
 
 export class FogInvalidationTracker {
   private lastPlayerCell = -1;
-  private lastAimBucket = -1;
+  private lastAmbientAimBucket = -1;
   private lastVisionRevision = -1;
-  private lastRadiusBucket = -1;
+  private lastAmbientRadiusBucket = -1;
+  private lastAmbientAngleBucket = -1;
+  private lastFlashlightActive = false;
+  private lastFlashlightRadiusBucket = -1;
   private lastTorchActive = false;
   private invalidated = true;
 
   shouldRecompute(input: FogInvalidationInput, force = false): boolean {
     return force || this.invalidated
       || input.playerCell !== this.lastPlayerCell
-      || input.aimBucket !== this.lastAimBucket
+      || input.ambientAimBucket !== this.lastAmbientAimBucket
       || input.visionRevision !== this.lastVisionRevision
-      || input.radiusBucket !== this.lastRadiusBucket
+      || input.ambientRadiusBucket !== this.lastAmbientRadiusBucket
+      || input.ambientAngleBucket !== this.lastAmbientAngleBucket
+      || input.flashlightActive !== this.lastFlashlightActive
+      || input.flashlightRadiusBucket !== this.lastFlashlightRadiusBucket
       || input.torchActive !== this.lastTorchActive;
   }
 
   commit(input: FogInvalidationInput): void {
     this.lastPlayerCell = input.playerCell;
-    this.lastAimBucket = input.aimBucket;
+    this.lastAmbientAimBucket = input.ambientAimBucket;
     this.lastVisionRevision = input.visionRevision;
-    this.lastRadiusBucket = input.radiusBucket;
+    this.lastAmbientRadiusBucket = input.ambientRadiusBucket;
+    this.lastAmbientAngleBucket = input.ambientAngleBucket;
+    this.lastFlashlightActive = input.flashlightActive;
+    this.lastFlashlightRadiusBucket = input.flashlightRadiusBucket;
     this.lastTorchActive = input.torchActive;
     this.invalidated = false;
   }
@@ -63,9 +76,12 @@ export class FogInvalidationTracker {
 
   reset(): void {
     this.lastPlayerCell = -1;
-    this.lastAimBucket = -1;
+    this.lastAmbientAimBucket = -1;
     this.lastVisionRevision = -1;
-    this.lastRadiusBucket = -1;
+    this.lastAmbientRadiusBucket = -1;
+    this.lastAmbientAngleBucket = -1;
+    this.lastFlashlightActive = false;
+    this.lastFlashlightRadiusBucket = -1;
     this.lastTorchActive = false;
     this.invalidated = true;
   }
@@ -84,6 +100,8 @@ const OCTANTS = [
 
 const SOURCE_SALTS = {
   player: 0x13579b,
+  proximity: 0x13579b,
+  "ambient-cone": 0x1975b3,
   torch: 0x2468ac,
   flashlight: 0x3579bd,
   fire: 0x468ace,
@@ -161,7 +179,7 @@ export class FogOfWarSystem {
     const radius = Math.max(1, source.radius / this.cellSize * Math.max(0.25, source.intensity));
     const radiusCells = Math.ceil(radius);
     const radiusSquared = radius * radius;
-    const sourceSalt = this.seed + SOURCE_SALTS[source.sourceType];
+    const sourceSalt = this.seed + SOURCE_SALTS[source.sourceType] + stableStringHash(source.id ?? source.sourceType);
 
     this.markVisible(sourceX, sourceY, previousGeneration);
     for (const [xx, xy, yx, yy] of OCTANTS) {
@@ -292,4 +310,13 @@ export class FogOfWarSystem {
 
 function normalizeAngle(angle: number): number {
   return Math.atan2(Math.sin(angle), Math.cos(angle));
+}
+
+function stableStringHash(value: string): number {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return hash >>> 0;
 }

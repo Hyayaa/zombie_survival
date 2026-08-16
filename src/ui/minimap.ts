@@ -21,6 +21,7 @@ export const MINIMAP_COLORS = {
   player: 0x64c7e8, companion: 0xd1ad5f, safehouse: 0x7193b8,
   extraction: 0x8fbd68, cameraViewport: 0xd7e0dc,
   zombie: 0xc9403c,
+  survivor: 0xe0a65a,
 } as const;
 
 export interface MinimapZombieMarkerSource {
@@ -28,10 +29,18 @@ export interface MinimapZombieMarkerSource {
   isAlive(): boolean;
 }
 
+export interface MinimapCompanionMarkerSource {
+  readonly id: string;
+  readonly position: Point;
+  readonly rescued: boolean;
+  readonly alive: boolean;
+}
+
 export interface MinimapDynamicState {
-  player: Point; companion?: Point; companionRescued: boolean; companionAlive: boolean;
+  player: Point; companions: readonly MinimapCompanionMarkerSource[];
   zombies: readonly MinimapZombieMarkerSource[];
   collectedParts: number; defenseActive: boolean;
+  developerMode: boolean;
   cameraWorldView: { x: number; y: number; width: number; height: number };
 }
 
@@ -139,9 +148,11 @@ export function cameraViewportToFullMap(worldView: { x: number; y: number; width
 export const cameraViewportToMinimap = cameraViewportToFullMap;
 
 export function shouldShowCompanion(rescued: boolean, alive: boolean): boolean { return rescued && alive; }
+export function shouldShowFullCompanion(developerMode: boolean, alive: boolean): boolean { return developerMode && alive; }
 export function shouldIterateZombieMarkers(mode: MapDisplayMode): boolean { return mode === "local"; }
-export function shouldShowLocalZombie(zombie: MinimapZombieMarkerSource, window: LocalMapWindow): boolean {
-  return zombie.isAlive() && isPointInLocalWindow(zombie.position, window);
+export function shouldShowLocalZombie(zombie: MinimapZombieMarkerSource, window: LocalMapWindow, fog?: Pick<FogOfWarSystem, "getStateAtWorld">): boolean {
+  return zombie.isAlive() && isPointInLocalWindow(zombie.position, window)
+    && (!fog || fog.getStateAtWorld(zombie.position.x, zombie.position.y) === VisibilityState.Visible);
 }
 export function shouldShowExtraction(tileState: MinimapTileState, collectedParts: number, defenseActive: boolean): boolean { return tileState !== MinimapTileState.Unknown || collectedParts >= 3 || defenseActive; }
 export function shouldUpdateMinimap(open: boolean, now: number, lastUpdateAt: number): boolean { return open && now >= lastUpdateAt + MINIMAP.updateIntervalMs; }
@@ -154,20 +165,24 @@ export class MinimapPanel {
   private readonly localTerrainCanvas: HTMLCanvasElement;
   private readonly localMarkerCanvas: HTMLCanvasElement;
   private readonly fullTerrainCanvas: HTMLCanvasElement;
+  private readonly fullFogCanvas: HTMLCanvasElement;
   private readonly fullMarkerCanvas: HTMLCanvasElement;
   private readonly localTerrainContext: CanvasRenderingContext2D;
   private readonly localMarkerContext: CanvasRenderingContext2D;
   private readonly fullTerrainContext: CanvasRenderingContext2D;
+  private readonly fullFogContext: CanvasRenderingContext2D;
   private readonly fullMarkerContext: CanvasRenderingContext2D;
   private readonly terrain: Uint8Array;
   private readonly localStates = new Uint8Array(LOCAL_MINIMAP_ZOOM_LEVELS.at(-1)! ** 2);
-  private readonly dirty: MinimapFogTracker;
+  private readonly localDirty: MinimapFogTracker;
+  private readonly fullDirty: MinimapFogTracker;
   private readonly markerPoint: Point = { x: 0, y: 0 };
   private mode: MapDisplayMode = "hidden";
   private currentLocalTiles: number = MINIMAP.localTiles;
   private localWindow: LocalMapWindow = { startX: -1, startY: -1, width: MINIMAP.localTiles, height: MINIMAP.localTiles };
   private localNeedsRebuild = true;
   private fullInitialized = false;
+  private fullFogInitialized = false;
   private lastDynamicUpdateAt = Number.NEGATIVE_INFINITY;
   private lastState?: MinimapDynamicState;
   private readonly localWheelListener = (event: WheelEvent): void => {
@@ -179,20 +194,22 @@ export class MinimapPanel {
 
   constructor(parent: HTMLElement, private readonly map: MapDefinition, private readonly fog: FogOfWarSystem) {
     this.root = document.createElement("div"); this.root.className = "minimap-panel"; this.root.hidden = true;
-    this.root.innerHTML = `<section class="minimap-panel__local pixel-panel"><div class="minimap-panel__title" data-role="local-title"></div><div class="minimap-panel__canvas"><canvas data-layer="local-terrain"></canvas><canvas data-layer="local-markers"></canvas></div></section><section class="minimap-panel__full pixel-panel"><div class="minimap-panel__title">도시 전체 지도 · M 닫기 · Esc 닫기</div><div class="minimap-panel__canvas"><canvas data-layer="full-terrain"></canvas><canvas data-layer="full-markers"></canvas></div></section>`;
+    this.root.innerHTML = `<section class="minimap-panel__local pixel-panel"><div class="minimap-panel__title" data-role="local-title"></div><div class="minimap-panel__canvas"><canvas data-layer="local-terrain"></canvas><canvas data-layer="local-markers"></canvas></div></section><section class="minimap-panel__full pixel-panel"><div class="minimap-panel__title">도시 전체 지도 · M 닫기 · Esc 닫기</div><div class="minimap-panel__canvas"><canvas data-layer="full-terrain"></canvas><canvas data-layer="full-fog"></canvas><canvas data-layer="full-markers"></canvas></div></section>`;
     this.localRoot = requiredElement(this.root, ".minimap-panel__local"); this.fullRoot = requiredElement(this.root, ".minimap-panel__full");
     this.localTitle = requiredElement(this.root, '[data-role="local-title"]');
     this.localTerrainCanvas = requiredCanvas(this.root, 'canvas[data-layer="local-terrain"]');
     this.localMarkerCanvas = requiredCanvas(this.root, 'canvas[data-layer="local-markers"]');
     this.fullTerrainCanvas = requiredCanvas(this.root, 'canvas[data-layer="full-terrain"]');
+    this.fullFogCanvas = requiredCanvas(this.root, 'canvas[data-layer="full-fog"]');
     this.fullMarkerCanvas = requiredCanvas(this.root, 'canvas[data-layer="full-markers"]');
     setCanvasSize(this.localTerrainCanvas, MINIMAP.localSize); setCanvasSize(this.localMarkerCanvas, MINIMAP.localSize);
-    setCanvasSize(this.fullTerrainCanvas, MINIMAP.fullSize); setCanvasSize(this.fullMarkerCanvas, MINIMAP.fullSize);
+    setCanvasSize(this.fullTerrainCanvas, MINIMAP.fullSize); setCanvasSize(this.fullFogCanvas, MINIMAP.fullSize); setCanvasSize(this.fullMarkerCanvas, MINIMAP.fullSize);
     this.localTerrainContext = requiredContext(this.localTerrainCanvas); this.localMarkerContext = requiredContext(this.localMarkerCanvas);
-    this.fullTerrainContext = requiredContext(this.fullTerrainCanvas); this.fullMarkerContext = requiredContext(this.fullMarkerCanvas);
+    this.fullTerrainContext = requiredContext(this.fullTerrainCanvas); this.fullFogContext = requiredContext(this.fullFogCanvas); this.fullMarkerContext = requiredContext(this.fullMarkerCanvas);
     this.terrain = new Uint8Array(map.widthTiles * map.heightTiles);
     for (let y = 0; y < map.heightTiles; y += 1) for (let x = 0; x < map.widthTiles; x += 1) this.terrain[y * map.widthTiles + x] = getMinimapTerrain(map, x, y);
-    this.dirty = new MinimapFogTracker(map.widthTiles, map.heightTiles);
+    this.localDirty = new MinimapFogTracker(map.widthTiles, map.heightTiles);
+    this.fullDirty = new MinimapFogTracker(map.widthTiles, map.heightTiles);
     this.localRoot.addEventListener("wheel", this.localWheelListener, { passive: false });
     parent.append(this.root); this.updateLocalTitle(); this.syncModeDom();
   }
@@ -201,6 +218,7 @@ export class MinimapPanel {
     this.mode = mode; this.lastDynamicUpdateAt = Number.NEGATIVE_INFINITY;
     if (mode === "local") this.localNeedsRebuild = true;
     if (mode === "full" && !this.fullInitialized) this.rebuildFullTerrain();
+    if (mode === "full" && !this.fullFogInitialized) this.rebuildFullFog();
     this.syncModeDom();
   }
   cycleMode(): MapDisplayMode { this.setMode(cycleMapMode(this.mode)); return this.mode; }
@@ -212,6 +230,7 @@ export class MinimapPanel {
   isOpen(): boolean { return this.isVisible(); }
   getMode(): MapDisplayMode { return this.mode; }
   getLocalTileCount(): number { return this.currentLocalTiles; }
+  invalidateMarkers(): void { this.lastDynamicUpdateAt = Number.NEGATIVE_INFINITY; }
 
   handleLocalWheel(deltaY: number): boolean {
     const nextTiles = stepLocalMinimapTiles(this.currentLocalTiles, deltaY, this.mode);
@@ -220,7 +239,7 @@ export class MinimapPanel {
     this.localWindow = { startX: -1, startY: -1, width: nextTiles, height: nextTiles };
     this.localNeedsRebuild = true;
     this.lastDynamicUpdateAt = Number.NEGATIVE_INFINITY;
-    this.dirty.clear();
+    this.localDirty.clear();
     this.updateLocalTitle();
     if (this.lastState) {
       this.updateLocalWindow(this.lastState);
@@ -231,19 +250,20 @@ export class MinimapPanel {
   }
 
   markFogDirty(indices: readonly number[]): void {
-    if (!this.isLocal()) { this.localNeedsRebuild = true; return; }
-    this.dirty.markFogIndices(indices, this.fog.widthCells);
+    this.localDirty.markFogIndices(indices, this.fog.widthCells);
+    this.fullDirty.markFogIndices(indices, this.fog.widthCells);
+    if (!this.isLocal()) this.localNeedsRebuild = true;
   }
   markWorldTileDirty(tileX: number, tileY: number): void {
     const index = tileY * this.map.widthTiles + tileX;
     this.terrain[index] = getMinimapTerrain(this.map, tileX, tileY);
-    this.dirty.markTile(tileX, tileY); this.localNeedsRebuild = true;
+    this.localDirty.markTile(tileX, tileY); this.fullDirty.markTile(tileX, tileY); this.localNeedsRebuild = true;
     if (this.fullInitialized) this.drawFullTerrainTile(index);
   }
   markBarricadeTile(tileX: number, tileY: number, present: boolean): void {
     const index = tileY * this.map.widthTiles + tileX;
     this.terrain[index] = present ? MinimapTerrain.Barricade : getMinimapTerrain(this.map, tileX, tileY);
-    this.dirty.markTile(tileX, tileY);
+    this.localDirty.markTile(tileX, tileY); this.fullDirty.markTile(tileX, tileY);
     this.localNeedsRebuild = true;
     if (this.fullInitialized) this.drawFullTerrainTile(index);
   }
@@ -254,8 +274,9 @@ export class MinimapPanel {
     if (this.mode === "local") {
       this.updateLocalWindow(state);
       if (this.localNeedsRebuild) this.rebuildLocalTerrain();
-      else this.dirty.consume((index) => this.drawLocalTerrainTile(index));
+      else this.localDirty.consume((index) => this.drawLocalTerrainTile(index));
     }
+    if (this.mode === "full") this.fullDirty.consume((index) => this.drawFullFogTile(index));
     if (!shouldUpdateMinimap(true, now, this.lastDynamicUpdateAt)) return false;
     this.lastDynamicUpdateAt = now;
     if (this.mode === "local") this.drawLocalMarkers(state); else this.drawFullMarkers(state);
@@ -290,7 +311,7 @@ export class MinimapPanel {
   private rebuildLocalTerrain(): void {
     this.localTerrainContext.clearRect(0, 0, MINIMAP.localSize, MINIMAP.localSize);
     for (let y = 0; y < this.localWindow.height; y += 1) for (let x = 0; x < this.localWindow.width; x += 1) this.drawLocalTerrainTile((this.localWindow.startY + y) * this.map.widthTiles + this.localWindow.startX + x);
-    this.dirty.clear(); this.localNeedsRebuild = false;
+    this.localDirty.clear(); this.localNeedsRebuild = false;
   }
   private drawLocalTerrainTile(index: number): void {
     const tileX = index % this.map.widthTiles; const tileY = Math.floor(index / this.map.widthTiles);
@@ -311,18 +332,34 @@ export class MinimapPanel {
     this.fullTerrainContext.fillStyle = colorCss(getMinimapTileColor(this.terrain[index] as MinimapTerrain, MinimapTileState.Visible));
     this.fullTerrainContext.fillRect(tileX * MINIMAP.fullPixelsPerTile, tileY * MINIMAP.fullPixelsPerTile, MINIMAP.fullPixelsPerTile, MINIMAP.fullPixelsPerTile);
   }
+  private rebuildFullFog(): void {
+    for (let index = 0; index < this.terrain.length; index += 1) this.drawFullFogTile(index);
+    this.fullDirty.clear(); this.fullFogInitialized = true;
+  }
+  private drawFullFogTile(index: number): void {
+    const tileX = index % this.map.widthTiles; const tileY = Math.floor(index / this.map.widthTiles);
+    const x = tileX * MINIMAP.fullPixelsPerTile; const y = tileY * MINIMAP.fullPixelsPerTile;
+    this.fullFogContext.clearRect(x, y, MINIMAP.fullPixelsPerTile, MINIMAP.fullPixelsPerTile);
+    const style = getFullMapFogStyle(getMinimapTileState(this.fog, tileX, tileY));
+    if (!style) return;
+    this.fullFogContext.fillStyle = style;
+    this.fullFogContext.fillRect(x, y, MINIMAP.fullPixelsPerTile, MINIMAP.fullPixelsPerTile);
+  }
   private drawLocalMarkers(state: MinimapDynamicState): void {
     const context = this.localMarkerContext; context.clearRect(0, 0, MINIMAP.localSize, MINIMAP.localSize);
     const pixelsPerTile = getLocalMinimapPixelsPerTile(this.currentLocalTiles);
     drawLocalMarker(context, state.player, this.localWindow, pixelsPerTile, MINIMAP_COLORS.player, 5, false);
-    if (state.companion && shouldShowCompanion(state.companionRescued, state.companionAlive)) {
-      const inside = isPointInLocalWindow(state.companion, this.localWindow);
-      drawLocalMarker(context, state.companion, this.localWindow, pixelsPerTile, MINIMAP_COLORS.companion, inside ? 4 : 3, true);
+    let edgeMarkerIndex = 0;
+    for (const companion of state.companions) {
+      if (!shouldShowCompanion(companion.rescued, companion.alive)) continue;
+      const inside = isPointInLocalWindow(companion.position, this.localWindow);
+      const offset = inside ? 0 : edgeMarkerIndex++ % 3 - 1;
+      drawLocalMarker(context, companion.position, this.localWindow, pixelsPerTile, MINIMAP_COLORS.companion, inside ? 4 : 3, true, offset);
     }
     let zombieCount = 0;
     for (const zombie of state.zombies) {
       if (zombieCount >= 40) break;
-      if (!shouldShowLocalZombie(zombie, this.localWindow)) continue;
+      if (!shouldShowLocalZombie(zombie, this.localWindow, this.fog)) continue;
       drawLocalMarker(context, zombie.position, this.localWindow, pixelsPerTile, MINIMAP_COLORS.zombie, 2, false);
       zombieCount += 1;
     }
@@ -334,10 +371,24 @@ export class MinimapPanel {
     context.strokeRect(Math.floor(viewport.x) + 0.5, Math.floor(viewport.y) + 0.5, Math.max(1, Math.floor(viewport.width) - 1), Math.max(1, Math.floor(viewport.height) - 1));
     const safehouse = this.map.safehouseZone;
     worldToFullMap(safehouse.x + safehouse.width / 2, safehouse.y + safehouse.height / 2, this.markerPoint); drawMarker(context, this.markerPoint, MINIMAP_COLORS.safehouse, 5, MINIMAP.fullSize);
-    worldToFullMap(this.map.extractionZone.x, this.map.extractionZone.y, this.markerPoint); drawMarker(context, this.markerPoint, MINIMAP_COLORS.extraction, 6, MINIMAP.fullSize);
-    if (state.companion && shouldShowCompanion(state.companionRescued, state.companionAlive)) { worldToFullMap(state.companion.x, state.companion.y, this.markerPoint); drawMarker(context, this.markerPoint, MINIMAP_COLORS.companion, 5, MINIMAP.fullSize); }
+    const extractionTileX = Math.floor(this.map.extractionZone.x / TILE_SIZE);
+    const extractionTileY = Math.floor(this.map.extractionZone.y / TILE_SIZE);
+    if (shouldShowExtraction(getMinimapTileState(this.fog, extractionTileX, extractionTileY), state.collectedParts, state.defenseActive)) {
+      worldToFullMap(this.map.extractionZone.x, this.map.extractionZone.y, this.markerPoint);
+      drawMarker(context, this.markerPoint, MINIMAP_COLORS.extraction, 6, MINIMAP.fullSize);
+    }
+    for (const companion of state.companions) {
+      if (!shouldShowFullCompanion(state.developerMode, companion.alive)) continue;
+      worldToFullMap(companion.position.x, companion.position.y, this.markerPoint);
+      drawMarker(context, this.markerPoint, companion.rescued ? MINIMAP_COLORS.companion : MINIMAP_COLORS.survivor, 4, MINIMAP.fullSize);
+    }
     worldToFullMap(state.player.x, state.player.y, this.markerPoint); drawMarker(context, this.markerPoint, MINIMAP_COLORS.player, 6, MINIMAP.fullSize);
   }
+}
+
+export function getFullMapFogStyle(state: MinimapTileState): string | undefined {
+  if (state === MinimapTileState.Visible) return undefined;
+  return state === MinimapTileState.Unknown ? "rgba(2,4,5,0.98)" : "rgba(12,22,32,0.74)";
 }
 
 export function getMinimapTileColor(terrain: MinimapTerrain, state: MinimapTileState): number {
@@ -356,9 +407,11 @@ export function getMinimapTileColor(terrain: MinimapTerrain, state: MinimapTileS
   }
 }
 
-function drawLocalMarker(context: CanvasRenderingContext2D, point: Point, window: LocalMapWindow, pixelsPerTile: number, color: number, size: number, clampOutside: boolean): void {
+function drawLocalMarker(context: CanvasRenderingContext2D, point: Point, window: LocalMapWindow, pixelsPerTile: number, color: number, size: number, clampOutside: boolean, offset = 0): void {
   const marker = getLocalMarkerPosition(point, window, pixelsPerTile, clampOutside);
   if (!marker) return;
+  marker.x = clamp(marker.x + offset, 2, MINIMAP.localSize - 3);
+  marker.y = clamp(marker.y - offset, 2, MINIMAP.localSize - 3);
   drawMarker(context, marker, color, size, MINIMAP.localSize);
 }
 function isPointInLocalWindow(point: Point, window: LocalMapWindow): boolean {

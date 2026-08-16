@@ -6,7 +6,6 @@ import { createCompanionNavigationState, type CompanionNavigationState } from ".
 export type CompanionCommand = "follow" | "hold" | "move" | "focus";
 
 export class Companion {
-  readonly id = "companion";
   readonly view: TopDownActorView;
   position: Point;
   health = 80;
@@ -22,10 +21,13 @@ export class Companion {
   pathIndex = 0;
   nextPathAt = 0;
   readonly navigation: CompanionNavigationState;
+  readonly goalScratch: Point = { x: 0, y: 0 };
+  readonly steeringScratch: Point = { x: 0, y: 0 };
 
-  constructor(scene: Phaser.Scene, position: Point) {
+  constructor(scene: Phaser.Scene, readonly id: string, position: Point, readonly formationSlotIndex = 0) {
     this.position = { ...position };
     this.navigation = createCompanionNavigationState(this.position);
+    this.nextPathAt = stableCompanionStagger(id);
     this.view = new TopDownActorView(scene, position.x, position.y, ACTOR_PALETTES.companion, true);
   }
 
@@ -49,4 +51,10 @@ export class Companion {
     if (!this.alive) this.view.setDead(true);
     this.view.setHealth(this.health, this.maxHealth, true);
   }
+}
+
+function stableCompanionStagger(id: string): number {
+  let hash = 0;
+  for (let index = 0; index < id.length; index += 1) hash = (Math.imul(hash, 31) + id.charCodeAt(index)) | 0;
+  return Math.abs(hash) % 4 * 35;
 }

@@ -10,6 +10,7 @@ export interface InventoryPanelState {
   unlockedWeapons: WeaponId[];
   equippedWeapon: WeaponId;
   weaponNames: Record<WeaponId, string>;
+  developerMode: boolean;
 }
 
 export interface InventoryPanelCallbacks {
@@ -85,7 +86,7 @@ export class InventoryPanel {
     const weapons = this.state.unlockedWeapons.map((weaponId) => `<button data-action="equip" data-weapon="${weaponId}" class="weapon-button ${this.state?.equippedWeapon === weaponId ? "is-active" : ""}">${this.state?.weaponNames[weaponId]}</button>`).join("");
     this.content.innerHTML = `
       <div><h3>인벤토리 20칸</h3><div class="inventory-grid">${slotHtml}</div></div>
-      <aside><h3>무기</h3><div class="weapon-list">${weapons}</div><h3>제작</h3><div class="recipe-list">${recipeHtml}</div><p class="panel-note">제작 소음은 주변 좀비를 끌어들입니다.</p></aside>
+      <aside><h3>무기</h3><div class="weapon-list">${weapons}</div><h3>제작</h3>${this.state.developerMode ? '<p class="developer-mode-note">개발자 모드 · 제작 재료 무시</p>' : ""}<div class="recipe-list">${recipeHtml}</div><p class="panel-note">제작 소음은 주변 좀비를 끌어들입니다.</p></aside>
     `;
   }
 
@@ -101,4 +102,3 @@ export class InventoryPanel {
     if (action === "equip" && target.dataset.weapon) this.callbacks.onEquipWeapon(target.dataset.weapon as WeaponId);
   }
 }
-

@@ -1,4 +1,4 @@
-import { MAP_ID, MAP_VERSION, SAVE_VERSION } from "../config/game-config";
+import { MAP_ID, MAP_VERSION, SAVE_VERSION, TILE_SIZE } from "../config/game-config";
 import type { SaveGame } from "../core/save-state";
 import { ITEM_DEFINITIONS } from "../data/item-definitions";
 import { createCityBlockMap } from "../data/map-definitions";
@@ -35,12 +35,13 @@ export class SaveSystem {
         return null;
       }
       if (parsed.version === 3) return this.migrateV3(parsed);
+      if (parsed.version === 4) return this.migrateV4(parsed);
       if (parsed.version !== SAVE_VERSION) {
         this.storage.removeItem(this.key);
         this.incompatibleMapReset = true;
         return null;
       }
-      if (!this.isValidBase(parsed, SAVE_VERSION) || !this.hasValidObstacleState(parsed)) return null;
+      if (!this.isValidBase(parsed, SAVE_VERSION) || !this.hasValidObstacleState(parsed) || !this.hasValidCompanions(parsed)) return null;
       const exploredFog = isValidExploredFog(parsed.exploredFog) ? parsed.exploredFog : emptyFogExploration();
       return { ...parsed, version: SAVE_VERSION, exploredFog } as SaveGame;
     } catch {
@@ -74,9 +75,9 @@ export class SaveSystem {
     const openedDoors = new Set(value.openedDoors);
     const map = createCityBlockMap(value.mapSeed);
     const exploredFog = isValidExploredFog(value.exploredFog) ? value.exploredFog : emptyFogExploration();
-    const migrated = {
+    const v4 = {
       ...value,
-      version: SAVE_VERSION,
+      version: 4,
       exploredFog,
       doorStates: map.doors.map((door) => ({
         id: door.id,
@@ -85,7 +86,27 @@ export class SaveSystem {
         destroyed: false,
       })),
       barricades: [],
-    } as SaveGame;
+    } as SaveCandidate;
+    return this.migrateV4(v4);
+  }
+
+  private migrateV4(value: SaveCandidate): SaveGame | null {
+    if (!this.isValidBase(value, 4) || !this.hasValidObstacleState(value) || typeof value.mapSeed !== "number") return null;
+    const legacy = value.companion;
+    if (!legacy) return null;
+    const map = createCityBlockMap(value.mapSeed);
+    const companions = map.companionSpawns.map((spawn, index) => index === 0 ? {
+      id: spawn.id,
+      x: legacy.x!, y: legacy.y!, health: legacy.health!,
+      rescued: legacy.rescued!, alive: legacy.alive!, command: legacy.command!,
+      targetX: legacy.targetX, targetY: legacy.targetY, focusTargetId: legacy.focusTargetId,
+    } : {
+      id: spawn.id,
+      x: spawn.tileX * TILE_SIZE + TILE_SIZE / 2, y: spawn.tileY * TILE_SIZE + TILE_SIZE / 2, health: 80,
+      rescued: false, alive: true, command: "follow" as const,
+    });
+    const exploredFog = isValidExploredFog(value.exploredFog) ? value.exploredFog : emptyFogExploration();
+    const migrated = { ...value, version: SAVE_VERSION, companions, companion: undefined, exploredFog } as SaveGame;
     this.save(migrated);
     return migrated;
   }
@@ -114,12 +135,14 @@ export class SaveSystem {
       && value.quickslots.every((itemId) => itemId === null || (typeof itemId === "string" && ITEM_DEFINITIONS[itemId] !== undefined))
       && Array.isArray(value.zombies)
       && typeof value.clock?.elapsedSeconds === "number"
-      && typeof value.companion?.x === "number"
-      && typeof value.companion?.y === "number"
-      && typeof value.companion?.health === "number"
-      && typeof value.companion?.rescued === "boolean"
-      && typeof value.companion?.alive === "boolean"
-      && typeof value.companion?.command === "string"
+      && (version >= 5 ? Array.isArray(value.companions) : (
+        typeof value.companion?.x === "number"
+        && typeof value.companion?.y === "number"
+        && typeof value.companion?.health === "number"
+        && typeof value.companion?.rescued === "boolean"
+        && typeof value.companion?.alive === "boolean"
+        && typeof value.companion?.command === "string"
+      ))
       && Array.isArray(value.collectedParts)
       && Array.isArray(value.searchedContainers)
       && Array.isArray(value.openedDoors)
@@ -136,6 +159,19 @@ export class SaveSystem {
       && value.barricades.every((barricade) => typeof barricade?.id === "string"
         && typeof barricade.tileX === "number" && typeof barricade.tileY === "number"
         && typeof barricade.health === "number" && typeof barricade.maxHealth === "number");
+  }
+
+  private hasValidCompanions(value: SaveCandidate): boolean {
+    if (!Array.isArray(value.companions) || value.companions.length !== 4) return false;
+    const ids = new Set<string>();
+    for (const companion of value.companions) {
+      if (!companion || typeof companion.id !== "string" || ids.has(companion.id)
+        || typeof companion.x !== "number" || typeof companion.y !== "number"
+        || typeof companion.health !== "number" || typeof companion.rescued !== "boolean"
+        || typeof companion.alive !== "boolean" || typeof companion.command !== "string") return false;
+      ids.add(companion.id);
+    }
+    return true;
   }
 }
 

@@ -83,6 +83,33 @@ button:focus-visible {
   color: #eff3ef;
 }
 
+.companion-summary,
+.companion-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.companion-chip {
+  color: #d9bd72;
+}
+
+.companion-chip i {
+  display: inline-block;
+  width: 14px;
+  height: 3px;
+  overflow: hidden;
+  background: #171a18;
+}
+
+.companion-chip i b {
+  display: block;
+  height: 100%;
+  background: #7aaa65;
+}
+
+.companion-chip.is-dead { color: #df6b5d; }
+
 .hud .warn { color: #e5b563; }
 .hud .danger { color: #df6b5d; }
 
@@ -269,6 +296,12 @@ button:focus-visible {
 
 .panel-note {
   color: #9a7c6b;
+  font-size: 0.82em;
+}
+
+.developer-mode-note {
+  margin: 4px 0;
+  color: #e4b75f;
   font-size: 0.82em;
 }
 

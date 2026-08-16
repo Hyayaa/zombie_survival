@@ -38,10 +38,29 @@ export function validateMap(map: MapDefinition): MapValidationResult {
   const playerIndex = worldIndex(map, map.playerSpawn.x, map.playerSpawn.y);
   if (playerIndex < 0 || blocked[playerIndex]) errors.push("player spawn is blocked or outside map");
   const reachable = floodWalkable(map, blocked, playerIndex);
-  const objectives: Array<[string, number]> = [
-    ["survivor", worldIndex(map, map.survivorSpawn.x, map.survivorSpawn.y)],
-    ["extraction", worldIndex(map, map.extractionZone.x, map.extractionZone.y)],
-  ];
+  const objectives: Array<[string, number]> = [["extraction", worldIndex(map, map.extractionZone.x, map.extractionZone.y)]];
+  if (map.companionSpawns.length !== 4) errors.push(`companion spawn count ${map.companionSpawns.length}, expected 4`);
+  const companionIds = new Set<string>();
+  const companionTiles = new Set<number>();
+  const companionBuildings = new Set<string>();
+  let diagonalCompanionCount = 0;
+  for (const spawn of map.companionSpawns) {
+    const index = spawn.tileY * map.widthTiles + spawn.tileX;
+    if (companionIds.has(spawn.id)) errors.push(`duplicate companion id ${spawn.id}`);
+    if (companionTiles.has(index)) errors.push(`duplicate companion tile ${spawn.tileX},${spawn.tileY}`);
+    companionIds.add(spawn.id); companionTiles.add(index);
+    if (blocked[index]) errors.push(`${spawn.id}: blocked spawn at ${formatIndex(index, map.widthTiles)}`);
+    const building = map.buildings.find((candidate) => candidate.footprintTiles.includes(index));
+    if (!building) errors.push(`${spawn.id}: not inside a building`);
+    else {
+      if (building.kind === "safehouse") errors.push(`${spawn.id}: inside safehouse`);
+      if (companionBuildings.has(building.id)) errors.push(`${spawn.id}: shares building ${building.id}`);
+      companionBuildings.add(building.id);
+      if (building.orientation === 45 || building.orientation === 135) diagonalCompanionCount += 1;
+    }
+    objectives.push([spawn.id, index]);
+  }
+  if (diagonalCompanionCount === 0) errors.push("missing companion spawn in diagonal building");
   for (const part of ["battery", "fuel", "engine_part"] as const) {
     const container = map.containers.find((candidate) => candidate.part === part);
     if (!container) errors.push(`missing objective part ${part}`);

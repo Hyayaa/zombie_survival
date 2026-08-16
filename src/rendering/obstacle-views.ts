@@ -2,12 +2,12 @@ import Phaser from "phaser";
 import { DEPTH, ENTITY_OUTLINE, TILE_SIZE } from "../config/game-config";
 import type { DoorDefinition } from "../data/map-definitions";
 import type { DestructibleObstacleState } from "../entities/destructible-obstacle";
-import { entityOutlineColor, type EntityOutlineState, type OutlineableEntityView } from "./entity-outline";
+import { EntityOutlineController, type EntityOutlineState, type OutlineableEntityView } from "./entity-outline";
 
 abstract class DestructibleObstacleView implements OutlineableEntityView {
   protected readonly healthBackground: Phaser.GameObjects.Rectangle;
   protected readonly healthFill: Phaser.GameObjects.Rectangle;
-  private outlineState: EntityOutlineState = "normal";
+  private readonly outline: EntityOutlineController;
   private currentHealth = Number.NaN;
   private maximumHealth = Number.NaN;
   private recentDamageUntil = 0;
@@ -27,12 +27,11 @@ abstract class DestructibleObstacleView implements OutlineableEntityView {
       .setOrigin(0, 0).setDepth(DEPTH.propFront + Math.round(y) + 1);
     this.healthBackground.setVisible(false);
     this.healthFill.setVisible(false);
+    this.outline = new EntityOutlineController((color) => this.body.setStrokeStyle(1, color, 1));
   }
 
   setOutlineState(state: EntityOutlineState): void {
-    if (state === this.outlineState) return;
-    this.outlineState = state;
-    this.body.setStrokeStyle(1, entityOutlineColor(state), 1);
+    this.outline.setState(state);
   }
 
   setHealth(current: number, maximum: number, now: number): void {
