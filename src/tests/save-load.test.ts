@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { FOG_CELL_SIZE, MAP_ID, MAP_VERSION, SAVE_VERSION } from "../config/game-config";
 import type { SaveGame } from "../core/save-state";
+import { createCityBlockMap } from "../data/map-definitions";
 import { decodeExploredFog, encodeExploredFog, FOG_TOTAL_CELLS, isValidExploredFog } from "../systems/fog-save-codec";
 import { SaveSystem, type StorageLike } from "../systems/save-system";
 
@@ -28,6 +29,8 @@ function saveFixture(): SaveGame {
     collectedParts: [],
     searchedContainers: ["drawer-1"],
     openedDoors: [],
+    doorStates: [],
+    barricades: [],
     consumedZombieSpawnIds: [],
     zombies: [],
     exploredFog: { cellSize: FOG_CELL_SIZE, encoding: "rle-v1", runs: [1, 2, 50, 1] },
@@ -55,6 +58,39 @@ describe("SaveSystem", () => {
     expect(saves.consumeIncompatibleMapReset()).toBe(true);
     expect(saves.consumeIncompatibleMapReset()).toBe(false);
     expect(saves.hasSave()).toBe(false);
+  });
+
+  it("migrates v3 door state without resetting player, fog or inventory", () => {
+    const storage = new MemoryStorage();
+    const saves = new SaveSystem(storage, "test");
+    const fixture = saveFixture();
+    const legacy = { ...fixture, version: 3, player: { ...fixture.player, health: 67 }, openedDoors: ["door-building-00"] } as Record<string, unknown>;
+    delete legacy.doorStates;
+    delete legacy.barricades;
+    storage.setItem("test", JSON.stringify(legacy));
+    const loaded = saves.load();
+    expect(loaded?.version).toBe(4);
+    expect(loaded?.player.health).toBe(67);
+    expect(loaded?.inventory).toEqual(fixture.inventory);
+    expect(loaded?.exploredFog).toEqual(fixture.exploredFog);
+    expect(loaded?.doorStates).toHaveLength(createCityBlockMap(99).doors.length);
+    expect(loaded?.doorStates.find((door) => door.id === "door-building-00")).toMatchObject({ open: true, health: 48, destroyed: false });
+    expect(loaded?.doorStates.find((door) => door.id !== "door-building-00")?.open).toBe(false);
+    expect(loaded?.barricades).toEqual([]);
+    expect(saves.consumeIncompatibleMapReset()).toBe(false);
+  });
+
+  it("round-trips damaged doors and barricades in v4", () => {
+    const storage = new MemoryStorage();
+    const saves = new SaveSystem(storage, "test");
+    const fixture = {
+      ...saveFixture(),
+      doorStates: [{ id: "door-building-00", open: false, health: 17, destroyed: false }],
+      barricades: [{ id: "b-1", tileX: 10, tileY: 11, health: 31, maxHealth: 96 }],
+    };
+    expect(saves.save(fixture)).toBe(true);
+    expect(saves.load()?.doorStates[0]?.health).toBe(17);
+    expect(saves.load()?.barricades[0]).toMatchObject({ id: "b-1", health: 31, maxHealth: 96 });
   });
 
   it("round-trips empty and fully explored fog with RLE", () => {

@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { MINIMAP, WORLD_HEIGHT, WORLD_WIDTH } from "../config/game-config";
+import { LOCAL_MINIMAP_ZOOM_LEVELS, MINIMAP, WORLD_HEIGHT, WORLD_WIDTH } from "../config/game-config";
 import { createCityBlockMap, TerrainType } from "../data/map-definitions";
 import { VisibilityState } from "../systems/fog-of-war-system";
-import { cameraViewportToFullMap, cycleMapMode, getLocalMapWindow, getMinimapTerrain, getMinimapTileColor, getMinimapTileState, MINIMAP_COLORS, MinimapFogTracker, MinimapTerrain, MinimapTileState, shouldPauseSimulationForMap, shouldShowCompanion, shouldShowExtraction, shouldUpdateMinimap, worldToFullMap } from "../ui/minimap";
+import { cameraViewportToFullMap, cycleMapMode, getLocalMapWindow, getLocalMarkerPosition, getLocalMinimapPixelsPerTile, getMinimapTerrain, getMinimapTileColor, getMinimapTileState, MINIMAP_COLORS, MinimapFogTracker, MinimapTerrain, MinimapTileState, shouldIterateZombieMarkers, shouldPauseSimulationForMap, shouldShowCompanion, shouldShowExtraction, shouldShowLocalZombie, shouldUpdateMinimap, stepLocalMinimapTiles, worldToFullMap } from "../ui/minimap";
 
 function fakeFog(states: Map<string, VisibilityState>): { getStateAtCell(x: number, y: number): VisibilityState } { return { getStateAtCell: (x, y) => states.get(`${x},${y}`) ?? VisibilityState.Unknown }; }
 
@@ -16,11 +16,33 @@ describe("local and full map data", () => {
   });
 
   it("uses a clamped 32x32 local window", () => {
-    expect(getLocalMapWindow(64, 64)).toEqual({ startX: 48, startY: 48, width: 32, height: 32 });
-    expect(getLocalMapWindow(0, 0)).toEqual({ startX: 0, startY: 0, width: 32, height: 32 });
-    expect(getLocalMapWindow(127, 127)).toEqual({ startX: 96, startY: 96, width: 32, height: 32 });
+    expect(getLocalMapWindow(64, 64, 32)).toEqual({ startX: 48, startY: 48, width: 32, height: 32 });
+    expect(getLocalMapWindow(0, 0, 32)).toEqual({ startX: 0, startY: 0, width: 32, height: 32 });
+    expect(getLocalMapWindow(127, 127, 32)).toEqual({ startX: 96, startY: 96, width: 32, height: 32 });
     expect(MINIMAP.localSize).toBe(192);
-    expect(MINIMAP.localPixelsPerTile).toBe(6);
+    expect(getLocalMinimapPixelsPerTile(32)).toBe(6);
+  });
+
+  it("zooms only in local mode across exact integer pixel steps", () => {
+    expect(LOCAL_MINIMAP_ZOOM_LEVELS).toEqual([16, 24, 32, 48, 64]);
+    expect(LOCAL_MINIMAP_ZOOM_LEVELS.map(getLocalMinimapPixelsPerTile)).toEqual([12, 8, 6, 4, 3]);
+    expect(stepLocalMinimapTiles(32, -1, "local")).toBe(24);
+    expect(stepLocalMinimapTiles(24, -1, "local")).toBe(16);
+    expect(stepLocalMinimapTiles(16, -1, "local")).toBe(16);
+    expect(stepLocalMinimapTiles(32, 1, "local")).toBe(48);
+    expect(stepLocalMinimapTiles(48, 1, "local")).toBe(64);
+    expect(stepLocalMinimapTiles(64, 1, "local")).toBe(64);
+    expect(stepLocalMinimapTiles(32, -1, "hidden")).toBe(32);
+    expect(stepLocalMinimapTiles(32, 1, "full")).toBe(32);
+  });
+
+  it("re-centers and clamps zoomed local windows and companion edge markers", () => {
+    expect(getLocalMapWindow(64, 64, 16)).toEqual({ startX: 56, startY: 56, width: 16, height: 16 });
+    expect(getLocalMapWindow(127, 127, 64)).toEqual({ startX: 64, startY: 64, width: 64, height: 64 });
+    const window = getLocalMapWindow(64, 64, 32);
+    expect(getLocalMarkerPosition({ x: 64 * 24, y: 64 * 24 }, window, 6)).toEqual({ x: 96, y: 96 });
+    expect(getLocalMarkerPosition({ x: 127 * 24, y: 64 * 24 }, window, 6)).toBeUndefined();
+    expect(getLocalMarkerPosition({ x: 127 * 24, y: 64 * 24 }, window, 6, true)).toEqual({ x: 189, y: 96 });
   });
 
   it("prioritizes visible over explored and keeps untouched tiles unknown", () => {
@@ -36,6 +58,7 @@ describe("local and full map data", () => {
     const wall = map.buildings[0]!.wallTiles[0]!;
     const vehicle = map.obstacles.find((obstacle) => obstacle.kind === "vehicle")!;
     const door = map.doors[0]!;
+    door.open = false;
     expect(getMinimapTerrain(map, road % map.widthTiles, Math.floor(road / map.widthTiles))).toBe(MinimapTerrain.Road);
     expect(getMinimapTerrain(map, floor % map.widthTiles, Math.floor(floor / map.widthTiles))).toBe(MinimapTerrain.Floor);
     expect(getMinimapTerrain(map, wall % map.widthTiles, Math.floor(wall / map.widthTiles))).toBe(MinimapTerrain.Wall);
@@ -43,6 +66,20 @@ describe("local and full map data", () => {
     expect(getMinimapTerrain(map, door.tileX, door.tileY)).toBe(MinimapTerrain.Door);
     door.open = true;
     expect(getMinimapTerrain(map, door.tileX, door.tileY)).toBe(MinimapTerrain.OpenDoor);
+  });
+
+  it("shows only living active zombies inside local mode and its current window", () => {
+    const window = getLocalMapWindow(64, 64, 32);
+    const active = { position: { x: 64 * 24, y: 64 * 24 }, isAlive: () => true };
+    const dead = { position: active.position, isAlive: () => false };
+    const outside = { position: { x: 10 * 24, y: 10 * 24 }, isAlive: () => true };
+    expect(shouldShowLocalZombie(active, window)).toBe(true);
+    expect(shouldShowLocalZombie(dead, window)).toBe(false);
+    expect(shouldShowLocalZombie(outside, window)).toBe(false);
+    expect(shouldIterateZombieMarkers("local")).toBe(true);
+    expect(shouldIterateZombieMarkers("hidden")).toBe(false);
+    expect(shouldIterateZombieMarkers("full")).toBe(false);
+    expect(MINIMAP_COLORS.zombie).toBe(0xc9403c);
   });
 
   it("never leaks terrain color for unknown local tiles while full uses bright terrain", () => {

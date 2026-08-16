@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { FOG_CELL_SIZE, MAP_HEIGHT_TILES, MAP_WIDTH_TILES, WORLD_HEIGHT, WORLD_WIDTH } from "../config/game-config";
-import { createCityBlockMap, TerrainType } from "../data/map-definitions";
+import { createCityBlockMap, isDoorInitiallyOpen, TerrainType } from "../data/map-definitions";
 import { validateMap } from "../data/map-validation";
 
 describe("expanded road-first city map", () => {
@@ -72,5 +72,22 @@ describe("expanded road-first city map", () => {
       .toEqual(second.buildings.map(({ id, orientation, footprintTiles, entranceTiles }) => ({ id, orientation, footprintTiles, entranceTiles })));
     expect(first.containers).toEqual(second.containers);
     expect(first.zombieSpawns).toEqual(second.zombieSpawns);
+  });
+
+  it("opens doors deterministically at an aggregate rate near 80 percent", () => {
+    const first = createCityBlockMap(77).doors.map((door) => door.open);
+    const second = createCityBlockMap(77).doors.map((door) => door.open);
+    expect(second).toEqual(first);
+    expect(createCityBlockMap(78).doors.map((door) => door.open)).not.toEqual(first);
+    let open = 0;
+    let total = 0;
+    for (let seed = 0; seed < 200; seed += 1) {
+      for (let doorIndex = 0; doorIndex < 40; doorIndex += 1) {
+        open += Number(isDoorInitiallyOpen(seed, `door-building-${doorIndex}`));
+        total += 1;
+      }
+    }
+    expect(open / total).toBeGreaterThanOrEqual(0.75);
+    expect(open / total).toBeLessThanOrEqual(0.85);
   });
 });

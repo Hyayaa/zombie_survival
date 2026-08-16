@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { TILE_SIZE } from "../config/game-config";
-import { findTilePath } from "../systems/pathfinding-system";
+import { findTilePath, findWeightedTilePath } from "../systems/pathfinding-system";
 
 const center = (tile: number): number => tile * TILE_SIZE + TILE_SIZE / 2;
 
@@ -23,5 +23,48 @@ describe("findTilePath", () => {
     );
     expect(path.some((point) => Math.floor(point.y / TILE_SIZE) !== 2)).toBe(true);
     expect(path.at(-1)).toEqual({ x: center(5), y: center(2) });
+  });
+});
+
+describe("findWeightedTilePath", () => {
+  it("routes around a costly closed door when the detour is shorter", () => {
+    const path = findWeightedTilePath(
+      { x: center(1), y: center(2) },
+      { x: center(5), y: center(2) },
+      (x, y) => x === 3 && y === 2 ? 6 : 1,
+      200,
+      7,
+      5,
+    );
+    expect(path.some((point) => Math.floor(point.x / TILE_SIZE) === 3 && Math.floor(point.y / TILE_SIZE) === 2)).toBe(false);
+  });
+
+  it("selects a door when the only alternative has a larger accumulated cost", () => {
+    const path = findWeightedTilePath(
+      { x: center(1), y: center(3) },
+      { x: center(7), y: center(3) },
+      (x, y) => {
+        if (x === 4 && y === 3) return 6;
+        if (x === 4 && y !== 0) return Number.POSITIVE_INFINITY;
+        return 1;
+      },
+      500,
+      9,
+      7,
+    );
+    expect(path.some((point) => Math.floor(point.x / TILE_SIZE) === 4 && Math.floor(point.y / TILE_SIZE) === 3)).toBe(true);
+  });
+
+  it("supports high Uint32 accumulated costs and barricade traversal", () => {
+    const path = findWeightedTilePath(
+      { x: center(1), y: center(1) },
+      { x: center(4), y: center(1) },
+      (x, y) => y !== 1 ? Number.POSITIVE_INFINITY : x === 2 ? 70_000 : x === 3 ? 12 : 1,
+      50,
+      6,
+      3,
+    );
+    expect(path).toHaveLength(3);
+    expect(path.at(-1)).toEqual({ x: center(4), y: center(1) });
   });
 });
