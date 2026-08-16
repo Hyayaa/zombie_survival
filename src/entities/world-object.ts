@@ -10,6 +10,7 @@ export type WorldObjectKind =
   | "zombie"
   | "door"
   | "barricade"
+  | "power-structure"
   | "container"
   | "item-drop"
   | "extraction";

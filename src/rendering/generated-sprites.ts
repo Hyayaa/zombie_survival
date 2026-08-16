@@ -125,6 +125,15 @@ export class TopDownActorView implements OutlineableEntityView {
     } else if (weapon === "bat") {
       this.weaponBody.setPosition(6, -1.5).setDisplaySize(14, 3).setFillStyle(0x8c6847, 1);
       this.weaponTip.setPosition(18, -2).setDisplaySize(3, 4).setFillStyle(0x58412f, 1);
+    } else if (weapon === "smg") {
+      this.weaponBody.setPosition(6, -2).setDisplaySize(10, 5).setFillStyle(0x5f6c6c, 1);
+      this.weaponTip.setPosition(15, -1).setDisplaySize(4, 2).setFillStyle(0x303a3a, 1);
+    } else if (weapon === "shotgun") {
+      this.weaponBody.setPosition(6, -2).setDisplaySize(15, 3).setFillStyle(0x806448, 1);
+      this.weaponTip.setPosition(19, -1).setDisplaySize(5, 2).setFillStyle(0x46504f, 1);
+    } else if (weapon === "hunting_rifle") {
+      this.weaponBody.setPosition(5, -2).setDisplaySize(18, 3).setFillStyle(0x6f5b43, 1);
+      this.weaponTip.setPosition(21, -1).setDisplaySize(6, 2).setFillStyle(0x37413f, 1);
     } else {
       this.weaponBody.setPosition(7, -2).setDisplaySize(7, 4).setFillStyle(0x8d9693, 1);
       this.weaponTip.setPosition(13, -1).setDisplaySize(3, 2).setFillStyle(0x3e4948, 1);

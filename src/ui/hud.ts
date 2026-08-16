@@ -9,6 +9,7 @@ export interface HudState {
   weapon: string;
   magazine: number;
   reserveAmmo: number;
+  showAmmo: boolean;
   flashlightCharge: number;
   flashlightOn: boolean;
   torchRemaining: number;
@@ -59,7 +60,7 @@ export class Hud {
       <span>체력 <b>${Math.ceil(state.health)}</b></span>
       <span>감염 <b class="${infectionClass}">${Math.ceil(state.infection)}%</b></span>
       <span>${state.time} · ${PHASE_LABELS[state.phase]}</span>
-      <span>${state.weapon}${state.weapon === "권총" ? ` ${state.magazine}/${state.reserveAmmo}` : ""}</span>
+      <span>${state.weapon}${state.showAmmo ? ` ${state.magazine}/${state.reserveAmmo}` : ""}</span>
       <span>손전등 ${state.flashlightOn ? "ON" : "OFF"} ${Math.ceil(state.flashlightCharge)}s</span>
       ${state.torchRemaining > 0 ? `<span>횃불 ${Math.ceil(state.torchRemaining)}s</span>` : ""}
       ${companion}

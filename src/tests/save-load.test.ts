@@ -21,7 +21,7 @@ function saveFixture(): SaveGame {
     seed: 42,
     rngState: 42,
     savedAt: 1,
-    player: { x: 12, y: 24, health: 81, infection: 13, equippedWeapon: "knife", unlockedWeapons: ["knife"], magazine: 0, flashlightCharge: 100, flashlightOn: false, torchRemaining: 0 },
+    player: { x: 12, y: 24, health: 81, infection: 13, equippedWeapon: "knife", unlockedWeapons: ["knife"], magazines: { pistol: 3, smg: 7, shotgun: 2, hunting_rifle: 1 }, flashlightCharge: 100, flashlightOn: false, torchRemaining: 0 },
     clock: { elapsedSeconds: 52 },
     inventory: [{ itemId: "cloth", quantity: 2 }, null],
     quickslots: ["bandage", null, null, null, null],
@@ -31,6 +31,7 @@ function saveFixture(): SaveGame {
     openedDoors: [],
     doorStates: [],
     barricades: [],
+    structures: [],
     consumedZombieSpawnIds: [],
     zombies: [],
     exploredFog: { cellSize: FOG_CELL_SIZE, encoding: "rle-v1", runs: [1, 2, 50, 1] },
@@ -65,13 +66,14 @@ describe("SaveSystem", () => {
     const saves = new SaveSystem(storage, "test");
     const fixture = saveFixture();
     const { id: _id, ...legacyCompanion } = fixture.companions[0]!;
-    const legacy = { ...fixture, version: 3, companion: legacyCompanion, player: { ...fixture.player, health: 67 }, openedDoors: ["door-building-00"] } as Record<string, unknown>;
+    const legacy = { ...fixture, version: 3, companion: legacyCompanion, player: { ...fixture.player, health: 67, magazine: 5 }, openedDoors: ["door-building-00"] } as Record<string, unknown>;
+    delete (legacy.player as Record<string, unknown>).magazines;
     delete legacy.companions;
     delete legacy.doorStates;
     delete legacy.barricades;
     storage.setItem("test", JSON.stringify(legacy));
     const loaded = saves.load();
-    expect(loaded?.version).toBe(5);
+    expect(loaded?.version).toBe(SAVE_VERSION);
     expect(loaded?.player.health).toBe(67);
     expect(loaded?.inventory).toEqual(fixture.inventory);
     expect(loaded?.exploredFog).toEqual(fixture.exploredFog);
@@ -81,6 +83,8 @@ describe("SaveSystem", () => {
     expect(loaded?.barricades).toEqual([]);
     expect(loaded?.companions).toHaveLength(4);
     expect(loaded?.companions[0]).toMatchObject({ id: "companion-0", health: 80, rescued: true });
+    expect(loaded?.player.magazines.pistol).toBe(5);
+    expect(loaded?.structures).toEqual([]);
     expect(saves.consumeIncompatibleMapReset()).toBe(false);
   });
 
@@ -94,16 +98,18 @@ describe("SaveSystem", () => {
       version: 4,
       companions: undefined,
       companion: { ...legacyCompanion, health: 63, targetX: 88, targetY: 92 },
+      player: { ...current.player, magazine: 4, magazines: undefined },
       doorStates: [{ id: "door-building-00", open: false, health: 17, destroyed: false }],
       barricades: [{ id: "b-1", tileX: 10, tileY: 11, health: 31, maxHealth: 96 }],
     };
     storage.setItem("test", JSON.stringify(fixture));
     const loaded = saves.load();
-    expect(loaded?.version).toBe(5);
+    expect(loaded?.version).toBe(SAVE_VERSION);
     expect(loaded?.companions[0]).toMatchObject({ id: "companion-0", health: 63, targetX: 88, targetY: 92 });
     expect(loaded?.companions.slice(1).every((companion) => !companion.rescued && companion.health === 80)).toBe(true);
     expect(loaded?.doorStates[0]?.health).toBe(17);
     expect(loaded?.barricades[0]).toMatchObject({ id: "b-1", health: 31, maxHealth: 96 });
+    expect(loaded?.structures).toEqual([]);
   });
 
   it("round-trips empty and fully explored fog with RLE", () => {
@@ -144,5 +150,32 @@ describe("SaveSystem", () => {
     expect(saves.load()).toBeNull();
     storage.setItem("test", JSON.stringify({ version: 999 }));
     expect(saves.load()).toBeNull();
+  });
+
+  it("migrates the v5 single magazine and legacy ammo into pistol state with no structures", () => {
+    const storage = new MemoryStorage(); const saves = new SaveSystem(storage, "test");
+    const current = saveFixture();
+    const legacy = { ...current, version: 5, structures: undefined, player: { ...current.player, magazines: undefined, magazine: 6 }, inventory: [{ itemId: "ammo", quantity: 9 }], quickslots: ["ammo", null, null, null, null] };
+    storage.setItem("test", JSON.stringify(legacy)); const loaded = saves.load();
+    expect(loaded?.version).toBe(SAVE_VERSION);
+    expect(loaded?.player.magazines).toEqual({ pistol: 6, smg: 0, shotgun: 0, hunting_rifle: 0 });
+    expect(loaded?.inventory[0]).toEqual({ itemId: "pistol_ammo", quantity: 9 });
+    expect(loaded?.quickslots[0]).toBe("pistol_ammo"); expect(loaded?.structures).toEqual([]);
+  });
+
+  it("round-trips four structures, energy, fuel and independent magazines without derived topology", () => {
+    const storage = new MemoryStorage(); const saves = new SaveSystem(storage, "test");
+    const fixture = saveFixture();
+    fixture.player.unlockedWeapons = ["knife", "pistol", "smg", "shotgun", "hunting_rifle"];
+    fixture.structures = [
+      { id: "t", kind: "turret", tileX: 1, tileY: 1, storedEnergy: 0, aimAngle: 1 },
+      { id: "s", kind: "solar-generator", tileX: 2, tileY: 1, storedEnergy: 30 },
+      { id: "f", kind: "fuel-generator", tileX: 3, tileY: 1, storedEnergy: 40, fuelSeconds: 122 },
+      { id: "b", kind: "battery-bank", tileX: 4, tileY: 1, storedEnergy: 120 },
+    ];
+    saves.save(fixture); const loaded = saves.load();
+    expect(loaded?.structures).toEqual(fixture.structures);
+    expect(loaded?.player.magazines).toEqual(fixture.player.magazines);
+    expect(JSON.stringify(loaded)).not.toContain("powerEdges");
   });
 });

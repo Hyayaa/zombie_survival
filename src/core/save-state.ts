@@ -1,6 +1,8 @@
 import type { ClockSnapshot } from "./game-clock";
 import type { InventorySlot } from "../systems/inventory-system";
 import type { ZombieKind, ZombieStateName } from "../data/zombie-definitions";
+import type { SavedStructureState } from "../entities/placed-structure";
+import type { WeaponMagazines } from "../systems/weapon-system";
 
 export interface SavedActor {
   x: number;
@@ -57,7 +59,9 @@ export interface SaveGame {
     infection: number;
     equippedWeapon: string;
     unlockedWeapons: string[];
-    magazine: number;
+    magazines: WeaponMagazines;
+    /** v5 migration input only. */
+    magazine?: number;
     flashlightCharge: number;
     flashlightOn: boolean;
     torchRemaining: number;
@@ -73,6 +77,7 @@ export interface SaveGame {
   openedDoors: string[];
   doorStates: SavedDoorState[];
   barricades: SavedBarricadeState[];
+  structures: SavedStructureState[];
   consumedZombieSpawnIds: string[];
   zombies: SavedZombie[];
   exploredFog: SavedFogExploration;

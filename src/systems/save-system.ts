@@ -3,6 +3,7 @@ import type { SaveGame } from "../core/save-state";
 import { ITEM_DEFINITIONS } from "../data/item-definitions";
 import { createCityBlockMap } from "../data/map-definitions";
 import { emptyFogExploration, isValidExploredFog } from "./fog-save-codec";
+import { createWeaponMagazines } from "./weapon-system";
 
 export interface StorageLike {
   getItem(key: string): string | null;
@@ -36,12 +37,13 @@ export class SaveSystem {
       }
       if (parsed.version === 3) return this.migrateV3(parsed);
       if (parsed.version === 4) return this.migrateV4(parsed);
+      if (parsed.version === 5) return this.migrateV5(parsed);
       if (parsed.version !== SAVE_VERSION) {
         this.storage.removeItem(this.key);
         this.incompatibleMapReset = true;
         return null;
       }
-      if (!this.isValidBase(parsed, SAVE_VERSION) || !this.hasValidObstacleState(parsed) || !this.hasValidCompanions(parsed)) return null;
+      if (!this.isValidBase(parsed, SAVE_VERSION) || !this.hasValidObstacleState(parsed) || !this.hasValidCompanions(parsed) || !this.hasValidStructures(parsed)) return null;
       const exploredFog = isValidExploredFog(parsed.exploredFog) ? parsed.exploredFog : emptyFogExploration();
       return { ...parsed, version: SAVE_VERSION, exploredFog } as SaveGame;
     } catch {
@@ -106,7 +108,22 @@ export class SaveSystem {
       rescued: false, alive: true, command: "follow" as const,
     });
     const exploredFog = isValidExploredFog(value.exploredFog) ? value.exploredFog : emptyFogExploration();
-    const migrated = { ...value, version: SAVE_VERSION, companions, companion: undefined, exploredFog } as SaveGame;
+    const v5 = { ...value, version: 5, companions, companion: undefined, exploredFog } as SaveCandidate;
+    return this.migrateV5(v5);
+  }
+
+  private migrateV5(value: SaveCandidate): SaveGame | null {
+    if (!this.isValidBase(value, 5) || !this.hasValidObstacleState(value) || !this.hasValidCompanions(value)) return null;
+    const inventory = value.inventory!.map((slot) => slot?.itemId === "ammo" ? { ...slot, itemId: "pistol_ammo" } : slot);
+    const quickslots = value.quickslots!.map((itemId) => itemId === "ammo" ? "pistol_ammo" : itemId);
+    const migrated = {
+      ...value,
+      version: SAVE_VERSION,
+      player: { ...value.player!, magazines: createWeaponMagazines({ pistol: value.player!.magazine ?? 0 }), magazine: undefined },
+      inventory,
+      quickslots,
+      structures: [],
+    } as SaveGame;
     this.save(migrated);
     return migrated;
   }
@@ -125,7 +142,9 @@ export class SaveSystem {
       && typeof value.player?.infection === "number"
       && typeof value.player?.equippedWeapon === "string"
       && Array.isArray(value.player?.unlockedWeapons)
-      && typeof value.player?.magazine === "number"
+      && (version >= 6
+        ? value.player?.magazines !== undefined && ["pistol", "smg", "shotgun", "hunting_rifle"].every((id) => typeof value.player?.magazines?.[id as keyof typeof value.player.magazines] === "number")
+        : typeof value.player?.magazine === "number")
       && typeof value.player?.flashlightCharge === "number"
       && typeof value.player?.flashlightOn === "boolean"
       && typeof value.player?.torchRemaining === "number"
@@ -172,6 +191,13 @@ export class SaveSystem {
       ids.add(companion.id);
     }
     return true;
+  }
+
+  private hasValidStructures(value: SaveCandidate): boolean {
+    return Array.isArray(value.structures) && value.structures.every((state) => state && typeof state.id === "string"
+      && ["turret", "solar-generator", "fuel-generator", "battery-bank"].includes(state.kind)
+      && typeof state.tileX === "number" && typeof state.tileY === "number" && typeof state.storedEnergy === "number"
+      && (state.fuelSeconds === undefined || typeof state.fuelSeconds === "number"));
   }
 }
 

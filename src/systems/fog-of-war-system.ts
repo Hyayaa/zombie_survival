@@ -14,7 +14,7 @@ export interface VisionSource {
   y: number;
   radius: number;
   intensity: number;
-  sourceType: "player" | "proximity" | "ambient-cone" | "torch" | "flashlight" | "fire" | "companion";
+  sourceType: "player" | "proximity" | "ambient-cone" | "torch" | "flashlight" | "fire" | "companion" | "turret";
   direction?: number;
   coneAngle?: number;
 }
@@ -111,6 +111,7 @@ const SOURCE_SALTS = {
   flashlight: 0x3579bd,
   fire: 0x468ace,
   companion: 0x579bdf,
+  turret: 0x68ace1,
 } as const;
 
 export class FogOfWarSystem {

@@ -104,6 +104,16 @@ describe("FogOfWarSystem", () => {
     expect(getCompanionVisionSignature(companions, FOG_CELL_SIZE, fog.widthCells)).not.toBe(signature);
   });
 
+  it("treats a powered turret source as stable omnidirectional vision blocked by walls", () => {
+    const fog = new FogOfWarSystem(420, 240, FOG_CELL_SIZE, 919);
+    const turret = source({ id: "turret:structure-1", x: 120, y: 120, radius: 90, sourceType: "turret", direction: undefined, coneAngle: undefined });
+    fog.recompute([turret], grid((x) => x === 48));
+    expect(turret.id).toBe("turret:structure-1");
+    expect(fog.getStateAtWorld(90, 120)).toBe(VisibilityState.Visible);
+    expect(fog.getStateAtWorld(135, 120)).toBe(VisibilityState.Visible);
+    expect(fog.getStateAtWorld(150, 120)).not.toBe(VisibilityState.Visible);
+  });
+
   it("marks nearby cells visible and leaves distant cells unknown", () => {
     const fog = new FogOfWarSystem(120, 120, FOG_CELL_SIZE, 123);
     fog.recompute([source()], grid());

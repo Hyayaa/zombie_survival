@@ -98,6 +98,17 @@ describe("expanded road-first city map", () => {
     expect(first.doors.map((door) => door.segment)).toEqual(second.doors.map((door) => door.segment));
   });
 
+  it("places each new firearm with matching ammunition outside objective containers", () => {
+    const map = createCityBlockMap(0x3344);
+    const expected = { smg: "smg_ammo", shotgun: "shotgun_shell", hunting_rifle: "rifle_ammo" } as const;
+    for (const [weapon, ammo] of Object.entries(expected)) {
+      const container = map.containers.find((candidate) => candidate.equipment === weapon);
+      expect(container).toBeDefined(); expect(container?.part).toBeUndefined();
+      expect(container?.loot.some((stack) => stack.itemId === ammo && stack.quantity > 0)).toBe(true);
+    }
+    expect(createCityBlockMap(0x3344).containers).toEqual(map.containers);
+  });
+
   it("opens doors deterministically at an aggregate rate near 80 percent", () => {
     const first = createCityBlockMap(77).doors.map((door) => door.open);
     const second = createCityBlockMap(77).doors.map((door) => door.open);

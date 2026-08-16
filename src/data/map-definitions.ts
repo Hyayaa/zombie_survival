@@ -1,6 +1,7 @@
 import { MAP_HEIGHT_TILES, MAP_ID, MAP_VERSION, MAP_WIDTH_TILES, OBSTACLE_BALANCE, TILE_SIZE } from "../config/game-config";
 import type { SegmentGeometry } from "../systems/collision-geometry";
 import type { ZombieKind } from "./zombie-definitions";
+import type { WeaponId } from "./weapon-definitions";
 
 export enum TerrainType { Ground = 0, Road = 1, Sidewalk = 2, Floor = 3 }
 export type RoadKind = "arterial" | "street" | "diagonal";
@@ -42,7 +43,7 @@ export interface LootStack { itemId: string; quantity: number }
 export interface ContainerDefinition {
   id: string; tileX: number; tileY: number;
   kind: "drawer" | "crate" | "shelf" | "trash" | "vehicle" | "corpse" | "pile";
-  loot: LootStack[]; equipment?: "bat" | "pistol"; part?: "battery" | "fuel" | "engine_part";
+  loot: LootStack[]; equipment?: WeaponId; part?: "battery" | "fuel" | "engine_part";
 }
 export interface GroundItemDefinition extends LootStack { id: string; tileX: number; tileY: number }
 export interface ZombieSpawnDefinition { id: string; tileX: number; tileY: number; kind: ZombieKind }
@@ -203,7 +204,7 @@ export function createCityBlockMap(mapSeed = 0x51a7c1): MapDefinition {
   fuelBuilding.kind = "gas-station"; fuelBuilding.name = "동부 주유소";
   engineBuilding.kind = "garage"; engineBuilding.name = "서부 정비소";
 
-  const containers = createContainers(buildings, widthTiles, batteryBuilding, fuelBuilding, engineBuilding);
+  const containers = createContainers(buildings, widthTiles, batteryBuilding, fuelBuilding, engineBuilding, mapSeed);
   const groundItems = createGroundItems(buildings, widthTiles);
   addVehicles(obstacles, terrain, occupied, widthTiles, heightTiles);
   const extractionTile = nearestRoadTile(terrain, widthTiles, heightTiles, 120, 116);
@@ -389,13 +390,13 @@ function rasterizeWalkway(terrain: Uint8Array, occupied: Uint8Array, width: numb
   }
 }
 
-function createContainers(buildings: readonly BuildingDefinition[], width: number, battery: BuildingDefinition, fuel: BuildingDefinition, engine: BuildingDefinition): ContainerDefinition[] {
+function createContainers(buildings: readonly BuildingDefinition[], width: number, battery: BuildingDefinition, fuel: BuildingDefinition, engine: BuildingDefinition, mapSeed: number): ContainerDefinition[] {
   const containers: ContainerDefinition[] = [];
   const lootSets: LootStack[][] = [
     [{ itemId: "canned_food", quantity: 1 }, { itemId: "cloth", quantity: 1 }],
     [{ itemId: "water", quantity: 1 }, { itemId: "medicine", quantity: 1 }],
     [{ itemId: "wood", quantity: 2 }, { itemId: "metal", quantity: 1 }],
-    [{ itemId: "ammo", quantity: 4 }, { itemId: "cloth", quantity: 1 }],
+    [{ itemId: "pistol_ammo", quantity: 4 }, { itemId: "cloth", quantity: 1 }],
   ];
   for (let buildingIndex = 0; buildingIndex < buildings.length; buildingIndex += 1) {
     const building = buildings[buildingIndex]!;
@@ -412,6 +413,18 @@ function createContainers(buildings: readonly BuildingDefinition[], width: numbe
   assignPart(containers, battery, "battery", width, [{ itemId: "battery", quantity: 1 }, { itemId: "metal", quantity: 2 }]);
   assignPart(containers, fuel, "fuel", width, [{ itemId: "fuel", quantity: 3 }, { itemId: "cloth", quantity: 1 }]);
   assignPart(containers, engine, "engine_part", width, [{ itemId: "engine_part", quantity: 1 }, { itemId: "metal", quantity: 2 }]);
+  const equipment: Array<{ weapon: WeaponId; ammo: string; quantity: number }> = [
+    { weapon: "smg", ammo: "smg_ammo", quantity: 28 },
+    { weapon: "shotgun", ammo: "shotgun_shell", quantity: 10 },
+    { weapon: "hunting_rifle", ammo: "rifle_ammo", quantity: 8 },
+  ];
+  const candidates = containers.filter((container) => !container.part);
+  const start = (mapSeed >>> 0) % candidates.length;
+  equipment.forEach((entry, index) => {
+    const container = candidates[(start + index * 13) % candidates.length]!;
+    container.equipment = entry.weapon;
+    container.loot = [{ itemId: entry.ammo, quantity: entry.quantity }, ...container.loot];
+  });
   return containers;
 }
 
@@ -422,7 +435,7 @@ function assignPart(containers: ContainerDefinition[], building: BuildingDefinit
 }
 
 function createGroundItems(buildings: readonly BuildingDefinition[], width: number): GroundItemDefinition[] {
-  const itemIds = ["wood", "bandage", "ammo", "water", "cloth", "canned_food"];
+  const itemIds = ["wood", "bandage", "pistol_ammo", "water", "cloth", "canned_food"];
   return buildings.slice(0, 16).map((building, index) => {
     const tile = interiorTile(building, 0.35 + index % 3 * 0.15);
     return { id: `ground-${index}`, itemId: itemIds[index % itemIds.length]!, quantity: index % 4 === 0 ? 2 : 1, tileX: tile % width, tileY: Math.floor(tile / width) };

@@ -4,11 +4,12 @@ import { GameSettingsStore, type GameSettings } from "../core/game-settings";
 import { GameClock } from "../core/game-clock";
 import type { SaveGame, SavedBarricadeState } from "../core/save-state";
 import { SeededRng } from "../core/seeded-rng";
-import { createCityBlockMap, type ContainerDefinition, type DoorDefinition, type WorldObstacle } from "../data/map-definitions";
+import { createCityBlockMap, isRoad, type ContainerDefinition, type DoorDefinition, type WorldObstacle } from "../data/map-definitions";
 import { assertValidMap } from "../data/map-validation";
 import { getItemDefinition } from "../data/item-definitions";
 import { RECIPE_DEFINITIONS } from "../data/recipe-definitions";
-import { WEAPON_DEFINITIONS, type WeaponId } from "../data/weapon-definitions";
+import { BUILDABLE_ITEM_KIND, BUILDABLE_DEFINITIONS, type BuildableKind } from "../data/buildable-definitions";
+import { isFirearmId, WEAPON_DEFINITIONS, type WeaponId } from "../data/weapon-definitions";
 import type { ZombieKind } from "../data/zombie-definitions";
 import { PerformanceMonitor } from "../debug/performance-monitor";
 import { AttackEffectController, getAttackBlockReason } from "../effects/attack-effect-controller";
@@ -18,16 +19,19 @@ import { Companion, type CompanionCommand } from "../entities/companion";
 import { DestructibleObstacleSystem, getZombieStructureDamage } from "../entities/destructible-obstacle";
 import { ItemDrop } from "../entities/item-drop";
 import { Player } from "../entities/player";
+import { createPlacedStructure, type PlacedStructureState } from "../entities/placed-structure";
 import type { InteractionContext, WorldObject, WorldObjectKind } from "../entities/world-object";
 import { Zombie } from "../entities/zombie";
 import { FogRenderer } from "../rendering/fog-renderer";
 import { createMapRendering, updateDoorView, type MapViews } from "../rendering/map-renderer";
 import { BarricadeView } from "../rendering/obstacle-views";
+import { createPowerWirePolyline } from "../rendering/power-wire-geometry";
+import { StructureView } from "../rendering/structure-view";
 import { AudioSystem } from "../systems/audio-system";
 import { CameraController, configurePaddedCameraBounds } from "../systems/camera-controller";
 import { CollisionSystem } from "../systems/collision-system";
 import { pointSegmentDistanceSquared, visibilityProbeTowardPoint } from "../systems/collision-geometry";
-import { distance, firstTargetOnLine, targetsInMeleeArc } from "../systems/combat-system";
+import { angleDifference, distance, firstTargetOnLine, targetsInMeleeArc } from "../systems/combat-system";
 import { chooseLocalSteering, findNearestWalkableGoal, getCompanionCombatMovement, getCompanionFollowSpeed, getCompanionStuckDuration, getWorldTileIndex, markCompanionBlocked, markCompanionRepath, selectCompanionCombatTarget, shouldOverrideCompanionGoalForCombat, updateCatchUpMode, updateCompanionStuckState } from "../systems/companion-navigation";
 import { createFormationState, getFormationSlot, updateFormationDirection, type FormationState } from "../systems/companion-system";
 import { CraftingSystem } from "../systems/crafting-system";
@@ -41,6 +45,10 @@ import { initializeNewGameLoadout } from "../systems/new-game-loadout";
 import { findTilePath, findWeightedTilePath } from "../systems/pathfinding-system";
 import { SaveSystem } from "../systems/save-system";
 import { WorldObjectRegistry } from "../systems/world-object-registry";
+import { createPelletAngles } from "../systems/weapon-system";
+import { getBuildablePlacementFailure } from "../systems/buildable-placement";
+import { GENERATOR_FUEL_SECONDS, MAX_GENERATOR_FUEL_SECONDS, POWER_TICK_MS, PowerGridSystem } from "../systems/power-grid-system";
+import { rotateTurretToward, selectTurretTarget, TURRET_AIM_TOLERANCE, TURRET_COOLDOWN_MS, TURRET_DAMAGE, TURRET_RANGE, TURRET_SCAN_INTERVAL_MS, type TurretTarget } from "../systems/turret-system";
 import { updateZombieMind, type Point } from "../systems/zombie-ai-system";
 import { CompanionCommandPanel } from "../ui/companion-command-panel";
 import { Hud } from "../ui/hud";
@@ -101,6 +109,15 @@ export class WorldScene extends Phaser.Scene {
   private cameraController!: CameraController;
   private mapViews!: MapViews;
   private readonly barricadeViews = new Map<string, BarricadeView>();
+  private structures: PlacedStructureState[] = [];
+  private readonly structureViews = new Map<string, StructureView>();
+  private readonly turretRuntime = new Map<string, { target?: Zombie; nextScanAt: number; nextFireAt: number }>();
+  private readonly turretTargetScratch: TurretTarget[] = [];
+  private readonly powerGrid = new PowerGridSystem();
+  private powerWireGraphics?: Phaser.GameObjects.Graphics;
+  private indoorTiles = new Uint8Array(0);
+  private structureCounter = 0;
+  private nextPowerTickAt = 0;
   private player!: Player;
   private companions: Companion[] = [];
   /** Per-iteration scratch used by the allocation-free single companion updater. */
@@ -201,6 +218,11 @@ export class WorldScene extends Phaser.Scene {
     if (saved) this.clock.restore(saved.clock);
     this.mapViews = createMapRendering(this, this.map);
     for (const barricade of saved?.barricades ?? []) this.restoreBarricade(barricade);
+    this.indoorTiles = new Uint8Array(this.map.widthTiles * this.map.heightTiles);
+    for (const building of this.map.buildings) for (const index of building.floorTiles) this.indoorTiles[index] = 1;
+    this.powerWireGraphics = this.add.graphics().setDepth(DEPTH.propBack + 1);
+    for (const structure of saved?.structures ?? []) this.restoreStructure({ ...structure, powered: false });
+    this.rebuildPowerTopology();
 
     this.inventory = new InventorySystem(BALANCE.inventorySlots, saved?.inventory);
     this.quickslots = saved?.quickslots.slice(0, 5) ?? ["bandage", "medicine", "torch", "molotov", "barricade"];
@@ -276,6 +298,7 @@ export class WorldScene extends Phaser.Scene {
     this.refreshTeamVisibleZombies();
     this.updateCompanions(time, deltaSeconds);
     this.updateZombies(time, deltaSeconds);
+    this.updatePowerAndTurrets(deltaSeconds);
     this.updateObstacleViews();
     this.performanceMonitor.recordSeparationCandidates(this.applyZombieSeparation());
     this.updateSpawning();
@@ -367,6 +390,13 @@ export class WorldScene extends Phaser.Scene {
     this.nextDormantActivationAt = 0;
     this.barricadeCounter = 0;
     this.barricadeViews.clear();
+    this.structures = [];
+    this.structureViews.clear();
+    this.turretRuntime.clear();
+    this.turretTargetScratch.length = 0;
+    this.indoorTiles = new Uint8Array(0);
+    this.structureCounter = 0;
+    this.nextPowerTickAt = 0;
     this.targetedObstacleIds.clear();
     this.interactionSystem.clear();
     this.worldObjects.clear();
@@ -439,6 +469,7 @@ export class WorldScene extends Phaser.Scene {
         this.worldObjects.register(this.makeWorldObject(id, "barricade", view, () => position, () => !state.destroyed));
       }
     }
+    for (const structure of this.structures) this.registerStructureObject(structure);
     this.worldObjects.register(this.makeWorldObject("extraction", "extraction", this.mapViews.extractionView, () => this.map.extractionZone, () => !this.defenseActive, {
       range: this.map.extractionZone.radius, requiresLineOfSight: false, selectionPriority: 0,
       isEnabled: () => !this.defenseActive, getPrompt: () => "[E] 탈출 차량 수리", execute: () => this.tryStartExtraction(),
@@ -512,6 +543,40 @@ export class WorldScene extends Phaser.Scene {
     this.collision.addDynamicObstacle(obstacle);
     this.barricadeViews.set(state.id, new BarricadeView(this, state));
     this.barricadeCounter += 1;
+  }
+
+  private restoreStructure(state: PlacedStructureState): void {
+    if (state.tileX < 0 || state.tileY < 0 || state.tileX >= this.map.widthTiles || state.tileY >= this.map.heightTiles) return;
+    state.powered = false;
+    this.structures.push(state);
+    this.structureViews.set(state.id, new StructureView(this, state));
+    this.collision.addDynamicObstacle({ id: state.id, tileX: state.tileX, tileY: state.tileY, widthTiles: 1, heightTiles: 1, blocksMovement: true, blocksVision: false, blocksProjectiles: true, coverHeight: "low", kind: "furniture" });
+    if (state.kind === "turret") this.turretRuntime.set(state.id, { nextScanAt: 0, nextFireAt: 0 });
+    this.structureCounter += 1;
+  }
+
+  private registerStructureObject(state: PlacedStructureState): void {
+    const view = this.structureViews.get(state.id);
+    if (!view || this.worldObjects.get(state.id)) return;
+    const position = { x: tileCenter(state.tileX), y: tileCenter(state.tileY) };
+    this.worldObjects.register(this.makeWorldObject(state.id, "power-structure", view, () => position, () => true, {
+      range: 34, requiresLineOfSight: true, selectionPriority: 10, isEnabled: () => true,
+      getPrompt: () => `[E] ${BUILDABLE_DEFINITIONS[state.kind].name} 상태 확인`, execute: () => this.interactWithStructure(state),
+    }));
+  }
+
+  private interactWithStructure(state: PlacedStructureState): void {
+    if (state.kind === "fuel-generator" && this.inventory.count("generator_fuel") > 0 && (state.fuelSeconds ?? 0) < MAX_GENERATOR_FUEL_SECONDS) {
+      this.inventory.remove("generator_fuel", 1);
+      state.fuelSeconds = Math.min(MAX_GENERATOR_FUEL_SECONDS, (state.fuelSeconds ?? 0) + GENERATOR_FUEL_SECONDS);
+      this.hud.showMessage(`발전기 연료를 보급했습니다. 남은 연료 ${Math.ceil(state.fuelSeconds / GENERATOR_FUEL_SECONDS)}/4`);
+      this.refreshInventoryPanel();
+      return;
+    }
+    if (state.kind === "turret") this.hud.showMessage(`터렛 · ${state.powered ? "전력 공급 중" : this.powerGrid.getEdges().some((edge) => edge.fromId === state.id || edge.toId === state.id) ? "전력 부족" : "발전기와 연결되지 않음"}`);
+    else if (state.kind === "solar-generator") this.hud.showMessage(`태양광 발전기 · ${this.clock.getPhase() === "day" ? "출력 8/s" : "야간 발전 정지"} · 저장 ${Math.floor(state.storedEnergy)}/40`);
+    else if (state.kind === "fuel-generator") this.hud.showMessage(`연료 발전기 · 저장 ${Math.floor(state.storedEnergy)}/60 · 연료 ${Math.ceil((state.fuelSeconds ?? 0) / GENERATOR_FUEL_SECONDS)}/4`);
+    else this.hud.showMessage(`축전지 · 저장 ${Math.floor(state.storedEnergy)}/240`);
   }
 
   private configureCamera(): void {
@@ -622,6 +687,7 @@ export class WorldScene extends Phaser.Scene {
 
     if (this.player.reloadingUntil > 0 && this.simulationTime >= this.player.reloadingUntil) this.finishReload();
     if (Phaser.Input.Keyboard.JustDown(this.keys.reload)) this.startReload();
+    if (this.input.activePointer.isDown && this.pointerInsideGame && WEAPON_DEFINITIONS[this.player.equippedWeapon].fireMode === "auto") this.tryPlayerAttack();
     if (Phaser.Input.Keyboard.JustDown(this.keys.flashlight)) this.toggleFlashlight();
     if (Phaser.Input.Keyboard.JustDown(this.keys.interact)) {
       const target = this.interactionSystem.refreshNow(this.getInteractionContext());
@@ -697,29 +763,29 @@ export class WorldScene extends Phaser.Scene {
       });
       this.audio.play("hit");
     } else {
-      const rawEnd = {
-        x: this.player.position.x + Math.cos(this.player.aimAngle) * weapon.range,
-        y: this.player.position.y + Math.sin(this.player.aimAngle) * weapon.range,
-      };
-      const wallHit = this.collision.firstProjectileCollision(this.player.position, rawEnd);
-      const end = wallHit ?? rawEnd;
-      const hit = firstTargetOnLine(this.player.position, end, this.zombies.map((zombie) => ({ id: zombie.id, position: zombie.position, alive: zombie.isAlive() })), 8);
-      const tracerEnd = hit ? this.zombies.find((zombie) => zombie.id === hit.target.id)?.position ?? end : end;
-      endpointX = tracerEnd.x;
-      endpointY = tracerEnd.y;
-      if (hit) {
-        const zombie = this.zombies.find((candidate) => candidate.id === hit.target.id);
+      const pelletAngles = createPelletAngles(this.player.aimAngle, weapon, () => this.rng.next());
+      for (const pelletAngle of pelletAngles) {
+        const pelletImpacts: AttackEffectImpact[] = [];
+        const rawEnd = { x: this.player.position.x + Math.cos(pelletAngle) * weapon.range, y: this.player.position.y + Math.sin(pelletAngle) * weapon.range };
+        const wallHit = this.collision.firstProjectileCollision(this.player.position, rawEnd);
+        const end = wallHit ?? rawEnd;
+        const hit = firstTargetOnLine(this.player.position, end, this.zombies.map((zombie) => ({ id: zombie.id, position: zombie.position, alive: zombie.isAlive() })), 8);
+        const zombie = hit ? this.zombies.find((candidate) => candidate.id === hit.target.id) : undefined;
+        const tracerEnd = zombie?.position ?? end;
+        endpointX = tracerEnd.x; endpointY = tracerEnd.y;
         if (zombie) {
           impacts.push({ x: zombie.position.x, y: zombie.position.y, kind: "zombie" });
-          const direction = normalize({ x: Math.cos(this.player.aimAngle), y: Math.sin(this.player.aimAngle) });
+          pelletImpacts.push({ x: zombie.position.x, y: zombie.position.y, kind: "zombie" });
+          const direction = normalize({ x: Math.cos(pelletAngle), y: Math.sin(pelletAngle) });
           this.damageZombie(zombie, weapon.damage, { x: direction.x * weapon.knockback, y: direction.y * weapon.knockback });
-        }
-      } else if (wallHit) impacts.push({ x: wallHit.x, y: wallHit.y, kind: "wall" });
+        } else if (wallHit) { impacts.push({ x: wallHit.x, y: wallHit.y, kind: "wall" }); pelletImpacts.push({ x: wallHit.x, y: wallHit.y, kind: "wall" }); }
+        this.attackEffects.play({ weapon: weapon.id, originX: this.player.position.x, originY: this.player.position.y, angle: pelletAngle, startedAt: this.simulationTime, endpointX, endpointY, impacts: pelletImpacts, alwaysShowCore: true });
+      }
       this.audio.play("shot");
       this.cameras.main.shake(80, 0.0025);
     }
     this.player.beginAttack(this.simulationTime);
-    this.attackEffects.play({
+    if (weapon.kind === "melee") this.attackEffects.play({
       weapon: weapon.id,
       originX: this.player.position.x,
       originY: this.player.position.y,
@@ -735,16 +801,17 @@ export class WorldScene extends Phaser.Scene {
   private damageZombie(zombie: Zombie, damage: number, knockback: Point): void {
     const killed = zombie.damage(damage, knockback, this.simulationTime);
     if (killed && this.rng.chance(0.28)) {
-      const itemId = this.rng.chance(0.45) ? "ammo" : "cloth";
+      const itemId = this.rng.chance(0.45) ? "pistol_ammo" : "cloth";
       this.spawnDrop(itemId, 1, zombie.position.x, zombie.position.y);
     }
   }
 
   private startReload(): void {
-    if (this.player.equippedWeapon !== "pistol" || this.player.reloadingUntil > 0) return;
-    const weapon = WEAPON_DEFINITIONS.pistol;
-    if (this.player.magazine >= (weapon.magazineSize ?? 8) || this.inventory.count("ammo") <= 0) {
-      this.hud.showMessage(this.inventory.count("ammo") <= 0 ? "예비 탄약이 없습니다." : "탄창이 이미 가득 찼습니다.");
+    if (!isFirearmId(this.player.equippedWeapon) || this.player.reloadingUntil > 0) return;
+    const weapon = WEAPON_DEFINITIONS[this.player.equippedWeapon];
+    const ammoItemId = weapon.ammoItemId!;
+    if (this.player.magazine >= (weapon.magazineSize ?? 0) || this.inventory.count(ammoItemId) <= 0) {
+      this.hud.showMessage(this.inventory.count(ammoItemId) <= 0 ? "예비 탄약이 없습니다." : "탄창이 이미 가득 찼습니다.");
       return;
     }
     this.player.reloadingUntil = this.simulationTime + (weapon.reloadMs ?? 1_000);
@@ -752,9 +819,12 @@ export class WorldScene extends Phaser.Scene {
   }
 
   private finishReload(): void {
-    const capacity = (WEAPON_DEFINITIONS.pistol.magazineSize ?? 8) - this.player.magazine;
-    const amount = Math.min(capacity, this.inventory.count("ammo"));
-    this.inventory.remove("ammo", amount);
+    if (!isFirearmId(this.player.equippedWeapon)) { this.player.reloadingUntil = 0; return; }
+    const weapon = WEAPON_DEFINITIONS[this.player.equippedWeapon];
+    const ammoItemId = weapon.ammoItemId!;
+    const capacity = (weapon.magazineSize ?? 0) - this.player.magazine;
+    const amount = Math.min(capacity, this.inventory.count(ammoItemId));
+    this.inventory.remove(ammoItemId, amount);
     this.player.magazine += amount;
     this.player.reloadingUntil = 0;
   }
@@ -1570,6 +1640,8 @@ export class WorldScene extends Phaser.Scene {
       consumed = true;
     } else if (itemId === "barricade") {
       consumed = this.placeBarricade();
+    } else if (BUILDABLE_ITEM_KIND[itemId]) {
+      consumed = this.placeStructure(BUILDABLE_ITEM_KIND[itemId]);
     } else if (itemId === "scrap_cache") {
       this.inventory.add("metal", 1);
       if (this.rng.chance(0.5)) this.inventory.add("wood", 1);
@@ -1627,6 +1699,36 @@ export class WorldScene extends Phaser.Scene {
     return true;
   }
 
+  private placeStructure(kind: BuildableKind): boolean {
+    const worldX = this.player.position.x + Math.cos(this.player.aimAngle) * 34;
+    const worldY = this.player.position.y + Math.sin(this.player.aimAngle) * 34;
+    const tileX = Math.floor(worldX / TILE_SIZE); const tileY = Math.floor(worldY / TILE_SIZE);
+    const tileIndex = tileY * this.map.widthTiles + tileX;
+    const actorOccupied = squaredDistance({ x: tileCenter(tileX), y: tileCenter(tileY) }, this.player.position) < 18 * 18
+      || this.companions.some((companion) => companion.alive && squaredDistance({ x: tileCenter(tileX), y: tileCenter(tileY) }, companion.position) < 18 * 18);
+    const failure = getBuildablePlacementFailure(kind, {
+      inBounds: tileX >= 0 && tileY >= 0 && tileX < this.map.widthTiles && tileY < this.map.heightTiles,
+      blocked: this.collision.isTileBlocked(tileX, tileY),
+      occupiedByStructure: this.structures.some((state) => state.tileX === tileX && state.tileY === tileY),
+      doorway: this.map.doors.some((door) => door.tileX === tileX && door.tileY === tileY),
+      objective: this.map.containers.some((container) => Boolean(container.part) && container.tileX === tileX && container.tileY === tileY),
+      extraction: squaredDistance({ x: tileCenter(tileX), y: tileCenter(tileY) }, this.map.extractionZone) <= this.map.extractionZone.radius ** 2,
+      actorOccupied,
+      indoor: this.indoorTiles[tileIndex] === 1,
+      roadLane: isRoad(this.map, tileX, tileY),
+    });
+    if (failure) { this.hud.showMessage(failure === "solar-indoors" ? "태양광 발전기는 실외에만 설치할 수 있습니다." : "이 위치에는 설치할 수 없습니다."); return false; }
+    let id: string;
+    do id = `structure-${this.seed}-${++this.structureCounter}`; while (this.structures.some((state) => state.id === id));
+    const state = createPlacedStructure(id, kind, tileX, tileY);
+    this.restoreStructure(state);
+    this.registerStructureObject(state);
+    this.rebuildPowerTopology();
+    this.fogInvalidation.invalidate();
+    this.noise.emit({ x: tileCenter(tileX), y: tileCenter(tileY), intensity: 24, category: "craft", createdAt: this.simulationTime });
+    return true;
+  }
+
   private updateFires(deltaSeconds: number): void {
     let writeIndex = 0;
     let expired = false;
@@ -1676,6 +1778,7 @@ export class WorldScene extends Phaser.Scene {
   private equipWeapon(weaponId: WeaponId): void {
     if (!this.player.unlockedWeapons.has(weaponId)) return;
     this.player.equippedWeapon = weaponId;
+    this.player.reloadingUntil = 0;
     this.hud.showMessage(`${WEAPON_DEFINITIONS[weaponId].name} 장착`);
     this.refreshInventoryPanel();
   }
@@ -1691,6 +1794,9 @@ export class WorldScene extends Phaser.Scene {
         knife: WEAPON_DEFINITIONS.knife.name,
         bat: WEAPON_DEFINITIONS.bat.name,
         pistol: WEAPON_DEFINITIONS.pistol.name,
+        smg: WEAPON_DEFINITIONS.smg.name,
+        shotgun: WEAPON_DEFINITIONS.shotgun.name,
+        hunting_rifle: WEAPON_DEFINITIONS.hunting_rifle.name,
       },
       developerMode: this.settings.developerMode,
     };
@@ -1796,6 +1902,63 @@ export class WorldScene extends Phaser.Scene {
     return count;
   }
 
+  private rebuildPowerTopology(): void {
+    this.powerGrid.rebuild(this.structures, (state) => ({ x: tileCenter(state.tileX), y: tileCenter(state.tileY) }));
+    const graphics = this.powerWireGraphics;
+    if (!graphics) return;
+    graphics.clear().lineStyle(1, 0x777d7a, 0.82);
+    const byId = new Map(this.structures.map((state) => [state.id, state]));
+    for (const edge of this.powerGrid.getEdges()) {
+      const first = byId.get(edge.fromId); const second = byId.get(edge.toId);
+      if (!first || !second) continue;
+      const fromCenter = { x: tileCenter(first.tileX), y: tileCenter(first.tileY) };
+      const toCenter = { x: tileCenter(second.tileX), y: tileCenter(second.tileY) };
+      const length = Math.hypot(toCenter.x - fromCenter.x, toCenter.y - fromCenter.y) || 1;
+      const insetX = (toCenter.x - fromCenter.x) / length * 8; const insetY = (toCenter.y - fromCenter.y) / length * 8;
+      const points = createPowerWirePolyline({ x: fromCenter.x + insetX, y: fromCenter.y + insetY }, { x: toCenter.x - insetX, y: toCenter.y - insetY }, first.id, second.id);
+      graphics.beginPath().moveTo(points[0]!.x, points[0]!.y);
+      for (let index = 1; index < points.length; index += 1) graphics.lineTo(points[index]!.x, points[index]!.y);
+      graphics.strokePath();
+    }
+  }
+
+  private updatePowerAndTurrets(deltaSeconds: number): void {
+    if (this.simulationTime >= this.nextPowerTickAt) {
+      this.nextPowerTickAt = this.simulationTime + POWER_TICK_MS;
+      const changed = this.powerGrid.tick(POWER_TICK_MS / 1_000, this.clock.getPhase() === "day");
+      if (changed.length > 0) {
+        for (const id of changed) this.structureViews.get(id)?.updateStatus();
+        this.fogInvalidation.invalidate();
+      }
+    }
+    for (const turret of this.structures) {
+      if (turret.kind !== "turret") continue;
+      const runtime = this.turretRuntime.get(turret.id)!;
+      if (!turret.powered) { runtime.target = undefined; continue; }
+      const origin = { x: tileCenter(turret.tileX), y: tileCenter(turret.tileY) };
+      if (this.simulationTime >= runtime.nextScanAt || !runtime.target?.isAlive()) {
+        runtime.nextScanAt = this.simulationTime + TURRET_SCAN_INTERVAL_MS;
+        this.turretTargetScratch.length = 0;
+        for (const zombie of this.zombies) this.turretTargetScratch.push({ id: zombie.id, position: zombie.position, alive: zombie.isAlive(), active: !this.isZombieDormant(zombie), kind: "zombie" });
+        const selected = selectTurretTarget(origin, true, this.turretTargetScratch, (from, to) => this.collision.hasLineOfSight(from, to), runtime.target?.id);
+        runtime.target = selected ? this.zombies.find((zombie) => zombie.id === selected.id) : undefined;
+      }
+      const target = runtime.target;
+      if (!target?.isAlive()) continue;
+      const targetAngle = Math.atan2(target.position.y - origin.y, target.position.x - origin.x);
+      turret.aimAngle = rotateTurretToward(turret.aimAngle ?? 0, targetAngle, deltaSeconds);
+      this.structureViews.get(turret.id)?.setAim(turret.aimAngle);
+      if (Math.abs(angleDifference(targetAngle, turret.aimAngle)) > TURRET_AIM_TOLERANCE || this.simulationTime < runtime.nextFireAt) continue;
+      runtime.nextFireAt = this.simulationTime + TURRET_COOLDOWN_MS;
+      const projectileOrigin = { x: origin.x + Math.cos(turret.aimAngle) * 13, y: origin.y + Math.sin(turret.aimAngle) * 13 };
+      const wallHit = this.collision.firstProjectileCollision(projectileOrigin, target.position);
+      if (wallHit) continue;
+      this.damageZombie(target, TURRET_DAMAGE, { x: Math.cos(turret.aimAngle) * 5, y: Math.sin(turret.aimAngle) * 5 });
+      this.noise.emit({ x: origin.x, y: origin.y, intensity: 72, category: "gunshot", createdAt: this.simulationTime });
+      this.attackEffects.play({ weapon: "pistol", originX: origin.x, originY: origin.y, angle: turret.aimAngle, startedAt: this.simulationTime, endpointX: target.position.x, endpointY: target.position.y, impacts: [{ x: target.position.x, y: target.position.y, kind: "zombie" }], alwaysShowCore: false });
+    }
+  }
+
   private isZombieDormant(zombie: Zombie): boolean {
     return squaredDistance(zombie.position, this.player.position) > ZOMBIE_DORMANT_RADIUS * ZOMBIE_DORMANT_RADIUS;
   }
@@ -1820,13 +1983,17 @@ export class WorldScene extends Phaser.Scene {
     if (!this.fogInvalidation.shouldRecompute(input, force)) return;
 
     const calculationStarted = performance.now();
-    this.fog.recompute(buildVisionSources({
+    const sources = buildVisionSources({
       x: this.player.position.x,
       y: this.player.position.y,
       aimAngle: this.player.aimAngle,
       flashlightOn: flashlightActive,
       torchRemaining: this.player.torchRemaining,
-    }, this.clock, this.fires, this.rescuedCompanions, this.visionSources), this.collision);
+    }, this.clock, this.fires, this.rescuedCompanions, this.visionSources);
+    for (const turret of this.structures) if (turret.kind === "turret" && turret.powered) sources.push({
+      id: `turret:${turret.id}`, x: tileCenter(turret.tileX), y: tileCenter(turret.tileY), radius: TURRET_RANGE, intensity: 1, sourceType: "turret",
+    });
+    this.fog.recompute(sources, this.collision);
     const calculationFinished = performance.now();
     this.fogRenderer.render();
     this.minimap.markFogDirty(this.fog.getChangedIndices());
@@ -1862,6 +2029,7 @@ export class WorldScene extends Phaser.Scene {
   }
 
   private updateHud(): void {
+    const weapon = WEAPON_DEFINITIONS[this.player.equippedWeapon];
     const objective = this.defenseActive
       ? "탈출 지점 안에서 버티기"
       : this.collectedParts.size < 3
@@ -1874,9 +2042,10 @@ export class WorldScene extends Phaser.Scene {
       infection: this.player.vitals.infection,
       time: this.clock.getClockLabel(),
       phase: this.clock.getPhase(),
-      weapon: WEAPON_DEFINITIONS[this.player.equippedWeapon].name,
+      weapon: weapon.name,
       magazine: this.player.magazine,
-      reserveAmmo: this.inventory.count("ammo"),
+      reserveAmmo: weapon.ammoItemId ? this.inventory.count(weapon.ammoItemId) : 0,
+      showAmmo: weapon.kind === "ranged",
       flashlightCharge: this.player.flashlightCharge,
       flashlightOn: this.player.flashlightOn,
       torchRemaining: this.player.torchRemaining,
@@ -1904,7 +2073,7 @@ export class WorldScene extends Phaser.Scene {
         infection: this.player.vitals.infection,
         equippedWeapon: this.player.equippedWeapon,
         unlockedWeapons: [...this.player.unlockedWeapons],
-        magazine: this.player.magazine,
+        magazines: { ...this.player.magazines },
         flashlightCharge: this.player.flashlightCharge,
         flashlightOn: this.player.flashlightOn,
         torchRemaining: this.player.torchRemaining,
@@ -1929,6 +2098,7 @@ export class WorldScene extends Phaser.Scene {
       openedDoors: this.map.doors.filter((door) => door.open).map((door) => door.id),
       doorStates: this.destructibles.doorStates(),
       barricades: this.destructibles.barricadeStates(),
+      structures: this.structures.map(({ powered: _powered, ...state }) => ({ ...state })),
       consumedZombieSpawnIds: [...this.consumedZombieSpawnIds],
       zombies: this.zombies.filter((zombie) => zombie.isAlive()).map((zombie) => ({
         id: zombie.id,
@@ -1948,10 +2118,10 @@ export class WorldScene extends Phaser.Scene {
   private restorePlayer(saved: SaveGame): void {
     this.player.vitals = { health: saved.player.health, maxHealth: 100, infection: saved.player.infection };
     saved.player.unlockedWeapons.forEach((weapon) => {
-      if (weapon === "knife" || weapon === "bat" || weapon === "pistol") this.player.unlockedWeapons.add(weapon);
+      if (weapon === "knife" || weapon === "bat" || isFirearmId(weapon)) this.player.unlockedWeapons.add(weapon);
     });
-    if (saved.player.equippedWeapon === "knife" || saved.player.equippedWeapon === "bat" || saved.player.equippedWeapon === "pistol") this.player.equippedWeapon = saved.player.equippedWeapon;
-    this.player.magazine = saved.player.magazine;
+    if (saved.player.equippedWeapon === "knife" || saved.player.equippedWeapon === "bat" || isFirearmId(saved.player.equippedWeapon)) this.player.equippedWeapon = saved.player.equippedWeapon;
+    this.player.magazines = { ...saved.player.magazines };
     this.player.flashlightCharge = saved.player.flashlightCharge;
     this.player.flashlightOn = saved.player.flashlightOn;
     this.player.torchRemaining = saved.player.torchRemaining;

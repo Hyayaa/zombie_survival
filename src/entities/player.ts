@@ -1,4 +1,5 @@
-import type { WeaponId } from "../data/weapon-definitions";
+import { isFirearmId, type WeaponId } from "../data/weapon-definitions";
+import { createWeaponMagazines, type WeaponMagazines } from "../systems/weapon-system";
 import { ATTACK_EFFECT_DURATION_MS } from "../effects/pixel-effect-definitions";
 import type { VitalState } from "../systems/infection-system";
 import type { Point } from "../systems/zombie-ai-system";
@@ -14,7 +15,7 @@ export class Player {
   vitals: VitalState = { health: 100, maxHealth: 100, infection: 0 };
   equippedWeapon: WeaponId = "knife";
   readonly unlockedWeapons = new Set<WeaponId>(["knife"]);
-  magazine = 0;
+  magazines: WeaponMagazines = createWeaponMagazines();
   flashlightCharge = 180;
   flashlightOn = false;
   torchRemaining = 0;
@@ -31,7 +32,18 @@ export class Player {
   unlockWeapon(weapon: WeaponId): void {
     this.unlockedWeapons.add(weapon);
     this.equippedWeapon = weapon;
-    if (weapon === "pistol" && this.magazine === 0) this.magazine = 4;
+    if (isFirearmId(weapon) && this.magazines[weapon] === 0) {
+      this.magazines[weapon] = weapon === "pistol" ? 4 : weapon === "smg" ? 12 : 3;
+    }
+  }
+
+  get magazine(): number {
+    return isFirearmId(this.equippedWeapon) ? this.magazines[this.equippedWeapon] : 0;
+  }
+
+  set magazine(rounds: number) {
+    const weapon = isFirearmId(this.equippedWeapon) ? this.equippedWeapon : "pistol";
+    this.magazines[weapon] = rounds;
   }
 
   updateView(time: number): void {

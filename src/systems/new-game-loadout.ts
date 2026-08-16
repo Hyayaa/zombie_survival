@@ -7,6 +7,6 @@ export function initializeNewGameLoadout(
 ): void {
   inventory.add("bandage", 1);
   inventory.add("water", 1);
-  inventory.add("ammo", 20);
+  inventory.add("pistol_ammo", 20);
   player.unlockWeapon("pistol");
 }

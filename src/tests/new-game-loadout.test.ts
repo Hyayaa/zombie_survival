@@ -10,7 +10,7 @@ describe("new game loadout", () => {
     initializeNewGameLoadout(inventory, { unlockWeapon });
     expect(inventory.count("bandage")).toBe(1);
     expect(inventory.count("water")).toBe(1);
-    expect(inventory.count("ammo")).toBe(20);
+    expect(inventory.count("pistol_ammo")).toBe(20);
     expect(unlockWeapon).toHaveBeenCalledWith("pistol");
     expect(equipped).toBe("pistol");
   });
