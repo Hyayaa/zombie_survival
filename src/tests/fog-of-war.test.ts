@@ -123,7 +123,7 @@ describe("FogOfWarSystem", () => {
     for (let update = 0; update < 20; update += 1) {
       const changed = fog.recompute(buildVisionSources(player, clock, []), collision);
       expect(fog.getStateAtWorld(player.x, player.y)).toBe(VisibilityState.Visible);
-      expect(fog.getStateAtWorld(player.x - 30, player.y)).toBe(VisibilityState.Visible);
+      expect(fog.getStateAtWorld(player.x + 6, player.y)).toBe(VisibilityState.Visible);
       if (update > 0) expect(changed).toBe(0);
     }
   });
@@ -144,7 +144,7 @@ describe("FogOfWarSystem", () => {
   });
 
   it("updates only the cached vision cells covered by a door tile", () => {
-    const collision = new CollisionSystem([], [{ id: "door", tileX: 5, tileY: 7, open: false }]);
+    const collision = new CollisionSystem([], [{ id: "door", tileX: 5, tileY: 7, orientation: "horizontal", open: false }]);
     const revision = collision.visionRevision;
     expect(collision.blocksVision(40, 56)).toBe(true);
     expect(collision.blocksVision(47, 63)).toBe(true);

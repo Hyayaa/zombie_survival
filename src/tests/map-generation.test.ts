@@ -1,0 +1,76 @@
+import { describe, expect, it } from "vitest";
+import { FOG_CELL_SIZE, MAP_HEIGHT_TILES, MAP_WIDTH_TILES, WORLD_HEIGHT, WORLD_WIDTH } from "../config/game-config";
+import { createCityBlockMap, TerrainType } from "../data/map-definitions";
+import { validateMap } from "../data/map-validation";
+
+describe("expanded road-first city map", () => {
+  it("uses 128x128 tiles, 3072px axes and a 1024x1024 fog grid", () => {
+    const map = createCityBlockMap(123);
+    expect(map.widthTiles).toBe(MAP_WIDTH_TILES);
+    expect(map.heightTiles).toBe(MAP_HEIGHT_TILES);
+    expect(WORLD_WIDTH).toBe(3_072);
+    expect(WORLD_HEIGHT).toBe(3_072);
+    expect(WORLD_WIDTH / FOG_CELL_SIZE).toBe(1_024);
+    expect(map.terrain).toBeInstanceOf(Uint8Array);
+    expect(map.terrain).toHaveLength(128 * 128);
+  });
+
+  it("contains connected horizontal, vertical and both diagonal road directions", () => {
+    const map = createCityBlockMap(456);
+    expect(map.roadSegments).toHaveLength(11);
+    expect(map.roadSegments.some((road) => road.startY === road.endY && road.widthTiles >= 7)).toBe(true);
+    expect(map.roadSegments.some((road) => road.startX === road.endX && road.widthTiles >= 7)).toBe(true);
+    expect(map.roadSegments.some((road) => road.kind === "diagonal" && road.endY > road.startY)).toBe(true);
+    expect(map.roadSegments.some((road) => road.kind === "diagonal" && road.endY < road.startY)).toBe(true);
+    expect(map.terrain.filter((terrain) => terrain === TerrainType.Road).length).toBeGreaterThan(2_000);
+  });
+
+  it("places 30-42 non-overlapping buildings on both road sides with real diagonal footprints", () => {
+    const map = createCityBlockMap(789);
+    expect(map.buildings.length).toBeGreaterThanOrEqual(30);
+    expect(map.buildings.length).toBeLessThanOrEqual(42);
+    expect(map.buildings.some((building) => building.roadSide === -1)).toBe(true);
+    expect(map.buildings.some((building) => building.roadSide === 1)).toBe(true);
+    const diagonalDown = map.buildings.filter((building) => building.orientation === 45);
+    const diagonalUp = map.buildings.filter((building) => building.orientation === 135);
+    expect(diagonalDown.length).toBeGreaterThan(0);
+    expect(diagonalUp.length).toBeGreaterThan(0);
+    for (const building of [...diagonalDown, ...diagonalUp]) {
+      expect(building.floorTiles.length).toBeGreaterThan(0);
+      expect(building.wallTiles.length).toBeGreaterThan(0);
+      expect(building.entranceTiles).toHaveLength(1);
+      const door = map.doors.find((candidate) => candidate.buildingId === building.id);
+      expect(door?.orientation).toMatch(/^diagonal-/);
+    }
+  });
+
+  it("validates road, door and core objective reachability", () => {
+    const map = createCityBlockMap(321);
+    const result = validateMap(map);
+    expect(result.errors, result.errors.join("\n")).toEqual([]);
+    expect(result.valid).toBe(true);
+    expect(map.containers.length).toBeGreaterThanOrEqual(45);
+    expect(map.containers.length).toBeLessThanOrEqual(65);
+    expect(map.groundItems.length).toBeGreaterThanOrEqual(12);
+    expect(map.zombieSpawns.length).toBeGreaterThanOrEqual(90);
+    expect(map.zombieSpawns.length).toBeLessThanOrEqual(140);
+    const parts = map.containers.filter((container) => container.part);
+    expect(parts).toHaveLength(3);
+    for (let first = 0; first < parts.length; first += 1) for (let second = first + 1; second < parts.length; second += 1) {
+      expect(Math.hypot(parts[first]!.tileX - parts[second]!.tileX, parts[first]!.tileY - parts[second]!.tileY)).toBeGreaterThanOrEqual(30);
+    }
+    const diagonalBuildingIds = new Set(map.buildings.filter((building) => building.orientation === 45 || building.orientation === 135).map((building) => building.id));
+    expect(parts.some((part) => map.buildings.some((building) => diagonalBuildingIds.has(building.id) && building.floorTiles.includes(part.tileY * map.widthTiles + part.tileX)))).toBe(true);
+  });
+
+  it("is deterministic for one map seed without consuming gameplay RNG", () => {
+    const first = createCityBlockMap(0x1234);
+    const second = createCityBlockMap(0x1234);
+    expect([...first.terrain]).toEqual([...second.terrain]);
+    expect(first.roadSegments).toEqual(second.roadSegments);
+    expect(first.buildings.map(({ id, orientation, footprintTiles, entranceTiles }) => ({ id, orientation, footprintTiles, entranceTiles })))
+      .toEqual(second.buildings.map(({ id, orientation, footprintTiles, entranceTiles }) => ({ id, orientation, footprintTiles, entranceTiles })));
+    expect(first.containers).toEqual(second.containers);
+    expect(first.zombieSpawns).toEqual(second.zombieSpawns);
+  });
+});

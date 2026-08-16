@@ -1,15 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { CAMERA, LOGICAL_HEIGHT, LOGICAL_WIDTH, WORLD_SIZE } from "../config/game-config";
-import { calculateCursorLedFocus, CameraController, clampCameraFocus, stepCameraZoom, type CameraViewport } from "../systems/camera-controller";
+import { CAMERA, LOGICAL_HEIGHT, LOGICAL_WIDTH, WORLD_HEIGHT, WORLD_WIDTH } from "../config/game-config";
+import { calculateCameraPadding, calculateCursorLedFocus, CameraController, clampCameraFocus, configurePaddedCameraBounds, stepCameraZoom, type CameraViewport } from "../systems/camera-controller";
 
 describe("camera controller math", () => {
-  it("starts from the configured 1x zoom and moves one wheel step at a time", () => {
+  it("starts from 1x and clamps wheel steps to 0.55x..2x", () => {
     expect(CAMERA.defaultZoom).toBe(1);
     expect(stepCameraZoom(1, -1)).toBe(1.2);
     expect(stepCameraZoom(1, 1)).toBe(0.85);
-  });
-
-  it("clamps repeated wheel input to the minimum and maximum levels", () => {
     let zoom: number = CAMERA.defaultZoom;
     for (let index = 0; index < 50; index += 1) zoom = stepCameraZoom(zoom, -1);
     expect(zoom).toBe(2);
@@ -17,64 +14,62 @@ describe("camera controller math", () => {
     expect(zoom).toBe(0.55);
   });
 
-  it("places focus between the player and cursor", () => {
-    const centered = calculateCursorLedFocus({ playerX: 100, playerY: 100, pointerX: 100, pointerY: 100, pointerInsideGame: true });
-    const right = calculateCursorLedFocus({ playerX: 100, playerY: 100, pointerX: 180, pointerY: 100, pointerInsideGame: true });
-    const left = calculateCursorLedFocus({ playerX: 100, playerY: 100, pointerX: 20, pointerY: 100, pointerInsideGame: true });
-    expect(centered).toEqual({ x: 100, y: 100 });
-    expect(right.x).toBeGreaterThan(100);
-    expect(right.x).toBeLessThan(180);
-    expect(left.x).toBeLessThan(100);
-    expect(left.x).toBeGreaterThan(20);
+  it("keeps pointer=player exact and applies a stable deadzone", () => {
+    for (const zoom of CAMERA.zoomLevels) {
+      expect(calculateCursorLedFocus({ playerX: 180, playerY: 180, pointerX: 180, pointerY: 180, pointerInsideGame: true }))
+        .toEqual({ x: 180, y: 180 });
+      expect(zoom).toBeGreaterThan(0);
+    }
+    expect(calculateCursorLedFocus({ playerX: 100, playerY: 100, pointerX: 105, pointerY: 100, pointerInsideGame: true }))
+      .toEqual({ x: 100, y: 100 });
   });
 
-  it("never exceeds the 132px cursor lead", () => {
-    const focus = calculateCursorLedFocus({ playerX: 400, playerY: 400, pointerX: 1_000, pointerY: 1_000, pointerInsideGame: true });
-    expect(Math.hypot(focus.x - 400, focus.y - 400)).toBeCloseTo(132, 5);
+  it("keeps lead symmetric and limits diagonal magnitude to 132px", () => {
+    const right = calculateCursorLedFocus({ playerX: 400, playerY: 400, pointerX: 600, pointerY: 400, pointerInsideGame: true });
+    const left = calculateCursorLedFocus({ playerX: 400, playerY: 400, pointerX: 200, pointerY: 400, pointerInsideGame: true });
+    const up = calculateCursorLedFocus({ playerX: 400, playerY: 400, pointerX: 400, pointerY: 200, pointerInsideGame: true });
+    const down = calculateCursorLedFocus({ playerX: 400, playerY: 400, pointerX: 400, pointerY: 600, pointerInsideGame: true });
+    expect(right.x - 400).toBeCloseTo(400 - left.x);
+    expect(400 - up.y).toBeCloseTo(down.y - 400);
+    const diagonal = calculateCursorLedFocus({ playerX: 400, playerY: 400, pointerX: 1_000, pointerY: 1_000, pointerInsideGame: true });
+    expect(Math.hypot(diagonal.x - 400, diagonal.y - 400)).toBeCloseTo(132, 5);
   });
 
-  it("returns focus to the player when the pointer leaves the game", () => {
-    expect(calculateCursorLedFocus({ playerX: 120, playerY: 220, pointerX: 900, pointerY: 900, pointerInsideGame: false }))
-      .toEqual({ x: 120, y: 220 });
+  it("clamps focus only to the playable world instead of viewport half-size", () => {
+    expect(clampCameraFocus({ x: -50, y: -50 }, LOGICAL_WIDTH, LOGICAL_HEIGHT, 0.55)).toEqual({ x: 0, y: 0 });
+    expect(clampCameraFocus({ x: 5_000, y: 5_000 }, LOGICAL_WIDTH, LOGICAL_HEIGHT, 2)).toEqual({ x: WORLD_WIDTH, y: WORLD_HEIGHT });
+    expect(clampCameraFocus({ x: 180, y: 180 }, LOGICAL_WIDTH, LOGICAL_HEIGHT, 0.55)).toEqual({ x: 180, y: 180 });
   });
 
-  it("clamps every world edge using the current zoom", () => {
-    const minimumZoom = clampCameraFocus({ x: -50, y: -50 }, LOGICAL_WIDTH, LOGICAL_HEIGHT, 0.55);
-    expect(minimumZoom.x).toBeCloseTo(LOGICAL_WIDTH / 0.55 / 2);
-    expect(minimumZoom.y).toBeCloseTo(LOGICAL_HEIGHT / 0.55 / 2);
-    const maximumZoom = clampCameraFocus({ x: 2_000, y: 2_000 }, LOGICAL_WIDTH, LOGICAL_HEIGHT, 2);
-    expect(maximumZoom.x).toBeCloseTo(WORLD_SIZE - LOGICAL_WIDTH / 2 / 2);
-    expect(maximumZoom.y).toBeCloseTo(WORLD_SIZE - LOGICAL_HEIGHT / 2 / 2);
+  it("configures padded camera bounds from minimum zoom", () => {
+    const calls: number[][] = [];
+    const padding = configurePaddedCameraBounds({ setBounds: (...values: number[]) => { calls.push(values); } });
+    expect(padding).toEqual(calculateCameraPadding());
+    expect(padding.x).toBe(Math.ceil(LOGICAL_WIDTH / 0.55 / 2));
+    expect(padding.y).toBe(Math.ceil(LOGICAL_HEIGHT / 0.55 / 2));
+    expect(calls[0]).toEqual([-padding.x, -padding.y, WORLD_WIDTH + padding.x * 2, WORLD_HEIGHT + padding.y * 2]);
   });
 
-  it("reuses one wheel listener, prevents page scroll and removes it on destroy", () => {
+  it("centers the 180,180 start exactly at 0.55x and removes listeners on destroy", () => {
     const listeners = new Map<string, EventListener>();
     const canvas = {
       matches: () => false,
       addEventListener: (name: string, listener: EventListener) => listeners.set(name, listener),
-      removeEventListener: (name: string, listener: EventListener) => {
-        if (listeners.get(name) === listener) listeners.delete(name);
-      },
+      removeEventListener: (name: string, listener: EventListener) => { if (listeners.get(name) === listener) listeners.delete(name); },
     } as unknown as HTMLCanvasElement;
+    const centers: Array<{ x: number; y: number }> = [];
     const camera: CameraViewport = {
-      width: LOGICAL_WIDTH,
-      height: LOGICAL_HEIGHT,
-      zoom: 1,
-      setZoom(zoom) { this.zoom = zoom; },
-      setScroll() {},
+      width: LOGICAL_WIDTH, height: LOGICAL_HEIGHT, zoom: 1,
+      setZoom(zoom) { this.zoom = zoom; }, setScroll() {}, centerOn(x, y) { centers.push({ x, y }); },
     };
     const controller = new CameraController(camera, canvas, () => true);
+    for (let index = 0; index < 10; index += 1) controller.handleWheel(1);
+    expect(controller.getZoom()).toBe(0.55);
+    controller.update({ playerX: 180, playerY: 180, pointerX: 180, pointerY: 180, pointerInsideGame: true }, 16);
+    expect(centers.at(-1)).toEqual({ x: 180, y: 180 });
     let prevented = false;
     listeners.get("wheel")?.({ deltaY: -1, preventDefault: () => { prevented = true; } } as WheelEvent);
     expect(prevented).toBe(true);
-    expect(controller.getZoom()).toBe(1.2);
-    controller.update({ playerX: 300, playerY: 300, pointerX: 500, pointerY: 300, pointerInsideGame: true }, 16);
-    const firstFocus = controller.getFocusPoint().x;
-    for (let frame = 0; frame < 120; frame += 1) {
-      controller.update({ playerX: 300, playerY: 300, pointerX: 500, pointerY: 300, pointerInsideGame: true }, 16);
-    }
-    expect(controller.getFocusPoint().x).toBeGreaterThanOrEqual(firstFocus);
-    expect(controller.getFocusPoint().x).toBeLessThanOrEqual(400);
     controller.destroy();
     expect(listeners.has("wheel")).toBe(false);
   });

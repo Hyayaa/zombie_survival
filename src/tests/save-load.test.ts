@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { FOG_CELL_SIZE, SAVE_VERSION } from "../config/game-config";
+import { FOG_CELL_SIZE, MAP_ID, MAP_VERSION, SAVE_VERSION } from "../config/game-config";
 import type { SaveGame } from "../core/save-state";
-import { decodeExploredFog, encodeExploredFog, FOG_TOTAL_CELLS, FOG_WIDTH_CELLS, isValidExploredFog } from "../systems/fog-save-codec";
+import { decodeExploredFog, encodeExploredFog, FOG_TOTAL_CELLS, isValidExploredFog } from "../systems/fog-save-codec";
 import { SaveSystem, type StorageLike } from "../systems/save-system";
 
 class MemoryStorage implements StorageLike {
@@ -14,6 +14,9 @@ class MemoryStorage implements StorageLike {
 function saveFixture(): SaveGame {
   return {
     version: SAVE_VERSION,
+    mapId: MAP_ID,
+    mapVersion: MAP_VERSION,
+    mapSeed: 99,
     seed: 42,
     rngState: 42,
     savedAt: 1,
@@ -25,6 +28,7 @@ function saveFixture(): SaveGame {
     collectedParts: [],
     searchedContainers: ["drawer-1"],
     openedDoors: [],
+    consumedZombieSpawnIds: [],
     zombies: [],
     exploredFog: { cellSize: FOG_CELL_SIZE, encoding: "rle-v1", runs: [1, 2, 50, 1] },
     extraction: { active: false, remainingSeconds: 45 },
@@ -42,29 +46,15 @@ describe("SaveSystem", () => {
     expect(loaded?.exploredFog).toEqual({ cellSize: 3, encoding: "rle-v1", runs: [1, 2, 50, 1] });
   });
 
-  it("migrates v1 192x192 explored cells into 2x2 v2 cells", () => {
+  it("resets an incompatible 48x48 map save and emits a one-shot notice", () => {
     const storage = new MemoryStorage();
     const saves = new SaveSystem(storage, "test");
-    const legacy = { ...saveFixture(), version: 1, exploredFog: [0, 1, 192 + 3] };
-    storage.setItem("test", JSON.stringify(legacy));
-    const loaded = saves.load();
-    expect(loaded?.version).toBe(2);
-    const explored = new Uint8Array(FOG_TOTAL_CELLS);
-    expect(loaded && decodeExploredFog(loaded.exploredFog, explored)).toBe(true);
-    for (const [x, y] of [[0, 0], [1, 0], [0, 1], [1, 1], [2, 0], [3, 1], [6, 2], [7, 3]]) {
-      expect(explored[y * FOG_WIDTH_CELLS + x]).toBe(1);
-    }
-  });
-
-  it("preserves the legacy map-edge cell during migration", () => {
-    const storage = new MemoryStorage();
-    const saves = new SaveSystem(storage, "test");
-    storage.setItem("test", JSON.stringify({ ...saveFixture(), version: 1, exploredFog: [192 * 192 - 1] }));
-    const loaded = saves.load();
-    const explored = new Uint8Array(FOG_TOTAL_CELLS);
-    expect(loaded && decodeExploredFog(loaded.exploredFog, explored)).toBe(true);
-    expect(explored[382 * FOG_WIDTH_CELLS + 382]).toBe(1);
-    expect(explored[383 * FOG_WIDTH_CELLS + 383]).toBe(1);
+    storage.setItem("test", JSON.stringify({ ...saveFixture(), version: 2, mapId: undefined, mapVersion: undefined }));
+    expect(saves.hasSave()).toBe(true);
+    expect(saves.load()).toBeNull();
+    expect(saves.consumeIncompatibleMapReset()).toBe(true);
+    expect(saves.consumeIncompatibleMapReset()).toBe(false);
+    expect(saves.hasSave()).toBe(false);
   });
 
   it("round-trips empty and fully explored fog with RLE", () => {
@@ -90,13 +80,12 @@ describe("SaveSystem", () => {
     expect(loaded?.exploredFog.runs).toEqual([]);
   });
 
-  it("resets only malformed legacy fog data", () => {
+  it("resets a mismatched map id instead of loading invalid coordinates", () => {
     const storage = new MemoryStorage();
     const saves = new SaveSystem(storage, "test");
-    storage.setItem("test", JSON.stringify({ ...saveFixture(), version: 1, seed: 77, exploredFog: [192 * 192] }));
-    const loaded = saves.load();
-    expect(loaded?.seed).toBe(77);
-    expect(loaded?.exploredFog.runs).toEqual([]);
+    storage.setItem("test", JSON.stringify({ ...saveFixture(), mapId: "old-city" }));
+    expect(saves.load()).toBeNull();
+    expect(saves.consumeIncompatibleMapReset()).toBe(true);
   });
 
   it("returns null for corrupt or incompatible data", () => {
