@@ -1,11 +1,37 @@
 import Phaser from "phaser";
-import { COLORS, DEPTH, TILE_SIZE } from "../config/game-config";
+import { COLORS, DEPTH, ENTITY_OUTLINE, TILE_SIZE } from "../config/game-config";
 import { getTerrain, TerrainType, type DoorDefinition, type MapDefinition, type WorldObstacle } from "../data/map-definitions";
+import { entityOutlineColor, type EntityOutlineState, type OutlineableEntityView } from "./entity-outline";
+import { DoorView } from "./obstacle-views";
+
+export class ContainerView implements OutlineableEntityView {
+  private outlineState: EntityOutlineState = "normal";
+  constructor(readonly container: Phaser.GameObjects.Container, private readonly outlines: readonly Phaser.GameObjects.Rectangle[]) {}
+  setOutlineState(state: EntityOutlineState): void {
+    if (state === this.outlineState) return;
+    this.outlineState = state;
+    for (const outline of this.outlines) outline.setStrokeStyle(1, entityOutlineColor(state), 1);
+  }
+  setVisible(visible: boolean): this { this.container.setVisible(visible); return this; }
+  setAlpha(alpha: number): this { this.container.setAlpha(alpha); return this; }
+}
+
+export class ExtractionView implements OutlineableEntityView {
+  private outlineState: EntityOutlineState = "normal";
+  constructor(readonly graphics: Phaser.GameObjects.Graphics, private readonly x: number, private readonly y: number, private readonly radius: number) { this.redraw(); }
+  setOutlineState(state: EntityOutlineState): void { if (state !== this.outlineState) { this.outlineState = state; this.redraw(); } }
+  private redraw(): void {
+    this.graphics.clear();
+    this.graphics.lineStyle(1, entityOutlineColor(this.outlineState), 1).strokeCircle(this.x, this.y, this.radius + 2);
+    this.graphics.lineStyle(3, COLORS.extraction, 0.9).strokeCircle(this.x, this.y, this.radius);
+    this.graphics.fillStyle(COLORS.extraction, 0.15).fillCircle(this.x, this.y, this.radius);
+  }
+}
 
 export interface MapViews {
-  doorViews: Map<string, Phaser.GameObjects.Rectangle>;
-  containerViews: Map<string, Phaser.GameObjects.Container>;
-  extractionView: Phaser.GameObjects.Graphics;
+  doorViews: Map<string, DoorView>;
+  containerViews: Map<string, ContainerView>;
+  extractionView: ExtractionView;
   survivorMarker: Phaser.GameObjects.Graphics;
   staticChunkCount: number;
 }
@@ -83,41 +109,28 @@ export function createMapRendering(scene: Phaser.Scene, map: MapDefinition): Map
     }
   }
 
-  const doorViews = new Map<string, Phaser.GameObjects.Rectangle>();
+  const doorViews = new Map<string, DoorView>();
   for (const door of map.doors) {
-    const view = scene.add.rectangle(
-      door.tileX * TILE_SIZE + TILE_SIZE / 2,
-      door.tileY * TILE_SIZE + TILE_SIZE / 2,
-      TILE_SIZE - 5,
-      5,
-      door.open ? 0x806848 : 0x604a34,
-    ).setDepth(DEPTH.actor + (door.tileY + 1) * TILE_SIZE);
-    view.setStrokeStyle(1, 0x2a211a);
-    updateDoorView(view, door.open, door.orientation);
-    doorViews.set(door.id, view);
+    const doorView = new DoorView(scene, door);
+    updateDoorView(doorView, door.open, door.orientation);
+    doorViews.set(door.id, doorView);
   }
 
-  const containerViews = new Map<string, Phaser.GameObjects.Container>();
+  const containerViews = new Map<string, ContainerView>();
   for (const container of map.containers) {
     const x = container.tileX * TILE_SIZE + TILE_SIZE / 2;
     const y = container.tileY * TILE_SIZE + TILE_SIZE / 2;
-    const base = scene.add.rectangle(0, 1, 12, 9, container.kind === "corpse" ? 0x4d403d : 0x765d3e).setStrokeStyle(1, 0x211b16);
-    const lid = scene.add.rectangle(0, -3, 13, 3, container.kind === "vehicle" ? 0x667073 : 0x9a7c50);
-    containerViews.set(container.id, scene.add.container(x, y, [base, lid]).setDepth(DEPTH.item + y));
+    const base = scene.add.rectangle(0, 1, 12, 9, container.kind === "corpse" ? 0x4d403d : 0x765d3e).setStrokeStyle(1, ENTITY_OUTLINE.normal);
+    const lid = scene.add.rectangle(0, -3, 13, 3, container.kind === "vehicle" ? 0x667073 : 0x9a7c50).setStrokeStyle(1, ENTITY_OUTLINE.normal);
+    containerViews.set(container.id, new ContainerView(scene.add.container(x, y, [base, lid]).setDepth(DEPTH.item + y), [base, lid]));
   }
 
-  const extractionView = scene.add.graphics().setDepth(DEPTH.item);
-  extractionView.lineStyle(3, COLORS.extraction, 0.9).strokeCircle(map.extractionZone.x, map.extractionZone.y, map.extractionZone.radius);
-  extractionView.fillStyle(COLORS.extraction, 0.15).fillCircle(map.extractionZone.x, map.extractionZone.y, map.extractionZone.radius);
+  const extractionView = new ExtractionView(scene.add.graphics().setDepth(DEPTH.item), map.extractionZone.x, map.extractionZone.y, map.extractionZone.radius);
   const survivorMarker = scene.add.graphics().setDepth(DEPTH.actor - 1);
   survivorMarker.lineStyle(1, 0xd0b86d, 0.8).strokeCircle(map.survivorSpawn.x, map.survivorSpawn.y, 12);
   return { doorViews, containerViews, extractionView, survivorMarker, staticChunkCount };
 }
 
-export function updateDoorView(view: Phaser.GameObjects.Rectangle, open: boolean, orientation: DoorDefinition["orientation"] = "horizontal"): void {
-  const baseAngle = orientation === "vertical" ? 90 : orientation === "diagonal-down" ? 45 : orientation === "diagonal-up" ? -45 : 0;
-  view.setRotation((baseAngle + (open ? 90 : 0)) * Math.PI / 180);
-  view.setSize(TILE_SIZE - 5, 5);
-  view.setDisplaySize(TILE_SIZE - 5, 5);
-  view.setFillStyle(open ? 0x806848 : 0x604a34);
+export function updateDoorView(view: DoorView, open: boolean, orientation: DoorDefinition["orientation"] = "horizontal", destroyed = false): void {
+  view.setDoorState(open, destroyed, orientation);
 }

@@ -1,6 +1,7 @@
 import { MAP_ID, MAP_VERSION, SAVE_VERSION } from "../config/game-config";
 import type { SaveGame } from "../core/save-state";
 import { ITEM_DEFINITIONS } from "../data/item-definitions";
+import { createCityBlockMap } from "../data/map-definitions";
 import { emptyFogExploration, isValidExploredFog } from "./fog-save-codec";
 
 export interface StorageLike {
@@ -28,12 +29,18 @@ export class SaveSystem {
       const raw = this.storage.getItem(this.key);
       if (!raw) return null;
       const parsed = JSON.parse(raw) as SaveCandidate;
-      if (parsed.version !== SAVE_VERSION || parsed.mapId !== MAP_ID || parsed.mapVersion !== MAP_VERSION) {
+      if (parsed.mapId !== MAP_ID || parsed.mapVersion !== MAP_VERSION) {
         this.storage.removeItem(this.key);
         this.incompatibleMapReset = true;
         return null;
       }
-      if (!this.isValidBase(parsed)) return null;
+      if (parsed.version === 3) return this.migrateV3(parsed);
+      if (parsed.version !== SAVE_VERSION) {
+        this.storage.removeItem(this.key);
+        this.incompatibleMapReset = true;
+        return null;
+      }
+      if (!this.isValidBase(parsed, SAVE_VERSION) || !this.hasValidObstacleState(parsed)) return null;
       const exploredFog = isValidExploredFog(parsed.exploredFog) ? parsed.exploredFog : emptyFogExploration();
       return { ...parsed, version: SAVE_VERSION, exploredFog } as SaveGame;
     } catch {
@@ -62,8 +69,29 @@ export class SaveSystem {
     this.storage.removeItem(this.key);
   }
 
-  private isValidBase(value: SaveCandidate): boolean {
-    return value.version === SAVE_VERSION
+  private migrateV3(value: SaveCandidate): SaveGame | null {
+    if (!this.isValidBase(value, 3) || typeof value.mapSeed !== "number") return null;
+    const openedDoors = new Set(value.openedDoors);
+    const map = createCityBlockMap(value.mapSeed);
+    const exploredFog = isValidExploredFog(value.exploredFog) ? value.exploredFog : emptyFogExploration();
+    const migrated = {
+      ...value,
+      version: SAVE_VERSION,
+      exploredFog,
+      doorStates: map.doors.map((door) => ({
+        id: door.id,
+        open: openedDoors.has(door.id),
+        health: door.maxHealth,
+        destroyed: false,
+      })),
+      barricades: [],
+    } as SaveGame;
+    this.save(migrated);
+    return migrated;
+  }
+
+  private isValidBase(value: SaveCandidate, version: number): boolean {
+    return value.version === version
       && value.mapId === MAP_ID
       && value.mapVersion === MAP_VERSION
       && typeof value.mapSeed === "number"
@@ -98,6 +126,16 @@ export class SaveSystem {
       && Array.isArray(value.consumedZombieSpawnIds)
       && typeof value.extraction?.active === "boolean"
       && typeof value.extraction?.remainingSeconds === "number";
+  }
+
+  private hasValidObstacleState(value: SaveCandidate): boolean {
+    return Array.isArray(value.doorStates)
+      && value.doorStates.every((door) => typeof door?.id === "string" && typeof door.open === "boolean"
+        && typeof door.health === "number" && typeof door.destroyed === "boolean")
+      && Array.isArray(value.barricades)
+      && value.barricades.every((barricade) => typeof barricade?.id === "string"
+        && typeof barricade.tileX === "number" && typeof barricade.tileY === "number"
+        && typeof barricade.health === "number" && typeof barricade.maxHealth === "number");
   }
 }
 

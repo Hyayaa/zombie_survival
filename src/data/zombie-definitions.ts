@@ -1,5 +1,5 @@
 export type ZombieKind = "walker" | "runner";
-export type ZombieStateName = "Idle" | "Wander" | "InvestigateNoise" | "Chase" | "Attack" | "SearchLastKnownPosition" | "Stagger" | "Dead";
+export type ZombieStateName = "Idle" | "Wander" | "InvestigateNoise" | "Chase" | "Attack" | "AttackObstacle" | "SearchLastKnownPosition" | "Stagger" | "Dead";
 
 export interface ZombieDefinition {
   kind: ZombieKind;
@@ -29,4 +29,3 @@ export const ZOMBIE_DEFINITIONS: Record<ZombieKind, ZombieDefinition> = {
     bodyColor: 0x66483f, accentColor: 0x9b6a58,
   },
 };
-

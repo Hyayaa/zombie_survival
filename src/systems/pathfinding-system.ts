@@ -10,7 +10,7 @@ interface Node {
 }
 
 const CELL_COUNT = MAP_WIDTH_TILES * MAP_HEIGHT_TILES;
-const bestCosts = new Uint16Array(CELL_COUNT);
+const bestCosts = new Uint32Array(CELL_COUNT);
 const bestGenerations = new Uint32Array(CELL_COUNT);
 const closedGenerations = new Uint32Array(CELL_COUNT);
 let pathGeneration = 0;
@@ -19,6 +19,17 @@ export function findTilePath(
   start: Point,
   goal: Point,
   isBlocked: (x: number, y: number) => boolean,
+  maxVisited = 800,
+  widthTiles = MAP_WIDTH_TILES,
+  heightTiles = MAP_HEIGHT_TILES,
+): Point[] {
+  return findWeightedTilePath(start, goal, (x, y) => isBlocked(x, y) ? Number.POSITIVE_INFINITY : 1, maxVisited, widthTiles, heightTiles);
+}
+
+export function findWeightedTilePath(
+  start: Point,
+  goal: Point,
+  getTraversalCost: (x: number, y: number) => number,
   maxVisited = 800,
   widthTiles = MAP_WIDTH_TILES,
   heightTiles = MAP_HEIGHT_TILES,
@@ -54,9 +65,11 @@ export function findTilePath(
     for (const [deltaX, deltaY] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
       const x = current.x + deltaX;
       const y = current.y + deltaY;
-      if (x < 0 || y < 0 || x >= widthTiles || y >= heightTiles || isBlocked(x, y)) continue;
+      if (x < 0 || y < 0 || x >= widthTiles || y >= heightTiles) continue;
+      const traversalCost = getTraversalCost(x, y);
+      if (!Number.isFinite(traversalCost) || traversalCost <= 0) continue;
       const index = y * widthTiles + x;
-      const g = current.g + 1;
+      const g = current.g + traversalCost;
       if (bestGenerations[index] === pathGeneration && g >= bestCosts[index]!) continue;
       bestGenerations[index] = pathGeneration;
       bestCosts[index] = g;

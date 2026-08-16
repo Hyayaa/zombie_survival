@@ -1,15 +1,24 @@
 import Phaser from "phaser";
-import { DEPTH } from "../config/game-config";
+import { DEPTH, ENTITY_OUTLINE } from "../config/game-config";
 import { getItemDefinition } from "../data/item-definitions";
+import { entityOutlineColor, type EntityOutlineState, type OutlineableEntityView } from "../rendering/entity-outline";
 
-export class ItemDrop {
+export class ItemDrop implements OutlineableEntityView {
   readonly view: Phaser.GameObjects.Container;
+  private readonly icon: Phaser.GameObjects.Rectangle;
+  private outlineState: EntityOutlineState = "normal";
 
   constructor(scene: Phaser.Scene, readonly id: string, readonly itemId: string, public quantity: number, public x: number, public y: number) {
     const definition = getItemDefinition(itemId);
     const shadow = scene.add.rectangle(0, 3, 8, 3, 0x050606, 0.55);
-    const icon = scene.add.rectangle(0, 0, 6, 6, definition.iconColor).setStrokeStyle(1, 0x151818);
-    this.view = scene.add.container(Math.round(x), Math.round(y), [shadow, icon]).setDepth(DEPTH.item + Math.round(y));
+    this.icon = scene.add.rectangle(0, 0, 6, 6, definition.iconColor).setStrokeStyle(1, ENTITY_OUTLINE.normal);
+    this.view = scene.add.container(Math.round(x), Math.round(y), [shadow, this.icon]).setDepth(DEPTH.item + Math.round(y));
+  }
+
+  setOutlineState(state: EntityOutlineState): void {
+    if (state === this.outlineState) return;
+    this.outlineState = state;
+    this.icon.setStrokeStyle(1, entityOutlineColor(state), 1);
   }
 
   setVisible(visible: boolean): void {
@@ -20,4 +29,3 @@ export class ItemDrop {
     this.view.destroy(true);
   }
 }
-

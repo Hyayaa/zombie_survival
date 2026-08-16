@@ -1,7 +1,7 @@
 import Phaser from "phaser";
-import { BALANCE, COMPANION_MOVEMENT, DEPTH, FLASHLIGHT_AIM_BUCKETS, FOG_CELL_SIZE, LOGICAL_HEIGHT, LOGICAL_WIDTH, MAP_ID, MAP_VERSION, SAVE_KEY, SAVE_VERSION, TILE_SIZE, WORLD_HEIGHT, WORLD_WIDTH } from "../config/game-config";
+import { BALANCE, COMPANION_MOVEMENT, DEPTH, FLASHLIGHT_AIM_BUCKETS, FOG_CELL_SIZE, LOGICAL_HEIGHT, LOGICAL_WIDTH, MAP_ID, MAP_VERSION, OBSTACLE_BALANCE, SAVE_KEY, SAVE_VERSION, TILE_SIZE, WORLD_HEIGHT, WORLD_WIDTH } from "../config/game-config";
 import { GameClock } from "../core/game-clock";
-import type { SaveGame } from "../core/save-state";
+import type { SaveGame, SavedBarricadeState } from "../core/save-state";
 import { SeededRng } from "../core/seeded-rng";
 import { createCityBlockMap, type ContainerDefinition, type DoorDefinition, type WorldObstacle } from "../data/map-definitions";
 import { assertValidMap } from "../data/map-validation";
@@ -14,11 +14,14 @@ import { AttackEffectController, getAttackBlockReason } from "../effects/attack-
 import type { AttackEffectImpact } from "../effects/pixel-effect-definitions";
 import { PixelEffectSystem } from "../effects/pixel-effect-system";
 import { Companion, type CompanionCommand } from "../entities/companion";
+import { DestructibleObstacleSystem, getZombieStructureDamage } from "../entities/destructible-obstacle";
 import { ItemDrop } from "../entities/item-drop";
 import { Player } from "../entities/player";
 import { Zombie } from "../entities/zombie";
 import { FogRenderer } from "../rendering/fog-renderer";
 import { createMapRendering, updateDoorView, type MapViews } from "../rendering/map-renderer";
+import type { OutlineableEntityView } from "../rendering/entity-outline";
+import { BarricadeView } from "../rendering/obstacle-views";
 import { AudioSystem } from "../systems/audio-system";
 import { CameraController, configurePaddedCameraBounds } from "../systems/camera-controller";
 import { CollisionSystem } from "../systems/collision-system";
@@ -31,7 +34,7 @@ import { InfectionSystem } from "../systems/infection-system";
 import { InventorySystem } from "../systems/inventory-system";
 import { buildVisionSources, type ActiveFire } from "../systems/lighting-system";
 import { NoiseSystem, NOISE_LEVELS } from "../systems/noise-system";
-import { findTilePath } from "../systems/pathfinding-system";
+import { findTilePath, findWeightedTilePath } from "../systems/pathfinding-system";
 import { SaveSystem } from "../systems/save-system";
 import { updateZombieMind, type Point } from "../systems/zombie-ai-system";
 import { CompanionCommandPanel } from "../ui/companion-command-panel";
@@ -71,9 +74,11 @@ interface FireRuntime extends ActiveFire {
 }
 
 interface Interaction {
+  id: string;
   distance: number;
   prompt: string;
   run: () => void;
+  view: OutlineableEntityView;
 }
 
 interface AttackableTarget {
@@ -93,14 +98,17 @@ export class WorldScene extends Phaser.Scene {
   private loadRequested = false;
   private map!: ReturnType<typeof createCityBlockMap>;
   private collision!: CollisionSystem;
+  private destructibles!: DestructibleObstacleSystem;
   private clock!: GameClock;
   private fog!: FogOfWarSystem;
   private fogRenderer!: FogRenderer;
   private cameraController!: CameraController;
   private mapViews!: MapViews;
+  private readonly barricadeViews = new Map<string, BarricadeView>();
   private player!: Player;
   private companion!: Companion;
   private zombies: Zombie[] = [];
+  private readonly minimapZombieSources: Zombie[] = [];
   private drops: ItemDrop[] = [];
   private inventory!: InventorySystem;
   private crafting = new CraftingSystem(RECIPE_DEFINITIONS);
@@ -151,6 +159,12 @@ export class WorldScene extends Phaser.Scene {
   private readonly companionSteering = { x: 0, y: 0 };
   private readonly consumedZombieSpawnIds = new Set<string>();
   private nextDormantActivationAt = 0;
+  private barricadeCounter = 0;
+  private readonly targetedObstacleIds = new Set<string>();
+  private nextInteractionRefreshAt = 0;
+  private currentInteraction?: Interaction;
+  private readonly highlightedInteractionViews = new Set<OutlineableEntityView>();
+  private readonly nextHighlightedInteractionViews = new Set<OutlineableEntityView>();
 
   constructor() {
     super("world");
@@ -169,14 +183,13 @@ export class WorldScene extends Phaser.Scene {
     this.rng = new SeededRng(saved?.rngState ?? this.seed);
     this.map = createCityBlockMap(saved?.mapSeed ?? (this.seed ^ 0x6d617032));
     if ((import.meta as ImportMeta & { env?: { DEV?: boolean } }).env?.DEV) assertValidMap(this.map);
-    if (saved) {
-      const opened = new Set(saved.openedDoors);
-      this.map.doors.forEach((door) => { door.open = opened.has(door.id); });
-    }
+    if (saved) this.restoreDoorStates(saved);
     this.collision = new CollisionSystem(this.map.obstacles, this.map.doors, this.map.widthTiles, this.map.heightTiles, TILE_SIZE);
+    this.destructibles = new DestructibleObstacleSystem(this.map.doors, this.map.widthTiles);
     this.clock = new GameClock();
     if (saved) this.clock.restore(saved.clock);
     this.mapViews = createMapRendering(this, this.map);
+    for (const barricade of saved?.barricades ?? []) this.restoreBarricade(barricade);
 
     this.inventory = new InventorySystem(BALANCE.inventorySlots, saved?.inventory);
     if (!saved) {
@@ -219,6 +232,7 @@ export class WorldScene extends Phaser.Scene {
     this.configureCamera();
     this.configureInput();
     this.createUi();
+    for (const state of this.destructibles.barricadeStates()) this.minimap.markBarricadeTile(state.tileX, state.tileY, true);
     this.performanceMonitor = new PerformanceMonitor(this, this.uiRoot);
     this.recomputeFog(true);
     this.updateHud();
@@ -258,6 +272,7 @@ export class WorldScene extends Phaser.Scene {
     this.updateFires(deltaSeconds);
     this.updateCompanion(time, deltaSeconds);
     this.updateZombies(time, deltaSeconds);
+    this.updateObstacleViews();
     this.performanceMonitor.recordSeparationCandidates(this.applyZombieSeparation());
     this.updateSpawning();
     this.updateExtraction(deltaSeconds);
@@ -312,6 +327,7 @@ export class WorldScene extends Phaser.Scene {
       companion: this.companion.position,
       companionRescued: this.companion.rescued,
       companionAlive: this.companion.alive,
+      zombies: this.minimapZombieSources,
       collectedParts: this.collectedParts.size,
       defenseActive: this.defenseActive,
       cameraWorldView: this.cameras.main.worldView,
@@ -320,6 +336,7 @@ export class WorldScene extends Phaser.Scene {
 
   private resetRuntimeCollections(): void {
     this.zombies = [];
+    this.minimapZombieSources.length = 0;
     this.drops = [];
     this.fires = [];
     this.formation = createFormationState();
@@ -339,6 +356,41 @@ export class WorldScene extends Phaser.Scene {
     this.lastTintAlpha = Number.NaN;
     this.consumedZombieSpawnIds.clear();
     this.nextDormantActivationAt = 0;
+    this.barricadeCounter = 0;
+    this.barricadeViews.clear();
+    this.targetedObstacleIds.clear();
+    this.currentInteraction = undefined;
+    this.nextInteractionRefreshAt = 0;
+    this.highlightedInteractionViews.clear();
+    this.nextHighlightedInteractionViews.clear();
+  }
+
+  private restoreDoorStates(saved: SaveGame): void {
+    const states = new Map(saved.doorStates.map((state) => [state.id, state]));
+    for (const door of this.map.doors) {
+      const state = states.get(door.id);
+      if (!state) {
+        door.open = false;
+        door.health = door.maxHealth;
+        door.destroyed = false;
+        continue;
+      }
+      door.destroyed = state.destroyed || state.health <= 0;
+      door.health = door.destroyed ? 0 : Math.max(0, Math.min(door.maxHealth, state.health));
+      door.open = door.destroyed || state.open;
+    }
+  }
+
+  private restoreBarricade(saved: SavedBarricadeState): void {
+    if (saved.tileX < 0 || saved.tileY < 0 || saved.tileX >= this.map.widthTiles || saved.tileY >= this.map.heightTiles) return;
+    const state = this.destructibles.addBarricade(saved);
+    const obstacle: WorldObstacle = {
+      id: state.id, tileX: state.tileX, tileY: state.tileY, widthTiles: 1, heightTiles: 1,
+      blocksMovement: true, blocksVision: false, blocksProjectiles: true, coverHeight: "low", kind: "barricade",
+    };
+    this.collision.addDynamicObstacle(obstacle);
+    this.barricadeViews.set(state.id, new BarricadeView(this, state));
+    this.barricadeCounter += 1;
   }
 
   private configureCamera(): void {
@@ -447,7 +499,10 @@ export class WorldScene extends Phaser.Scene {
     if (this.player.reloadingUntil > 0 && this.simulationTime >= this.player.reloadingUntil) this.finishReload();
     if (Phaser.Input.Keyboard.JustDown(this.keys.reload)) this.startReload();
     if (Phaser.Input.Keyboard.JustDown(this.keys.flashlight)) this.toggleFlashlight();
-    if (Phaser.Input.Keyboard.JustDown(this.keys.interact)) this.getNearestInteraction()?.run();
+    if (Phaser.Input.Keyboard.JustDown(this.keys.interact)) {
+      this.currentInteraction = this.getNearestInteraction();
+      this.currentInteraction?.run();
+    }
     const quickKeys = [this.keys.quick1, this.keys.quick2, this.keys.quick3, this.keys.quick4, this.keys.quick5];
     quickKeys.forEach((key, index) => {
       if (Phaser.Input.Keyboard.JustDown(key)) this.useQuickslot(index);
@@ -608,11 +663,13 @@ export class WorldScene extends Phaser.Scene {
   private updateZombies(time: number, deltaSeconds: number): void {
     const targets = this.getZombieTargets();
     this.activeZombieCount = 0;
+    this.minimapZombieSources.length = 0;
     this.zombies.forEach((zombie, index) => {
       if (!zombie.isAlive()) {
         zombie.updateView(time, this.fog.getStateAtWorld(zombie.position.x, zombie.position.y) === VisibilityState.Visible);
         return;
       }
+      if (this.minimapZombieSources.length < BALANCE.maxActiveZombies) this.minimapZombieSources.push(zombie);
       if (this.isZombieDormant(zombie)) {
         zombie.view.setVisible(false);
         return;
@@ -620,6 +677,10 @@ export class WorldScene extends Phaser.Scene {
       this.activeZombieCount += 1;
       if (zombie.mind.state === "Stagger" && this.simulationTime >= zombie.staggerUntil) {
         zombie.mind = { ...zombie.mind, state: "Chase" };
+      }
+      if (zombie.mind.state === "AttackObstacle" && this.updateZombieObstacleAttack(zombie)) {
+        zombie.updateView(time, this.fog.getStateAtWorld(zombie.position.x, zombie.position.y) === VisibilityState.Visible);
+        return;
       }
       let perceivedTarget = targets.find((target) => target.id === zombie.mind.currentTargetId);
       if (this.simulationTime >= zombie.nextThinkAt && zombie.mind.state !== "Stagger") {
@@ -706,7 +767,7 @@ export class WorldScene extends Phaser.Scene {
   private moveZombieToward(zombie: Zombie, goal: Point, deltaSeconds: number, zombieIndex: number): void {
     if (this.simulationTime >= zombie.nextPathAt) {
       const farFromPlayer = distance(zombie.position, this.player.position) > 360;
-      const nextPath = this.tryFindPath(zombie.position, goal, 650);
+      const nextPath = this.tryFindZombiePath(zombie.position, goal, 650);
       if (nextPath) {
         zombie.nextPathAt = this.simulationTime + 650 + (zombieIndex % 5) * 65 + (farFromPlayer ? 500 : 0);
         zombie.path = nextPath;
@@ -718,6 +779,20 @@ export class WorldScene extends Phaser.Scene {
     const waypoint = zombie.path[zombie.pathIndex] ?? goal;
     if (distance(zombie.position, waypoint) < 7 && zombie.pathIndex < zombie.path.length - 1) zombie.pathIndex += 1;
     const currentTarget = zombie.path[zombie.pathIndex] ?? goal;
+    const obstacle = this.destructibles.getBlockingAtTile(
+      Math.floor(currentTarget.x / TILE_SIZE),
+      Math.floor(currentTarget.y / TILE_SIZE),
+    );
+    if (obstacle) {
+      const obstaclePosition = { x: tileCenter(obstacle.tileX), y: tileCenter(obstacle.tileY) };
+      zombie.aimAngle = Math.atan2(obstaclePosition.y - zombie.position.y, obstaclePosition.x - zombie.position.x);
+      if (distance(zombie.position, obstaclePosition) <= OBSTACLE_BALANCE.attackRange) {
+        zombie.obstacleTargetId = obstacle.id;
+        zombie.mind = { ...zombie.mind, state: "AttackObstacle" };
+        this.updateZombieObstacleAttack(zombie);
+        return;
+      }
+    }
     const direction = normalize({ x: currentTarget.x - zombie.position.x, y: currentTarget.y - zombie.position.y });
     const speed = zombie.definition.speed * this.clock.getZombieActivityMultiplier();
     zombie.position = this.collision.moveCircle(zombie.position, direction.x * speed * deltaSeconds, direction.y * speed * deltaSeconds, BALANCE.zombieRadius);
@@ -733,6 +808,109 @@ export class WorldScene extends Phaser.Scene {
     this.pathfindingWorkThisFrame += 1;
     this.performanceMonitor.recordPathfinding();
     return findTilePath(start, goal, (x, y) => this.collision.isTileBlocked(x, y), maxVisited, this.map.widthTiles, this.map.heightTiles);
+  }
+
+  private tryFindZombiePath(start: Point, goal: Point, maxVisited: number): Point[] | undefined {
+    if (this.pathfindingWorkThisFrame >= MAX_PATHFINDING_PER_FRAME) return undefined;
+    this.pathfindingWorkThisFrame += 1;
+    this.performanceMonitor.recordPathfinding();
+    return findWeightedTilePath(
+      start,
+      goal,
+      (x, y) => this.collision.getZombieTraversalCost(x, y),
+      maxVisited,
+      this.map.widthTiles,
+      this.map.heightTiles,
+    );
+  }
+
+  private updateZombieObstacleAttack(zombie: Zombie): boolean {
+    const id = zombie.obstacleTargetId;
+    const obstacle = id ? this.destructibles.get(id) : undefined;
+    if (!obstacle || obstacle.destroyed
+      || this.destructibles.getBlockingAtTile(obstacle.tileX, obstacle.tileY)?.id !== obstacle.id) {
+      this.cancelZombieObstacleTarget(zombie);
+      return false;
+    }
+    const position = { x: tileCenter(obstacle.tileX), y: tileCenter(obstacle.tileY) };
+    const targetDistance = distance(zombie.position, position);
+    if (targetDistance > OBSTACLE_BALANCE.attackRange + 1) {
+      this.cancelZombieObstacleTarget(zombie);
+      return false;
+    }
+    zombie.aimAngle = Math.atan2(position.y - zombie.position.y, position.x - zombie.position.x);
+    if (this.simulationTime < zombie.nextObstacleAttackAt) return true;
+    const windup = Math.max(220, Math.round(zombie.definition.biteWindupMs * 0.75));
+    if (zombie.obstacleAttackCompletesAt === 0) zombie.obstacleAttackCompletesAt = this.simulationTime + windup;
+    const progress = 1 - (zombie.obstacleAttackCompletesAt - this.simulationTime) / windup;
+    this.telegraphGraphics.lineStyle(1, 0xb98a5b, 0.9).strokeCircle(position.x, position.y, 8 + Math.max(0, progress) * 4);
+    if (this.simulationTime < zombie.obstacleAttackCompletesAt) return true;
+    const damage = getZombieStructureDamage(zombie.definition.damage);
+    this.damageDestructible(obstacle.id, damage, zombie.aimAngle);
+    zombie.obstacleAttackCompletesAt = 0;
+    zombie.nextObstacleAttackAt = this.simulationTime + zombie.definition.attackCooldownMs;
+    if (!this.destructibles.get(obstacle.id) || this.destructibles.get(obstacle.id)?.destroyed) {
+      this.cancelZombieObstacleTarget(zombie);
+      return false;
+    }
+    return true;
+  }
+
+  private damageDestructible(id: string, amount: number, angle: number): void {
+    const result = this.destructibles.damage(id, amount);
+    if (!result?.damaged) return;
+    const state = result.state;
+    const x = tileCenter(state.tileX);
+    const y = tileCenter(state.tileY);
+    this.effects.emitObstacleImpact(x, y, angle, ++this.ambientEffectSequence, this.simulationTime, result.destroyedNow);
+    if (state.kind === "door") {
+      const door = this.map.doors.find((candidate) => candidate.id === state.id);
+      const view = this.mapViews.doorViews.get(state.id);
+      view?.setHealth(state.health, state.maxHealth, this.simulationTime);
+      if (result.destroyedNow && door) {
+        this.collision.setDoorDestroyed(state.id);
+        if (view) updateDoorView(view, true, door.orientation, true);
+        if (view) this.forgetInteractionView(view);
+        this.minimap.markWorldTileDirty(state.tileX, state.tileY);
+      }
+    } else {
+      const view = this.barricadeViews.get(state.id);
+      view?.setHealth(state.health, state.maxHealth, this.simulationTime);
+      if (result.destroyedNow) {
+        this.collision.removeDynamicObstacle(state.id);
+        this.destructibles.removeBarricade(state.id);
+        view?.destroy();
+        this.barricadeViews.delete(state.id);
+        this.minimap.markBarricadeTile(state.tileX, state.tileY, false);
+      }
+    }
+    if (result.destroyedNow) {
+      this.cancelZombieObstacleTargets(state.id);
+      this.fogInvalidation.invalidate();
+      this.nextInteractionRefreshAt = 0;
+    }
+  }
+
+  private cancelZombieObstacleTarget(zombie: Zombie): void {
+    zombie.obstacleTargetId = undefined;
+    zombie.obstacleAttackCompletesAt = 0;
+    zombie.mind = { ...zombie.mind, state: "Chase" };
+    zombie.path = [];
+    zombie.pathIndex = 0;
+    zombie.nextPathAt = Math.min(zombie.nextPathAt, this.simulationTime);
+  }
+
+  private cancelZombieObstacleTargets(id: string): void {
+    for (const zombie of this.zombies) if (zombie.obstacleTargetId === id) this.cancelZombieObstacleTarget(zombie);
+  }
+
+  private updateObstacleViews(): void {
+    this.targetedObstacleIds.clear();
+    for (const zombie of this.zombies) {
+      if (zombie.isAlive() && zombie.obstacleTargetId) this.targetedObstacleIds.add(zombie.obstacleTargetId);
+    }
+    for (const door of this.map.doors) this.mapViews.doorViews.get(door.id)?.updateStatus(this.simulationTime, this.targetedObstacleIds.has(door.id));
+    for (const [id, view] of this.barricadeViews) view.updateStatus(this.simulationTime, this.targetedObstacleIds.has(id));
   }
 
   private updateZombieAttack(zombie: Zombie, target: AttackableTarget): void {
@@ -1058,20 +1236,27 @@ export class WorldScene extends Phaser.Scene {
   }
 
   private getNearestInteraction(): Interaction | undefined {
+    this.nextHighlightedInteractionViews.clear();
     let nearest: Interaction | undefined;
     for (const drop of this.drops) {
-      const itemDistance = distance(this.player.position, { x: drop.x, y: drop.y });
+      const position = { x: drop.x, y: drop.y };
+      const itemDistance = distance(this.player.position, position);
       if (itemDistance <= 34 && itemDistance < (nearest?.distance ?? Number.POSITIVE_INFINITY)
-        && this.collision.hasLineOfSight(this.player.position, { x: drop.x, y: drop.y })) {
-        nearest = { distance: itemDistance, prompt: `[E] ${getItemDefinition(drop.itemId).name} 줍기`, run: () => this.pickupDrop(drop) };
+        && this.collision.hasLineOfSight(this.player.position, position)) {
+        nearest = { id: drop.id, distance: itemDistance, prompt: `[E] ${getItemDefinition(drop.itemId).name} 줍기`, run: () => this.pickupDrop(drop), view: drop };
       }
+      if (itemDistance <= 34 && this.collision.hasLineOfSight(this.player.position, position)) this.markInteractionHighlight(drop, position);
     }
     for (const door of this.map.doors) {
+      if (door.destroyed) continue;
       const position = { x: tileCenter(door.tileX), y: tileCenter(door.tileY) };
       const doorDistance = distance(this.player.position, position);
       if (doorDistance <= 34 && doorDistance < (nearest?.distance ?? Number.POSITIVE_INFINITY)) {
-        nearest = { distance: doorDistance, prompt: `[E] 문 ${door.open ? "닫기" : "열기"}`, run: () => this.toggleDoor(door) };
+        const view = this.mapViews.doorViews.get(door.id);
+        if (view) nearest = { id: door.id, distance: doorDistance, prompt: `[E] 문 ${door.open ? "닫기" : "열기"}`, run: () => this.toggleDoor(door), view };
       }
+      const view = this.mapViews.doorViews.get(door.id);
+      if (view && doorDistance <= 34) this.markInteractionHighlight(view, position);
     }
     for (const container of this.map.containers) {
       if (this.searchedContainers.has(container.id)) continue;
@@ -1079,38 +1264,66 @@ export class WorldScene extends Phaser.Scene {
       const containerDistance = distance(this.player.position, position);
       if (containerDistance <= 34 && containerDistance < (nearest?.distance ?? Number.POSITIVE_INFINITY)
         && this.collision.hasLineOfSight(this.player.position, position)) {
-        nearest = { distance: containerDistance, prompt: "[E] 조사", run: () => this.searchContainer(container) };
+        const view = this.mapViews.containerViews.get(container.id);
+        if (view) nearest = { id: container.id, distance: containerDistance, prompt: "[E] 조사", run: () => this.searchContainer(container), view };
       }
+      const view = this.mapViews.containerViews.get(container.id);
+      if (view && containerDistance <= 34 && this.collision.hasLineOfSight(this.player.position, position)) this.markInteractionHighlight(view, position);
     }
     if (!this.companion.rescued && this.companion.alive) {
       const survivorDistance = distance(this.player.position, this.companion.position);
       if (survivorDistance <= 34 && survivorDistance < (nearest?.distance ?? Number.POSITIVE_INFINITY)
         && this.collision.hasLineOfSight(this.player.position, this.companion.position)) {
-        nearest = { distance: survivorDistance, prompt: "[E] 생존자 구조", run: () => this.rescueCompanion() };
+        nearest = { id: this.companion.id, distance: survivorDistance, prompt: "[E] 생존자 구조", run: () => this.rescueCompanion(), view: this.companion.view };
       }
+      if (survivorDistance <= 34 && this.collision.hasLineOfSight(this.player.position, this.companion.position)) this.markInteractionHighlight(this.companion.view, this.companion.position);
     }
     const extractionDistance = distance(this.player.position, this.map.extractionZone);
     const extractionPriority = extractionDistance * 0.2;
     if (!this.defenseActive && extractionDistance <= this.map.extractionZone.radius
       && extractionPriority < (nearest?.distance ?? Number.POSITIVE_INFINITY)) {
-      nearest = { distance: extractionPriority, prompt: "[E] 탈출 차량 수리", run: () => this.tryStartExtraction() };
+      nearest = { id: "extraction", distance: extractionPriority, prompt: "[E] 탈출 차량 수리", run: () => this.tryStartExtraction(), view: this.mapViews.extractionView };
+    }
+    if (!this.defenseActive && extractionDistance <= this.map.extractionZone.radius) this.markInteractionHighlight(this.mapViews.extractionView, this.map.extractionZone);
+    for (const view of this.highlightedInteractionViews) view.setOutlineState("normal");
+    this.highlightedInteractionViews.clear();
+    for (const view of this.nextHighlightedInteractionViews) {
+      view.setOutlineState("interactable");
+      this.highlightedInteractionViews.add(view);
     }
     return nearest;
   }
 
   private updateInteractionPrompt(): void {
-    this.hud.setPrompt(this.getNearestInteraction()?.prompt);
+    if (this.simulationTime >= this.nextInteractionRefreshAt) {
+      this.nextInteractionRefreshAt = this.simulationTime + 75;
+      this.currentInteraction = this.getNearestInteraction();
+    }
+    this.hud.setPrompt(this.currentInteraction?.prompt);
+  }
+
+  private markInteractionHighlight(view: OutlineableEntityView, position: Point): void {
+    if (this.fog.getStateAtWorld(position.x, position.y) === VisibilityState.Visible) this.nextHighlightedInteractionViews.add(view);
+  }
+
+  private forgetInteractionView(view: OutlineableEntityView): void {
+    this.highlightedInteractionViews.delete(view);
+    this.nextHighlightedInteractionViews.delete(view);
+    view.setOutlineState("normal");
   }
 
   private toggleDoor(door: DoorDefinition): void {
+    if (door.destroyed) return;
     door.open = !door.open;
     this.collision.setDoorOpen(door.id, door.open);
     const view = this.mapViews.doorViews.get(door.id);
-    if (view) updateDoorView(view, door.open, door.orientation);
+    if (view) updateDoorView(view, door.open, door.orientation, door.destroyed);
     this.noise.emit({ x: tileCenter(door.tileX), y: tileCenter(door.tileY), intensity: NOISE_LEVELS.door, category: "door", createdAt: this.simulationTime });
     this.audio.play("door");
     this.minimap.markWorldTileDirty(door.tileX, door.tileY);
     this.fogInvalidation.invalidate();
+    this.nextInteractionRefreshAt = 0;
+    if (door.open) this.cancelZombieObstacleTargets(door.id);
   }
 
   private searchContainer(container: ContainerDefinition): void {
@@ -1133,6 +1346,7 @@ export class WorldScene extends Phaser.Scene {
     this.audio.play("pickup");
     this.hud.showMessage(acquired.length > 0 ? `획득: ${acquired.join(", ")}` : "쓸 만한 물자가 없습니다.", 3_000);
     this.refreshInventoryPanel();
+    this.nextInteractionRefreshAt = 0;
   }
 
   private pickupDrop(drop: ItemDrop): void {
@@ -1145,11 +1359,13 @@ export class WorldScene extends Phaser.Scene {
     this.syncCollectedParts();
     if (drop.quantity <= 0) {
       this.drops = this.drops.filter((candidate) => candidate !== drop);
+      this.forgetInteractionView(drop);
       drop.destroy();
       if (drop.id.startsWith("ground-")) this.searchedContainers.add(`ground:${drop.id}`);
     }
     this.audio.play("pickup");
     this.hud.showMessage(`${getItemDefinition(drop.itemId).name} ${added} 획득`);
+    this.nextInteractionRefreshAt = 0;
   }
 
   private rescueCompanion(): void {
@@ -1158,6 +1374,7 @@ export class WorldScene extends Phaser.Scene {
     this.mapViews.survivorMarker.setVisible(false);
     this.hud.showMessage("생존자를 구조했습니다. Q로 명령할 수 있습니다.", 4_000);
     this.saveGame(false);
+    this.nextInteractionRefreshAt = 0;
   }
 
   private createGroundItems(): void {
@@ -1261,13 +1478,20 @@ export class WorldScene extends Phaser.Scene {
       this.hud.showMessage("이 위치에는 설치할 수 없습니다.");
       return false;
     }
+    let id: string;
+    do id = `barricade-${this.seed}-${++this.barricadeCounter}`;
+    while (this.destructibles.get(id));
+    const saved: SavedBarricadeState = { id, tileX, tileY, health: OBSTACLE_BALANCE.barricadeHealth, maxHealth: OBSTACLE_BALANCE.barricadeHealth };
+    const state = this.destructibles.addBarricade(saved);
     const obstacle: WorldObstacle = {
-      id: `barricade-${this.simulationTime}`, tileX, tileY, widthTiles: 1, heightTiles: 1,
+      id, tileX, tileY, widthTiles: 1, heightTiles: 1,
       blocksMovement: true, blocksVision: false, blocksProjectiles: true, coverHeight: "low", kind: "barricade",
     };
     this.collision.addDynamicObstacle(obstacle);
-    this.add.rectangle(tileCenter(tileX), tileCenter(tileY), TILE_SIZE - 4, 9, 0x825e3d).setStrokeStyle(2, 0x31251a).setDepth(DEPTH.propBack + tileCenter(tileY));
+    this.barricadeViews.set(id, new BarricadeView(this, state));
+    this.minimap.markBarricadeTile(tileX, tileY, true);
     this.noise.emit({ x: tileCenter(tileX), y: tileCenter(tileY), intensity: 20, category: "craft", createdAt: this.simulationTime });
+    this.fogInvalidation.invalidate();
     return true;
   }
 
@@ -1550,6 +1774,8 @@ export class WorldScene extends Phaser.Scene {
       collectedParts: [...this.collectedParts],
       searchedContainers: [...this.searchedContainers],
       openedDoors: this.map.doors.filter((door) => door.open).map((door) => door.id),
+      doorStates: this.destructibles.doorStates(),
+      barricades: this.destructibles.barricadeStates(),
       consumedZombieSpawnIds: [...this.consumedZombieSpawnIds],
       zombies: this.zombies.filter((zombie) => zombie.isAlive()).map((zombie) => ({
         id: zombie.id,

@@ -1,4 +1,4 @@
-import { MAP_HEIGHT_TILES, MAP_ID, MAP_VERSION, MAP_WIDTH_TILES, TILE_SIZE } from "../config/game-config";
+import { MAP_HEIGHT_TILES, MAP_ID, MAP_VERSION, MAP_WIDTH_TILES, OBSTACLE_BALANCE, TILE_SIZE } from "../config/game-config";
 import type { ZombieKind } from "./zombie-definitions";
 
 export enum TerrainType { Ground = 0, Road = 1, Sidewalk = 2, Floor = 3 }
@@ -29,8 +29,10 @@ export interface WorldObstacle {
 }
 
 export interface DoorDefinition {
+  kind: "door";
   id: string; buildingId?: string; tileX: number; tileY: number;
   orientation: DoorOrientation; open: boolean;
+  health: number; maxHealth: number; destroyed: boolean;
 }
 
 export interface LootStack { itemId: string; quantity: number }
@@ -139,7 +141,12 @@ export function createCityBlockMap(mapSeed = 0x51a7c1): MapDefinition {
         }
         const doorX = entrance % widthTiles;
         const doorY = Math.floor(entrance / widthTiles);
-        doors.push({ id: `door-${id}`, buildingId: id, tileX: doorX, tileY: doorY, orientation: doorOrientation(orientation), open: false });
+        const doorId = `door-${id}`;
+        doors.push({
+          kind: "door", id: doorId, buildingId: id, tileX: doorX, tileY: doorY, orientation: doorOrientation(orientation),
+          open: isDoorInitiallyOpen(mapSeed, doorId), health: OBSTACLE_BALANCE.doorHealth,
+          maxHealth: OBSTACLE_BALANCE.doorHealth, destroyed: false,
+        });
         rasterizeWalkway(terrain, occupied, widthTiles, heightTiles, doorX, doorY, Math.round(roadX), Math.round(roadY));
         if (buildings.length >= 38 || acceptedForRoad >= perRoadLimit) break;
       }
@@ -180,6 +187,18 @@ export function createCityBlockMap(mapSeed = 0x51a7c1): MapDefinition {
       height: (safeBounds.maxY - safeBounds.minY + 1) * TILE_SIZE,
     },
   };
+}
+
+export function isDoorInitiallyOpen(mapSeed: number, doorId: string): boolean {
+  let hash = (mapSeed ^ 0x9e3779b9) >>> 0;
+  for (let index = 0; index < doorId.length; index += 1) {
+    hash ^= doorId.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  hash ^= hash >>> 16;
+  hash = Math.imul(hash, 0x7feb352d) >>> 0;
+  hash ^= hash >>> 15;
+  return (hash >>> 0) / 0x1_0000_0000 < 0.8;
 }
 
 export function getTerrain(map: Pick<MapDefinition, "terrain" | "widthTiles" | "heightTiles">, tileX: number, tileY: number): TerrainType {

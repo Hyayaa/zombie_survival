@@ -13,17 +13,19 @@ export const FOG_CELL_SIZE = TILE_SIZE / FOG_CELLS_PER_TILE;
 if (!Number.isInteger(FOG_CELL_SIZE)) throw new Error("TILE_SIZE must divide evenly into FOG_CELLS_PER_TILE");
 export const FLASHLIGHT_AIM_BUCKETS = 32;
 export const SAVE_KEY = "last-block-save-v1";
-export const SAVE_VERSION = 3;
+export const SAVE_VERSION = 4;
 export const MAP_ID = "expanded-city-v2";
 export const MAP_VERSION = 2;
 
 export const CAMERA = {
-  zoomLevels: [0.55, 0.7, 0.85, 1, 1.2, 1.45, 1.7, 2] as const,
+  zoomLevels: [0.35, 0.45, 0.55, 0.7, 0.85, 1, 1.2, 1.45, 1.7, 2] as const,
   defaultZoom: 1,
   maxCursorLead: 132,
   followLerp: 0.17,
   cursorDeadzone: 6,
 } as const;
+
+export const LOCAL_MINIMAP_ZOOM_LEVELS = [16, 24, 32, 48, 64] as const;
 
 export const VISION = {
   dayRadius: 138,
@@ -52,10 +54,23 @@ export const COMPANION_MOVEMENT = {
 export const MINIMAP = {
   localTiles: 32,
   localSize: 192,
-  localPixelsPerTile: 6,
   fullSize: 512,
   fullPixelsPerTile: 4,
   updateIntervalMs: 100,
+} as const;
+
+export const ENTITY_OUTLINE = {
+  normal: 0x000000,
+  interactable: 0xffffff,
+} as const;
+
+export const OBSTACLE_BALANCE = {
+  doorHealth: 48,
+  barricadeHealth: 96,
+  doorTraversalCost: 6,
+  barricadeTraversalCost: 12,
+  attackRange: 22,
+  hitStaggerMs: 90,
 } as const;
 
 export const DEPTH = {

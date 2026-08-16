@@ -28,6 +28,21 @@ export interface SavedFogExploration {
   runs: number[];
 }
 
+export interface SavedDoorState {
+  id: string;
+  open: boolean;
+  health: number;
+  destroyed: boolean;
+}
+
+export interface SavedBarricadeState {
+  id: string;
+  tileX: number;
+  tileY: number;
+  health: number;
+  maxHealth: number;
+}
+
 export interface SaveGame {
   version: number;
   mapId: string;
@@ -52,6 +67,8 @@ export interface SaveGame {
   collectedParts: string[];
   searchedContainers: string[];
   openedDoors: string[];
+  doorStates: SavedDoorState[];
+  barricades: SavedBarricadeState[];
   consumedZombieSpawnIds: string[];
   zombies: SavedZombie[];
   exploredFog: SavedFogExploration;

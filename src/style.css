@@ -316,6 +316,7 @@ button:focus-visible {
   right: 8px;
   width: min(42cqh, 42cqw, 260px);
   padding: 5px;
+  pointer-events: auto;
 }
 
 .minimap-panel__full {

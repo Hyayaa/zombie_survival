@@ -29,7 +29,7 @@ export function createZombieMind(): ZombieMind {
 }
 
 export function updateZombieMind(mind: ZombieMind, update: PerceptionUpdate): ZombieMind {
-  if (mind.state === "Dead" || mind.state === "Stagger") return { ...mind };
+  if (mind.state === "Dead" || mind.state === "Stagger" || mind.state === "AttackObstacle") return { ...mind };
 
   if (update.canSeeTarget && update.targetPosition) {
     return {
@@ -67,4 +67,3 @@ export function updateZombieMind(mind: ZombieMind, update: PerceptionUpdate): Zo
 
   return { ...mind, state: mind.state === "Idle" ? "Wander" : mind.state };
 }
-

@@ -1,7 +1,8 @@
 import Phaser from "phaser";
-import { DEPTH } from "../config/game-config";
+import { DEPTH, ENTITY_OUTLINE } from "../config/game-config";
 import type { WeaponId } from "../data/weapon-definitions";
 import { swingOffsetAt } from "../effects/pixel-effect-math";
+import { entityOutlineColor, type EntityOutlineState, type OutlineableEntityView } from "./entity-outline";
 
 export interface ActorPalette {
   skin: number;
@@ -26,12 +27,14 @@ export interface ActorAttackAnimation {
   baseAimAngle: number;
 }
 
-export class TopDownActorView {
+export class TopDownActorView implements OutlineableEntityView {
   readonly container: Phaser.GameObjects.Container;
   private readonly visual: Phaser.GameObjects.Container;
   private readonly aimLayer: Phaser.GameObjects.Container;
   private readonly weaponBody?: Phaser.GameObjects.Rectangle;
   private readonly weaponTip?: Phaser.GameObjects.Rectangle;
+  private readonly fillOutlineShapes: Phaser.GameObjects.Shape[];
+  private readonly strokeOutlineShapes: Phaser.GameObjects.Shape[];
   private readonly healthBarBackground: Phaser.GameObjects.Rectangle;
   private readonly healthBarFill: Phaser.GameObjects.Rectangle;
   private attackAnimation?: ActorAttackAnimation;
@@ -51,21 +54,24 @@ export class TopDownActorView {
   private lastAlwaysVisible = false;
   private visible = true;
   private dead = false;
+  private outlineState: EntityOutlineState = "normal";
 
   constructor(scene: Phaser.Scene, x: number, y: number, palette: ActorPalette, armed = true) {
     this.container = scene.add.container(Math.round(x), Math.round(y));
     const shadow = scene.add.ellipse(0, 6, 11, 4, 0x050708, 0.62);
     this.visual = scene.add.container(0, 0);
-    const torsoOutline = scene.add.ellipse(0, 1, 11, 13, palette.outline);
+    const torsoOutline = scene.add.ellipse(0, 1, 11, 13, ENTITY_OUTLINE.normal);
     const torso = scene.add.ellipse(0, 0, 9, 11, palette.body);
     const torsoLight = scene.add.ellipse(-2, -1, 3, 7, palette.bodyLight, 0.85);
-    const headOutline = scene.add.circle(0, -5, 4.6, palette.outline);
+    const headOutline = scene.add.circle(0, -5, 4.6, ENTITY_OUTLINE.normal);
     const head = scene.add.circle(0, -5, 3.7, palette.skin);
     const headLight = scene.add.rectangle(-1, -7, 3, 2, palette.skinLight);
     const aimParts = createAimLayer(scene, palette, armed);
     this.aimLayer = aimParts.container;
     this.weaponBody = aimParts.weaponBody;
     this.weaponTip = aimParts.weaponTip;
+    this.fillOutlineShapes = [torsoOutline, headOutline, ...aimParts.fillOutlineShapes];
+    this.strokeOutlineShapes = aimParts.strokeOutlineShapes;
     this.healthBarBackground = scene.add.rectangle(-7, -13, 14, 2, 0x171a18, 0.9).setOrigin(0, 0);
     this.healthBarFill = scene.add.rectangle(-7, -13, 14, 2, 0x7aaa65, 1).setOrigin(0, 0);
     this.visual.add([torsoOutline, torso, torsoLight, headOutline, head, headLight, this.aimLayer, this.healthBarBackground, this.healthBarFill]);
@@ -73,6 +79,18 @@ export class TopDownActorView {
     this.setAim(0);
     this.setWeapon("pistol");
     this.setPosition(x, y);
+  }
+
+  setOutlineState(state: EntityOutlineState): void {
+    if (state === this.outlineState) return;
+    this.outlineState = state;
+    const color = entityOutlineColor(state);
+    for (const shape of this.fillOutlineShapes) shape.setFillStyle(color, 1);
+    for (const shape of this.strokeOutlineShapes) shape.setStrokeStyle(1, color, 1);
+  }
+
+  getOutlineState(): EntityOutlineState {
+    return this.outlineState;
   }
 
   setPosition(x: number, y: number): void {
@@ -222,21 +240,25 @@ interface AimLayerParts {
   container: Phaser.GameObjects.Container;
   weaponBody?: Phaser.GameObjects.Rectangle;
   weaponTip?: Phaser.GameObjects.Rectangle;
+  fillOutlineShapes: Phaser.GameObjects.Shape[];
+  strokeOutlineShapes: Phaser.GameObjects.Shape[];
 }
 
 function createAimLayer(scene: Phaser.Scene, palette: ActorPalette, armed: boolean): AimLayerParts {
   const container = scene.add.container(0, 0);
+  const upperArmOutline = scene.add.circle(5, -2, 2.6, ENTITY_OUTLINE.normal);
+  const lowerArmOutline = scene.add.circle(5, 3, 2.6, ENTITY_OUTLINE.normal);
   container.add([
-    scene.add.circle(5, -2, 2.6, palette.outline),
-    scene.add.circle(5, 3, 2.6, palette.outline),
+    upperArmOutline,
+    lowerArmOutline,
     scene.add.circle(5, -2, 1.8, palette.skin),
     scene.add.circle(5, 3, 1.8, palette.skin),
   ]);
   if (armed) {
-    const weaponBody = scene.add.rectangle(7, -2, 7, 4, palette.accent).setOrigin(0, 0);
-    const weaponTip = scene.add.rectangle(13, -1, 3, 2, palette.outline).setOrigin(0, 0);
+    const weaponBody = scene.add.rectangle(7, -2, 7, 4, palette.accent).setOrigin(0, 0).setStrokeStyle(1, ENTITY_OUTLINE.normal);
+    const weaponTip = scene.add.rectangle(13, -1, 3, 2, palette.outline).setOrigin(0, 0).setStrokeStyle(1, ENTITY_OUTLINE.normal);
     container.add([weaponBody, weaponTip]);
-    return { container, weaponBody, weaponTip };
+    return { container, weaponBody, weaponTip, fillOutlineShapes: [upperArmOutline, lowerArmOutline], strokeOutlineShapes: [weaponBody, weaponTip] };
   }
-  return { container };
+  return { container, fillOutlineShapes: [upperArmOutline, lowerArmOutline], strokeOutlineShapes: [] };
 }

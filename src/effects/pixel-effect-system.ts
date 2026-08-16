@@ -97,6 +97,21 @@ export class PixelEffectSystem implements AttackEffectSink {
     }
   }
 
+  emitObstacleImpact(x: number, y: number, shotAngle: number, sequence: number, now: number, destroyed: boolean): void {
+    if (!this.isVisible(x, y)) return;
+    const seed = effectSeed(sequence, "bat", x, y);
+    const count = destroyed ? 12 : 5;
+    for (let index = 0; index < count; index += 1) {
+      const angle = shotAngle + Math.PI + (effectRandom(seed, index * 3) - 0.5) * 1.6;
+      const speed = 10 + effectRandom(seed, index * 3 + 1) * (destroyed ? 32 : 18);
+      this.spawn(this.particles, x, y, Math.cos(angle) * speed, Math.sin(angle) * speed, 16, 2,
+        index % 3 === 0 ? 0x9a7952 : index % 2 === 0 ? 0x65513c : 0x7b6650,
+        index % 4 === 0 ? 2 : 1, 1, now, now + 150 + effectRandom(seed, index * 3 + 2) * 210,
+        0.9, true, PIXEL_EFFECT_PRIORITY.wall, DEPTH.effectWorld, false);
+    }
+    this.emitDust(x, y + 4, shotAngle + Math.PI, seed ^ 0x6a09e667, destroyed ? 7 : 3, now);
+  }
+
   emitFireBurst(x: number, y: number, sequence: number, now: number): void {
     if (!this.isVisible(x, y)) return;
     const seed = effectSeed(sequence, "bat", x, y);

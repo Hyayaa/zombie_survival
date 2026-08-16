@@ -1,11 +1,11 @@
-import { FOG_CELLS_PER_TILE, MAP_HEIGHT_TILES, MAP_WIDTH_TILES, MINIMAP, TILE_SIZE, WORLD_HEIGHT, WORLD_WIDTH } from "../config/game-config";
+import { FOG_CELLS_PER_TILE, LOCAL_MINIMAP_ZOOM_LEVELS, MAP_HEIGHT_TILES, MAP_WIDTH_TILES, MINIMAP, TILE_SIZE, WORLD_HEIGHT, WORLD_WIDTH } from "../config/game-config";
 import { getTerrain, TerrainType, type MapDefinition } from "../data/map-definitions";
 import { FogOfWarSystem, VisibilityState } from "../systems/fog-of-war-system";
 import type { Point } from "../systems/zombie-ai-system";
 
 export type MapDisplayMode = "hidden" | "local" | "full";
 export enum MinimapTileState { Unknown = 0, Explored = 1, Visible = 2 }
-export enum MinimapTerrain { Ground = 0, Road = 1, Sidewalk = 2, Floor = 3, Wall = 4, Vehicle = 5, Door = 6, OpenDoor = 7 }
+export enum MinimapTerrain { Ground = 0, Road = 1, Sidewalk = 2, Floor = 3, Wall = 4, Vehicle = 5, Door = 6, OpenDoor = 7, Barricade = 8 }
 
 export const MINIMAP_COLORS = {
   unknown: 0x020405,
@@ -17,12 +17,20 @@ export const MINIMAP_COLORS = {
   vehicleExplored: 0x353c3e, vehicleVisible: 0x616b6e,
   doorExplored: 0x4c4335, doorVisible: 0x8a7656,
   openDoorExplored: 0x343b32, openDoorVisible: 0x65765b,
+  barricadeExplored: 0x49382b, barricadeVisible: 0x866140,
   player: 0x64c7e8, companion: 0xd1ad5f, safehouse: 0x7193b8,
   extraction: 0x8fbd68, cameraViewport: 0xd7e0dc,
+  zombie: 0xc9403c,
 } as const;
+
+export interface MinimapZombieMarkerSource {
+  readonly position: Point;
+  isAlive(): boolean;
+}
 
 export interface MinimapDynamicState {
   player: Point; companion?: Point; companionRescued: boolean; companionAlive: boolean;
+  zombies: readonly MinimapZombieMarkerSource[];
   collectedParts: number; defenseActive: boolean;
   cameraWorldView: { x: number; y: number; width: number; height: number };
 }
@@ -58,12 +66,36 @@ export class MinimapFogTracker {
 export function cycleMapMode(mode: MapDisplayMode): MapDisplayMode { return mode === "hidden" ? "local" : mode === "local" ? "full" : "hidden"; }
 export function shouldPauseSimulationForMap(mode: MapDisplayMode): boolean { return mode === "full"; }
 
-export function getLocalMapWindow(playerTileX: number, playerTileY: number, widthTiles = MAP_WIDTH_TILES, heightTiles = MAP_HEIGHT_TILES): LocalMapWindow {
-  const size = MINIMAP.localTiles;
+export function getLocalMapWindow(playerTileX: number, playerTileY: number, size: number = MINIMAP.localTiles, widthTiles = MAP_WIDTH_TILES, heightTiles = MAP_HEIGHT_TILES): LocalMapWindow {
   return {
     startX: clamp(Math.floor(playerTileX - size / 2), 0, Math.max(0, widthTiles - size)),
     startY: clamp(Math.floor(playerTileY - size / 2), 0, Math.max(0, heightTiles - size)),
     width: Math.min(size, widthTiles), height: Math.min(size, heightTiles),
+  };
+}
+
+export function getLocalMinimapPixelsPerTile(tileCount: number): number {
+  const pixels = MINIMAP.localSize / tileCount;
+  if (!Number.isInteger(pixels)) throw new Error(`Local minimap tile count must divide ${MINIMAP.localSize}: ${tileCount}`);
+  return pixels;
+}
+
+export function stepLocalMinimapTiles(currentTiles: number, wheelDeltaY: number, mode: MapDisplayMode): number {
+  if (mode !== "local" || wheelDeltaY === 0) return currentTiles;
+  let index = LOCAL_MINIMAP_ZOOM_LEVELS.findIndex((tiles) => tiles === currentTiles);
+  if (index < 0) index = LOCAL_MINIMAP_ZOOM_LEVELS.indexOf(MINIMAP.localTiles);
+  index = wheelDeltaY < 0 ? Math.max(0, index - 1) : Math.min(LOCAL_MINIMAP_ZOOM_LEVELS.length - 1, index + 1);
+  return LOCAL_MINIMAP_ZOOM_LEVELS[index]!;
+}
+
+export function getLocalMarkerPosition(point: Point, window: LocalMapWindow, pixelsPerTile: number, clampOutside = false): Point | undefined {
+  const rawX = (point.x / TILE_SIZE - window.startX) * pixelsPerTile;
+  const rawY = (point.y / TILE_SIZE - window.startY) * pixelsPerTile;
+  const inside = rawX >= 0 && rawY >= 0 && rawX < MINIMAP.localSize && rawY < MINIMAP.localSize;
+  if (!inside && !clampOutside) return undefined;
+  return {
+    x: inside ? rawX : clamp(rawX, 2, MINIMAP.localSize - 3),
+    y: inside ? rawY : clamp(rawY, 2, MINIMAP.localSize - 3),
   };
 }
 
@@ -107,12 +139,17 @@ export function cameraViewportToFullMap(worldView: { x: number; y: number; width
 export const cameraViewportToMinimap = cameraViewportToFullMap;
 
 export function shouldShowCompanion(rescued: boolean, alive: boolean): boolean { return rescued && alive; }
+export function shouldIterateZombieMarkers(mode: MapDisplayMode): boolean { return mode === "local"; }
+export function shouldShowLocalZombie(zombie: MinimapZombieMarkerSource, window: LocalMapWindow): boolean {
+  return zombie.isAlive() && isPointInLocalWindow(zombie.position, window);
+}
 export function shouldShowExtraction(tileState: MinimapTileState, collectedParts: number, defenseActive: boolean): boolean { return tileState !== MinimapTileState.Unknown || collectedParts >= 3 || defenseActive; }
 export function shouldUpdateMinimap(open: boolean, now: number, lastUpdateAt: number): boolean { return open && now >= lastUpdateAt + MINIMAP.updateIntervalMs; }
 
 export class MinimapPanel {
   readonly root: HTMLDivElement;
   private readonly localRoot: HTMLDivElement;
+  private readonly localTitle: HTMLDivElement;
   private readonly fullRoot: HTMLDivElement;
   private readonly localTerrainCanvas: HTMLCanvasElement;
   private readonly localMarkerCanvas: HTMLCanvasElement;
@@ -123,19 +160,28 @@ export class MinimapPanel {
   private readonly fullTerrainContext: CanvasRenderingContext2D;
   private readonly fullMarkerContext: CanvasRenderingContext2D;
   private readonly terrain: Uint8Array;
-  private readonly localStates = new Uint8Array(MINIMAP.localTiles * MINIMAP.localTiles);
+  private readonly localStates = new Uint8Array(LOCAL_MINIMAP_ZOOM_LEVELS.at(-1)! ** 2);
   private readonly dirty: MinimapFogTracker;
   private readonly markerPoint: Point = { x: 0, y: 0 };
   private mode: MapDisplayMode = "hidden";
+  private currentLocalTiles: number = MINIMAP.localTiles;
   private localWindow: LocalMapWindow = { startX: -1, startY: -1, width: MINIMAP.localTiles, height: MINIMAP.localTiles };
   private localNeedsRebuild = true;
   private fullInitialized = false;
   private lastDynamicUpdateAt = Number.NEGATIVE_INFINITY;
+  private lastState?: MinimapDynamicState;
+  private readonly localWheelListener = (event: WheelEvent): void => {
+    if (this.mode !== "local" || event.deltaY === 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    this.handleLocalWheel(event.deltaY);
+  };
 
   constructor(parent: HTMLElement, private readonly map: MapDefinition, private readonly fog: FogOfWarSystem) {
     this.root = document.createElement("div"); this.root.className = "minimap-panel"; this.root.hidden = true;
-    this.root.innerHTML = `<section class="minimap-panel__local pixel-panel"><div class="minimap-panel__title">주변 지도 · M 전체</div><div class="minimap-panel__canvas"><canvas data-layer="local-terrain"></canvas><canvas data-layer="local-markers"></canvas></div></section><section class="minimap-panel__full pixel-panel"><div class="minimap-panel__title">도시 전체 지도 · M 닫기 · Esc 닫기</div><div class="minimap-panel__canvas"><canvas data-layer="full-terrain"></canvas><canvas data-layer="full-markers"></canvas></div></section>`;
+    this.root.innerHTML = `<section class="minimap-panel__local pixel-panel"><div class="minimap-panel__title" data-role="local-title"></div><div class="minimap-panel__canvas"><canvas data-layer="local-terrain"></canvas><canvas data-layer="local-markers"></canvas></div></section><section class="minimap-panel__full pixel-panel"><div class="minimap-panel__title">도시 전체 지도 · M 닫기 · Esc 닫기</div><div class="minimap-panel__canvas"><canvas data-layer="full-terrain"></canvas><canvas data-layer="full-markers"></canvas></div></section>`;
     this.localRoot = requiredElement(this.root, ".minimap-panel__local"); this.fullRoot = requiredElement(this.root, ".minimap-panel__full");
+    this.localTitle = requiredElement(this.root, '[data-role="local-title"]');
     this.localTerrainCanvas = requiredCanvas(this.root, 'canvas[data-layer="local-terrain"]');
     this.localMarkerCanvas = requiredCanvas(this.root, 'canvas[data-layer="local-markers"]');
     this.fullTerrainCanvas = requiredCanvas(this.root, 'canvas[data-layer="full-terrain"]');
@@ -147,7 +193,8 @@ export class MinimapPanel {
     this.terrain = new Uint8Array(map.widthTiles * map.heightTiles);
     for (let y = 0; y < map.heightTiles; y += 1) for (let x = 0; x < map.widthTiles; x += 1) this.terrain[y * map.widthTiles + x] = getMinimapTerrain(map, x, y);
     this.dirty = new MinimapFogTracker(map.widthTiles, map.heightTiles);
-    parent.append(this.root); this.syncModeDom();
+    this.localRoot.addEventListener("wheel", this.localWheelListener, { passive: false });
+    parent.append(this.root); this.updateLocalTitle(); this.syncModeDom();
   }
 
   setMode(mode: MapDisplayMode): void {
@@ -164,6 +211,24 @@ export class MinimapPanel {
   isVisible(): boolean { return this.mode !== "hidden"; }
   isOpen(): boolean { return this.isVisible(); }
   getMode(): MapDisplayMode { return this.mode; }
+  getLocalTileCount(): number { return this.currentLocalTiles; }
+
+  handleLocalWheel(deltaY: number): boolean {
+    const nextTiles = stepLocalMinimapTiles(this.currentLocalTiles, deltaY, this.mode);
+    if (nextTiles === this.currentLocalTiles) return false;
+    this.currentLocalTiles = nextTiles;
+    this.localWindow = { startX: -1, startY: -1, width: nextTiles, height: nextTiles };
+    this.localNeedsRebuild = true;
+    this.lastDynamicUpdateAt = Number.NEGATIVE_INFINITY;
+    this.dirty.clear();
+    this.updateLocalTitle();
+    if (this.lastState) {
+      this.updateLocalWindow(this.lastState);
+      this.rebuildLocalTerrain();
+      this.drawLocalMarkers(this.lastState);
+    }
+    return true;
+  }
 
   markFogDirty(indices: readonly number[]): void {
     if (!this.isLocal()) { this.localNeedsRebuild = true; return; }
@@ -175,12 +240,19 @@ export class MinimapPanel {
     this.dirty.markTile(tileX, tileY); this.localNeedsRebuild = true;
     if (this.fullInitialized) this.drawFullTerrainTile(index);
   }
+  markBarricadeTile(tileX: number, tileY: number, present: boolean): void {
+    const index = tileY * this.map.widthTiles + tileX;
+    this.terrain[index] = present ? MinimapTerrain.Barricade : getMinimapTerrain(this.map, tileX, tileY);
+    this.dirty.markTile(tileX, tileY);
+    this.localNeedsRebuild = true;
+    if (this.fullInitialized) this.drawFullTerrainTile(index);
+  }
 
   update(now: number, state: MinimapDynamicState): boolean {
     if (this.mode === "hidden") return false;
+    this.lastState = state;
     if (this.mode === "local") {
-      const window = getLocalMapWindow(Math.floor(state.player.x / TILE_SIZE), Math.floor(state.player.y / TILE_SIZE), this.map.widthTiles, this.map.heightTiles);
-      if (window.startX !== this.localWindow.startX || window.startY !== this.localWindow.startY) { this.localWindow = window; this.localNeedsRebuild = true; }
+      this.updateLocalWindow(state);
       if (this.localNeedsRebuild) this.rebuildLocalTerrain();
       else this.dirty.consume((index) => this.drawLocalTerrainTile(index));
     }
@@ -190,13 +262,30 @@ export class MinimapPanel {
     return true;
   }
 
-  destroy(): void { this.root.remove(); }
+  destroy(): void { this.localRoot.removeEventListener("wheel", this.localWheelListener); this.root.remove(); }
 
   private syncModeDom(): void {
     this.root.hidden = this.mode === "hidden";
     this.localRoot.hidden = this.mode !== "local";
     this.fullRoot.hidden = this.mode !== "full";
     this.root.dataset.mode = this.mode;
+  }
+  private updateLocalTitle(): void {
+    this.localTitle.textContent = `주변 지도 · ${this.currentLocalTiles}×${this.currentLocalTiles} · 휠 확대/축소 · M 전체`;
+  }
+  private updateLocalWindow(state: MinimapDynamicState): void {
+    const window = getLocalMapWindow(
+      Math.floor(state.player.x / TILE_SIZE),
+      Math.floor(state.player.y / TILE_SIZE),
+      this.currentLocalTiles,
+      this.map.widthTiles,
+      this.map.heightTiles,
+    );
+    if (window.startX !== this.localWindow.startX || window.startY !== this.localWindow.startY
+      || window.width !== this.localWindow.width || window.height !== this.localWindow.height) {
+      this.localWindow = window;
+      this.localNeedsRebuild = true;
+    }
   }
   private rebuildLocalTerrain(): void {
     this.localTerrainContext.clearRect(0, 0, MINIMAP.localSize, MINIMAP.localSize);
@@ -208,9 +297,10 @@ export class MinimapPanel {
     const localX = tileX - this.localWindow.startX; const localY = tileY - this.localWindow.startY;
     if (localX < 0 || localY < 0 || localX >= this.localWindow.width || localY >= this.localWindow.height) return;
     const state = getMinimapTileState(this.fog, tileX, tileY);
-    this.localStates[localY * MINIMAP.localTiles + localX] = state;
+    const pixelsPerTile = getLocalMinimapPixelsPerTile(this.currentLocalTiles);
+    this.localStates[localY * this.currentLocalTiles + localX] = state;
     this.localTerrainContext.fillStyle = colorCss(getMinimapTileColor(this.terrain[index] as MinimapTerrain, state));
-    this.localTerrainContext.fillRect(localX * MINIMAP.localPixelsPerTile, localY * MINIMAP.localPixelsPerTile, MINIMAP.localPixelsPerTile, MINIMAP.localPixelsPerTile);
+    this.localTerrainContext.fillRect(localX * pixelsPerTile, localY * pixelsPerTile, pixelsPerTile, pixelsPerTile);
   }
   private rebuildFullTerrain(): void {
     for (let index = 0; index < this.terrain.length; index += 1) this.drawFullTerrainTile(index);
@@ -223,8 +313,19 @@ export class MinimapPanel {
   }
   private drawLocalMarkers(state: MinimapDynamicState): void {
     const context = this.localMarkerContext; context.clearRect(0, 0, MINIMAP.localSize, MINIMAP.localSize);
-    drawLocalMarker(context, state.player, this.localWindow, MINIMAP_COLORS.player, 5);
-    if (state.companion && shouldShowCompanion(state.companionRescued, state.companionAlive)) drawLocalMarker(context, state.companion, this.localWindow, MINIMAP_COLORS.companion, 4);
+    const pixelsPerTile = getLocalMinimapPixelsPerTile(this.currentLocalTiles);
+    drawLocalMarker(context, state.player, this.localWindow, pixelsPerTile, MINIMAP_COLORS.player, 5, false);
+    if (state.companion && shouldShowCompanion(state.companionRescued, state.companionAlive)) {
+      const inside = isPointInLocalWindow(state.companion, this.localWindow);
+      drawLocalMarker(context, state.companion, this.localWindow, pixelsPerTile, MINIMAP_COLORS.companion, inside ? 4 : 3, true);
+    }
+    let zombieCount = 0;
+    for (const zombie of state.zombies) {
+      if (zombieCount >= 40) break;
+      if (!shouldShowLocalZombie(zombie, this.localWindow)) continue;
+      drawLocalMarker(context, zombie.position, this.localWindow, pixelsPerTile, MINIMAP_COLORS.zombie, 2, false);
+      zombieCount += 1;
+    }
   }
   private drawFullMarkers(state: MinimapDynamicState): void {
     const context = this.fullMarkerContext; context.clearRect(0, 0, MINIMAP.fullSize, MINIMAP.fullSize);
@@ -250,15 +351,20 @@ export function getMinimapTileColor(terrain: MinimapTerrain, state: MinimapTileS
     case MinimapTerrain.Vehicle: return visible ? MINIMAP_COLORS.vehicleVisible : MINIMAP_COLORS.vehicleExplored;
     case MinimapTerrain.Door: return visible ? MINIMAP_COLORS.doorVisible : MINIMAP_COLORS.doorExplored;
     case MinimapTerrain.OpenDoor: return visible ? MINIMAP_COLORS.openDoorVisible : MINIMAP_COLORS.openDoorExplored;
+    case MinimapTerrain.Barricade: return visible ? MINIMAP_COLORS.barricadeVisible : MINIMAP_COLORS.barricadeExplored;
     default: return visible ? MINIMAP_COLORS.groundVisible : MINIMAP_COLORS.groundExplored;
   }
 }
 
-function drawLocalMarker(context: CanvasRenderingContext2D, point: Point, window: LocalMapWindow, color: number, size: number): void {
-  const x = (point.x / TILE_SIZE - window.startX) * MINIMAP.localPixelsPerTile;
-  const y = (point.y / TILE_SIZE - window.startY) * MINIMAP.localPixelsPerTile;
-  if (x < 0 || y < 0 || x >= MINIMAP.localSize || y >= MINIMAP.localSize) return;
-  drawMarker(context, { x, y }, color, size, MINIMAP.localSize);
+function drawLocalMarker(context: CanvasRenderingContext2D, point: Point, window: LocalMapWindow, pixelsPerTile: number, color: number, size: number, clampOutside: boolean): void {
+  const marker = getLocalMarkerPosition(point, window, pixelsPerTile, clampOutside);
+  if (!marker) return;
+  drawMarker(context, marker, color, size, MINIMAP.localSize);
+}
+function isPointInLocalWindow(point: Point, window: LocalMapWindow): boolean {
+  const tileX = point.x / TILE_SIZE;
+  const tileY = point.y / TILE_SIZE;
+  return tileX >= window.startX && tileY >= window.startY && tileX < window.startX + window.width && tileY < window.startY + window.height;
 }
 function drawMarker(context: CanvasRenderingContext2D, point: Point, color: number, size: number, canvasSize: number): void {
   const x = Math.min(canvasSize - size, Math.max(0, Math.round(point.x) - Math.floor(size / 2)));

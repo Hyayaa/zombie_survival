@@ -17,6 +17,9 @@ export class Zombie {
   biteCompletesAt = 0;
   chargeReadyAt = 0;
   staggerUntil = 0;
+  obstacleTargetId?: string;
+  obstacleAttackCompletesAt = 0;
+  nextObstacleAttackAt = 0;
   wanderTarget?: Point;
   aimAngle = 0;
 
