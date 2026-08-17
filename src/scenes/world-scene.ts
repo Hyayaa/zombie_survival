@@ -44,7 +44,7 @@ import { buildVisionSources, getCompanionVisionSignature, getVisionProfile, shou
 import { InteractionSystem } from "../systems/interaction-system";
 import { NoiseSystem, NOISE_LEVELS } from "../systems/noise-system";
 import { initializeNewGameLoadout } from "../systems/new-game-loadout";
-import { findTilePath, findWeightedTilePath } from "../systems/pathfinding-system";
+import { findAnyAnglePath, type NavigationQuery } from "../systems/pathfinding-system";
 import { SaveSystem } from "../systems/save-system";
 import { WorldObjectRegistry } from "../systems/world-object-registry";
 import { AUTO_PICKUP_INTERVAL_MS, AutoPickupSystem } from "../systems/auto-pickup-system";
@@ -111,6 +111,8 @@ export class WorldScene extends Phaser.Scene {
   private loadRequested = false;
   private map!: ReturnType<typeof createCityBlockMap>;
   private collision!: CollisionSystem;
+  private companionNavigationQuery!: NavigationQuery;
+  private zombieNavigationQuery!: NavigationQuery;
   private destructibles!: DestructibleObstacleSystem;
   private clock!: GameClock;
   private fog!: FogOfWarSystem;
@@ -230,6 +232,21 @@ export class WorldScene extends Phaser.Scene {
       TILE_SIZE,
       this.map.wallSegments,
     );
+    const navigationCollision = this.collision;
+    this.companionNavigationQuery = {
+      widthTiles: this.map.widthTiles, heightTiles: this.map.heightTiles, tileSize: TILE_SIZE,
+      get navigationRevision() { return navigationCollision.navigationRevision; },
+      getTraversalCost: (x, y) => navigationCollision.isTileBlocked(x, y) ? Number.POSITIVE_INFINITY : 1,
+      canTraverse: (from, to) => navigationCollision.canTraverseCircle(from, to, BALANCE.companionRadius),
+      canTraverseEdge: (fromX, fromY, toX, toY) => navigationCollision.canTraverseTileEdge(fromX, fromY, toX, toY, BALANCE.companionRadius),
+    };
+    this.zombieNavigationQuery = {
+      widthTiles: this.map.widthTiles, heightTiles: this.map.heightTiles, tileSize: TILE_SIZE,
+      get navigationRevision() { return navigationCollision.navigationRevision; },
+      getTraversalCost: (x, y) => navigationCollision.getZombieTraversalCost(x, y),
+      canTraverse: (from, to) => navigationCollision.canTraverseCircle(from, to, BALANCE.zombieRadius),
+      canTraverseEdge: (fromX, fromY, toX, toY) => navigationCollision.canTraverseTileEdge(fromX, fromY, toX, toY, BALANCE.zombieRadius, true),
+    };
     this.destructibles = new DestructibleObstacleSystem(this.map.doors, this.map.widthTiles);
     this.clock = new GameClock();
     if (saved) this.clock.restore(saved.clock);
@@ -1059,7 +1076,14 @@ export class WorldScene extends Phaser.Scene {
   }
 
   private moveZombieToward(zombie: Zombie, goal: Point, deltaSeconds: number, zombieIndex: number): void {
-    if (this.simulationTime >= zombie.nextPathAt) {
+    if (zombie.pathNavigationRevision !== this.collision.navigationRevision) {
+      zombie.path = []; zombie.pathIndex = 0; zombie.pathNavigationRevision = this.collision.navigationRevision;
+      zombie.nextPathAt = Math.min(zombie.nextPathAt, this.simulationTime + (zombieIndex % 4) * 20);
+    }
+    const direct = this.collision.canTraverseCircle(zombie.position, goal, BALANCE.zombieRadius);
+    if (direct) {
+      zombie.path = [{ x: goal.x, y: goal.y }]; zombie.pathIndex = 0; zombie.pathNavigationRevision = this.collision.navigationRevision;
+    } else if (this.simulationTime >= zombie.nextPathAt) {
       const farFromPlayer = distance(zombie.position, this.player.position) > 360;
       const nextPath = this.tryFindZombiePath(zombie.position, goal, 650);
       if (nextPath) {
@@ -1068,6 +1092,7 @@ export class WorldScene extends Phaser.Scene {
           : this.simulationTime + 650 + (zombieIndex % 5) * 65 + (farFromPlayer ? 500 : 0);
         zombie.path = nextPath;
         zombie.pathIndex = 0;
+        zombie.pathNavigationRevision = this.collision.navigationRevision;
       } else {
         zombie.nextPathAt = this.simulationTime + 80 + (zombieIndex % 4) * 20;
       }
@@ -1104,30 +1129,14 @@ export class WorldScene extends Phaser.Scene {
     if (this.pathfindingWorkThisFrame >= MAX_PATHFINDING_PER_FRAME) return undefined;
     this.pathfindingWorkThisFrame += 1;
     this.performanceMonitor.recordPathfinding();
-    return findTilePath(
-      start,
-      goal,
-      (x, y) => this.collision.isTileBlocked(x, y),
-      maxVisited,
-      this.map.widthTiles,
-      this.map.heightTiles,
-      (fromX, fromY, toX, toY) => this.collision.canTraverseTileEdge(fromX, fromY, toX, toY, BALANCE.companionRadius),
-    );
+    return findAnyAnglePath(start, goal, this.companionNavigationQuery, maxVisited);
   }
 
   private tryFindZombiePath(start: Point, goal: Point, maxVisited: number): Point[] | undefined {
     if (this.pathfindingWorkThisFrame >= MAX_PATHFINDING_PER_FRAME) return undefined;
     this.pathfindingWorkThisFrame += 1;
     this.performanceMonitor.recordPathfinding();
-    return findWeightedTilePath(
-      start,
-      goal,
-      (x, y) => this.collision.getZombieTraversalCost(x, y),
-      maxVisited,
-      this.map.widthTiles,
-      this.map.heightTiles,
-      (fromX, fromY, toX, toY) => this.collision.canTraverseTileEdge(fromX, fromY, toX, toY, BALANCE.zombieRadius, true),
-    );
+    return findAnyAnglePath(start, goal, this.zombieNavigationQuery, maxVisited);
   }
 
   private updateZombieObstacleAttack(zombie: Zombie): boolean {
@@ -1456,6 +1465,18 @@ export class WorldScene extends Phaser.Scene {
         this.companion.pathIndex = 0;
         this.companion.nextPathAt = Math.min(this.companion.nextPathAt, this.simulationTime + this.companion.formationSlotIndex * 18);
       }
+      if (this.companion.pathNavigationRevision !== this.collision.navigationRevision) {
+        this.companion.path = [];
+        this.companion.pathIndex = 0;
+        this.companion.pathNavigationRevision = this.collision.navigationRevision;
+        this.companion.nextPathAt = Math.min(this.companion.nextPathAt, this.simulationTime + this.companion.formationSlotIndex * 18);
+      }
+      const hasDirectPath = this.collision.canTraverseCircle(this.companion.position, goal, BALANCE.companionRadius);
+      if (hasDirectPath) {
+        this.companion.path = [{ x: goal.x, y: goal.y }];
+        this.companion.pathIndex = 0;
+        this.companion.pathNavigationRevision = this.collision.navigationRevision;
+      }
       const currentWaypoint = this.companion.path[this.companion.pathIndex];
       if (currentWaypoint && !this.collision.canOccupyCircle(currentWaypoint.x, currentWaypoint.y, BALANCE.companionRadius)) {
         this.companion.path = [];
@@ -1463,13 +1484,14 @@ export class WorldScene extends Phaser.Scene {
         this.companion.nextPathAt = this.simulationTime;
       }
 
-      if (this.simulationTime >= this.companion.nextPathAt) {
+      if (!hasDirectPath && this.simulationTime >= this.companion.nextPathAt) {
         const nextPath = this.tryFindPath(this.companion.position, goal, 700);
         if (nextPath !== undefined) {
           const repathDelay = stuckDuration > 0 ? 120 : this.companion.navigation.catchUpMode ? 280 : 500;
           this.companion.nextPathAt = this.simulationTime + repathDelay;
           this.companion.path = nextPath;
           this.companion.pathIndex = 0;
+          this.companion.pathNavigationRevision = this.collision.navigationRevision;
           markCompanionRepath(this.companion.navigation);
         }
       }

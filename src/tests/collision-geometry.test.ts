@@ -73,4 +73,18 @@ describe("indexed diagonal colliders", () => {
     expect(collision.hasLineOfSight({ x: 20, y: 36 }, { x: 52, y: 36 })).toBe(true);
     expect(collision.firstProjectileCollision({ x: 20, y: 36 }, { x: 52, y: 36 })).toBeNull();
   });
+
+  it("increments navigation revision only when movement topology changes", () => {
+    const definition = door(diagonalDown, "diagonal-down");
+    const collision = new CollisionSystem([], [definition], 4, 4, 24);
+    const initial = collision.navigationRevision;
+    collision.setDoorOpen(definition.id, true);
+    expect(collision.navigationRevision).toBe(initial + 1);
+    collision.setDoorOpen(definition.id, true);
+    expect(collision.navigationRevision).toBe(initial + 1);
+    collision.addDynamicObstacle({ id: "barrier", kind: "barricade", tileX: 2, tileY: 2, widthTiles: 1, heightTiles: 1, blocksMovement: true, blocksVision: false, blocksProjectiles: true, coverHeight: "low" });
+    expect(collision.navigationRevision).toBe(initial + 2);
+    collision.removeDynamicObstacle("barrier");
+    expect(collision.navigationRevision).toBe(initial + 3);
+  });
 });

@@ -134,3 +134,152 @@ function reconstruct(node: Node): Point[] {
   }
   return path.reverse();
 }
+
+export interface NavigationQuery {
+  readonly widthTiles: number;
+  readonly heightTiles: number;
+  readonly tileSize: number;
+  readonly navigationRevision: number;
+  getTraversalCost(tileX: number, tileY: number): number;
+  canTraverse(from: Point, to: Point): boolean;
+  canTraverseEdge(fromTileX: number, fromTileY: number, toTileX: number, toTileY: number): boolean;
+}
+
+const anyAngleCosts = new Float64Array(CELL_COUNT);
+const anyAngleParents = new Int32Array(CELL_COUNT);
+const anyAngleGenerations = new Uint32Array(CELL_COUNT);
+const anyAngleClosedGenerations = new Uint32Array(CELL_COUNT);
+let anyAngleGeneration = 0;
+
+/** Direct-line first, eight-direction Theta* with a final visibility string pull. */
+export function findAnyAnglePath(start: Point, goal: Point, query: NavigationQuery, maxVisited = 800): Point[] {
+  if (query.canTraverse(start, goal)) return [{ x: goal.x, y: goal.y }];
+  const startX = Math.floor(start.x / query.tileSize);
+  const startY = Math.floor(start.y / query.tileSize);
+  const goalX = Math.max(0, Math.min(query.widthTiles - 1, Math.floor(goal.x / query.tileSize)));
+  const goalY = Math.max(0, Math.min(query.heightTiles - 1, Math.floor(goal.y / query.tileSize)));
+  if (!inNavigationBounds(startX, startY, query) || !Number.isFinite(query.getTraversalCost(goalX, goalY))) return [];
+  anyAngleGeneration += 1;
+  if (anyAngleGeneration >= 0xffff_ffff) {
+    anyAngleGenerations.fill(0); anyAngleClosedGenerations.fill(0); anyAngleGeneration = 1;
+  }
+  const startIndex = startY * query.widthTiles + startX;
+  const goalIndex = goalY * query.widthTiles + goalX;
+  const open = new IndexHeap();
+  anyAngleGenerations[startIndex] = anyAngleGeneration;
+  anyAngleCosts[startIndex] = 0;
+  anyAngleParents[startIndex] = startIndex;
+  open.push(startIndex, euclideanTiles(startX, startY, goalX, goalY));
+  let visited = 0;
+
+  while (open.size > 0 && visited < maxVisited) {
+    const currentIndex = open.pop();
+    if (currentIndex === undefined || anyAngleClosedGenerations[currentIndex] === anyAngleGeneration) continue;
+    anyAngleClosedGenerations[currentIndex] = anyAngleGeneration;
+    visited += 1;
+    if (currentIndex === goalIndex) return finalizeAnyAnglePath(start, goal, reconstructAnyAngle(currentIndex, startIndex, query), query);
+    const currentX = currentIndex % query.widthTiles;
+    const currentY = Math.floor(currentIndex / query.widthTiles);
+    for (let deltaY = -1; deltaY <= 1; deltaY += 1) for (let deltaX = -1; deltaX <= 1; deltaX += 1) {
+      if (deltaX === 0 && deltaY === 0) continue;
+      const x = currentX + deltaX; const y = currentY + deltaY;
+      if (!inNavigationBounds(x, y, query)) continue;
+      const traversalCost = query.getTraversalCost(x, y);
+      if (!Number.isFinite(traversalCost) || traversalCost <= 0) continue;
+      if (deltaX !== 0 && deltaY !== 0 && (!Number.isFinite(query.getTraversalCost(currentX + deltaX, currentY)) || !Number.isFinite(query.getTraversalCost(currentX, currentY + deltaY)))) continue;
+      if (!query.canTraverseEdge(currentX, currentY, x, y)) continue;
+      const index = y * query.widthTiles + x;
+      const currentParent: number = anyAngleParents[currentIndex]!;
+      let parentIndex = currentIndex;
+      let candidateCost = anyAngleCosts[currentIndex]! + Math.hypot(deltaX, deltaY) * traversalCost;
+      if (currentParent !== currentIndex) {
+        const parentX = currentParent % query.widthTiles;
+        const parentY = Math.floor(currentParent / query.widthTiles);
+        const parentPoint = tilePoint(parentX, parentY, query.tileSize);
+        const nextPoint = tilePoint(x, y, query.tileSize);
+        if (query.canTraverse(parentPoint, nextPoint)) {
+          const shortcutCost = anyAngleCosts[currentParent]! + Math.hypot(x - parentX, y - parentY) * traversalCost;
+          if (shortcutCost <= candidateCost) { candidateCost = shortcutCost; parentIndex = currentParent; }
+        }
+      }
+      if (anyAngleGenerations[index] === anyAngleGeneration && candidateCost >= anyAngleCosts[index]!) continue;
+      anyAngleGenerations[index] = anyAngleGeneration;
+      anyAngleCosts[index] = candidateCost;
+      anyAngleParents[index] = parentIndex;
+      open.push(index, candidateCost + euclideanTiles(x, y, goalX, goalY));
+    }
+  }
+  return [];
+}
+
+class IndexHeap {
+  private readonly indices: number[] = [];
+  private readonly priorities: number[] = [];
+  get size(): number { return this.indices.length; }
+  push(value: number, priority: number): void {
+    let index = this.indices.length;
+    this.indices.push(value); this.priorities.push(priority);
+    while (index > 0) {
+      const parent = Math.floor((index - 1) / 2);
+      if (this.priorities[parent]! <= priority) break;
+      this.indices[index] = this.indices[parent]!; this.priorities[index] = this.priorities[parent]!; index = parent;
+    }
+    this.indices[index] = value; this.priorities[index] = priority;
+  }
+  pop(): number | undefined {
+    const root = this.indices[0];
+    const lastValue = this.indices.pop(); const lastPriority = this.priorities.pop();
+    if (root === undefined || lastValue === undefined || lastPriority === undefined || this.indices.length === 0) return root;
+    let index = 0;
+    while (true) {
+      const left = index * 2 + 1; if (left >= this.indices.length) break;
+      const right = left + 1;
+      const smaller = right < this.indices.length && this.priorities[right]! < this.priorities[left]! ? right : left;
+      if (this.priorities[smaller]! >= lastPriority) break;
+      this.indices[index] = this.indices[smaller]!; this.priorities[index] = this.priorities[smaller]!; index = smaller;
+    }
+    this.indices[index] = lastValue; this.priorities[index] = lastPriority;
+    return root;
+  }
+}
+
+function reconstructAnyAngle(goalIndex: number, startIndex: number, query: NavigationQuery): Point[] {
+  const reversed: Point[] = [];
+  let cursor = goalIndex;
+  for (let guard = 0; cursor !== startIndex && guard < query.widthTiles * query.heightTiles; guard += 1) {
+    reversed.push(tilePoint(cursor % query.widthTiles, Math.floor(cursor / query.widthTiles), query.tileSize));
+    const parent = anyAngleParents[cursor]!;
+    if (parent === cursor) break;
+    cursor = parent;
+  }
+  return reversed.reverse();
+}
+
+function finalizeAnyAnglePath(start: Point, goal: Point, path: Point[], query: NavigationQuery): Point[] {
+  if (path.length === 0) return [];
+  let goalAnchor = -1;
+  for (let index = path.length - 1; index >= 0; index -= 1) {
+    if (query.canTraverse(path[index]!, goal)) { goalAnchor = index; break; }
+  }
+  if (goalAnchor >= 0) path.splice(goalAnchor + 1, path.length, { x: goal.x, y: goal.y });
+  else return [];
+  const sparse: Point[] = [];
+  let anchor = start;
+  let index = 0;
+  while (index < path.length) {
+    let farthest = index;
+    for (let probe = index + 1; probe < path.length; probe += 1) {
+      if (!query.canTraverse(anchor, path[probe]!)) break;
+      farthest = probe;
+    }
+    const point = path[farthest]!;
+    sparse.push(point); anchor = point; index = farthest + 1;
+  }
+  return sparse;
+}
+
+function tilePoint(tileX: number, tileY: number, tileSize: number): Point {
+  return { x: tileX * tileSize + tileSize / 2, y: tileY * tileSize + tileSize / 2 };
+}
+function euclideanTiles(x: number, y: number, goalX: number, goalY: number): number { return Math.hypot(goalX - x, goalY - y); }
+function inNavigationBounds(x: number, y: number, query: NavigationQuery): boolean { return x >= 0 && y >= 0 && x < query.widthTiles && y < query.heightTiles; }

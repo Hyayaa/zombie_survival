@@ -11,6 +11,7 @@ export class Zombie {
   mind: ZombieMind;
   path: Point[] = [];
   pathIndex = 0;
+  pathNavigationRevision = -1;
   nextThinkAt = 0;
   nextPathAt = 0;
   nextAttackAt = 0;
