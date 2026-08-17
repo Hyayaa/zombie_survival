@@ -1,0 +1,12 @@
+export type DamageImpactKind="projectile"|"melee"|"fire"|"other";
+export interface DamageImpactContext{kind:DamageImpactKind;damage:number;hitX:number;hitY:number;directionX:number;directionY:number;weaponId?:string;sequence:number;killed?:boolean}
+export interface BloodParticlePlan{x:number;y:number;velocityX:number;velocityY:number;lifetimeMs:number;size:number}
+export interface BloodEffectPlan{profile:"projectile"|"melee";particles:BloodParticlePlan[];decal:{x:number;y:number;radius:number}}
+export function createBloodEffectPlan(context:DamageImpactContext):BloodEffectPlan{
+  let dx=context.directionX,dy=context.directionY;const length=Math.hypot(dx,dy);if(length>0){dx/=length;dy/=length;}else{dx=1;dy=0;}
+  const projectile=context.kind==="projectile";const count=projectile?Math.min(10,4+Math.ceil(context.damage/18)):4+(context.killed?2:0);const maxLength=projectile?Math.min(44,Math.max(14,12+context.damage*.8)):12;const particles:BloodParticlePlan[]=[];
+  for(let index=0;index<count;index++){const randomA=random(context.sequence,index*3)-.5;const angle=Math.atan2(dy,dx)+randomA*(projectile?.5:2.2);const travel=(projectile?.45:.2)+random(context.sequence,index*3+1)*(projectile?.55:.8);const speed=maxLength*travel/(projectile?.32:.45);particles.push({x:context.hitX,y:context.hitY,velocityX:Math.cos(angle)*speed,velocityY:Math.sin(angle)*speed,lifetimeMs:(projectile?220:260)+random(context.sequence,index*3+2)*(projectile?220:180),size:index%4===0?2:1});}
+  const decalDistance=projectile?maxLength*(.55+random(context.sequence,91)*.35):random(context.sequence,91)*5;return{profile:projectile?"projectile":"melee",particles,decal:{x:context.hitX+dx*decalDistance+(random(context.sequence,92)-.5)*4,y:context.hitY+dy*decalDistance+(random(context.sequence,93)-.5)*4,radius:Math.min(6,2+context.damage/22+(context.killed?1:0))}};
+}
+export function aggregateProjectileDamage(contexts:readonly DamageImpactContext[]):DamageImpactContext|undefined{if(!contexts.length)return undefined;let damage=0,dx=0,dy=0,killed=false;for(const context of contexts){damage+=context.damage;dx+=context.directionX*context.damage;dy+=context.directionY*context.damage;killed ||= Boolean(context.killed);}return{...contexts[0]!,damage,directionX:dx,directionY:dy,killed};}
+function random(seed:number,salt:number):number{let value=(seed^Math.imul(salt+1,0x9e3779b1))>>>0;value^=value>>>16;value=Math.imul(value,0x7feb352d);value^=value>>>15;return(value>>>0)/0x1_0000_0000;}

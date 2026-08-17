@@ -7,6 +7,7 @@ export interface ItemDefinition {
   maxStack: number;
   iconColor: number;
   description: string;
+  devGrantAmount?: number;
 }
 
 const ITEMS: ItemDefinition[] = [
@@ -39,6 +40,10 @@ const ITEMS: ItemDefinition[] = [
 export const ITEM_DEFINITIONS: Readonly<Record<string, ItemDefinition>> = Object.freeze(
   Object.fromEntries(ITEMS.map((item) => [item.id, item])),
 );
+
+export function getItemDevGrantAmount(item: ItemDefinition): number {
+  return item.devGrantAmount ?? (item.category === "ammo" ? 20 : item.category === "material" ? 5 : 1);
+}
 
 export function getItemDefinition(id: string): ItemDefinition {
   const definition = ITEM_DEFINITIONS[id];

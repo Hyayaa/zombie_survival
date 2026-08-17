@@ -49,6 +49,8 @@ describe("WorldObjectRegistry and InteractionSystem", () => {
     expect([...registry.interactables()]).toEqual([]);
   });
 
+  it("keeps item drops in the registry without making them interaction candidates",()=>{const registry=new WorldObjectRegistry();const drop=object("drop","item-drop",5);registry.register(drop);expect([...registry.byKind("item-drop")]).toEqual([drop]);expect([...registry.interactables()]).toEqual([]);expect(new InteractionSystem(registry).refreshNow(context())).toBeUndefined();});
+
   it("selects exactly one target by priority, distance and stable id", () => {
     const registry = new WorldObjectRegistry();
     const fartherPriority = object("door", "door", 20, interaction(1));

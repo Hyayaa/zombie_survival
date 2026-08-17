@@ -68,9 +68,16 @@ class FakeRectangle {
   destroy(): void { this.destroyed = true; }
 }
 
+class FakeGraphics {
+  destroyed=false;
+  setDepth():this{return this;} fillStyle():this{return this;} fillCircle():this{return this;} fillRect():this{return this;} clear():this{return this;}
+  destroy():void{this.destroyed=true;}
+}
+
 describe("PixelEffectSystem pooling", () => {
   it("runs 100 attacks without creating more primitives and destroys every view", () => {
     const views: FakeRectangle[] = [];
+    const graphics:FakeGraphics[]=[];
     const scene = {
       add: {
         rectangle: () => {
@@ -78,10 +85,12 @@ describe("PixelEffectSystem pooling", () => {
           views.push(view);
           return view;
         },
+        graphics:()=>{const view=new FakeGraphics();graphics.push(view);return view;},
       },
     } as unknown as Phaser.Scene;
     const effects = new PixelEffectSystem(scene, () => true);
-    expect(views).toHaveLength(312);
+    expect(views).toHaveLength(408);
+    expect(graphics).toHaveLength(1);
     for (let attack = 0; attack < 100; attack += 1) {
       effects.playAttack({
         sequence: attack + 1,
@@ -97,11 +106,12 @@ describe("PixelEffectSystem pooling", () => {
       });
       effects.update(attack * 300 + 100, 0.016);
     }
-    expect(views).toHaveLength(312);
-    expect(effects.getStats().capacity).toBe(312);
+    expect(views).toHaveLength(408);
+    expect(effects.getStats().capacity).toBe(408);
     effects.clear();
     expect(effects.getStats()).toMatchObject({ particles: 0, swings: 0, muzzle: 0, tracers: 0 });
     effects.destroy();
     expect(views.every((view) => view.destroyed)).toBe(true);
+    expect(graphics.every((view)=>view.destroyed)).toBe(true);
   });
 });

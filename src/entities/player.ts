@@ -29,9 +29,9 @@ export class Player {
     this.view.setWeapon(this.equippedWeapon);
   }
 
-  unlockWeapon(weapon: WeaponId): void {
+  unlockWeapon(weapon: WeaponId, equip = true): void {
     this.unlockedWeapons.add(weapon);
-    this.equippedWeapon = weapon;
+    if (equip) this.equippedWeapon = weapon;
     if (isFirearmId(weapon) && this.magazines[weapon] === 0) {
       this.magazines[weapon] = weapon === "pistol" ? 4 : weapon === "smg" ? 12 : 3;
     }

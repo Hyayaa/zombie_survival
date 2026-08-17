@@ -4,11 +4,14 @@ import type { AttackEffectSink } from "./attack-effect-controller";
 import { PIXEL_EFFECT_PRIORITY, type AttackEffectEvent, type AttackEffectWeapon } from "./pixel-effect-definitions";
 import { effectRandom, effectSeed, getMuzzlePosition, getTracerSegment, getTracerSegmentCount, sampleSwingPixel } from "./pixel-effect-math";
 import { PixelSlotPool } from "./pixel-effect-pool";
+import { createBloodEffectPlan, type DamageImpactContext } from "./blood-effect-math";
+import { BloodDecalLayer } from "./blood-decal-layer";
 
 const PARTICLE_CAPACITY = 192;
 const SWING_CAPACITY = 64;
 const MUZZLE_CAPACITY = 24;
 const TRACER_CAPACITY = 32;
+export const BLOOD_PARTICLE_CAPACITY = 96;
 const KNIFE_COLORS = [0xe8e3cf, 0xbcc4bf, 0x6e7774] as const;
 const BAT_COLORS = [0xb5976d, 0x80664c, 0x54473c] as const;
 const BLOOD_COLORS = [0x7d342f, 0x612824, 0xa7473e] as const;
@@ -35,6 +38,7 @@ export interface PixelEffectStats {
   swings: number;
   muzzle: number;
   tracers: number;
+  blood: number;
   capacity: number;
 }
 
@@ -43,12 +47,15 @@ export class PixelEffectSystem implements AttackEffectSink {
   private readonly swings: RuntimePool;
   private readonly muzzle: RuntimePool;
   private readonly tracers: RuntimePool;
+  private readonly blood:RuntimePool;
+  private readonly bloodDecals:BloodDecalLayer;
 
   constructor(private readonly scene: Phaser.Scene, private readonly isVisible: (x: number, y: number) => boolean) {
     this.particles = this.createPool(PARTICLE_CAPACITY);
     this.swings = this.createPool(SWING_CAPACITY);
     this.muzzle = this.createPool(MUZZLE_CAPACITY);
     this.tracers = this.createPool(TRACER_CAPACITY);
+    this.blood=this.createPool(BLOOD_PARTICLE_CAPACITY);this.bloodDecals=new BloodDecalLayer(scene);
   }
 
   playAttack(event: AttackEffectEvent): void {
@@ -62,8 +69,7 @@ export class PixelEffectSystem implements AttackEffectSink {
     for (let index = 0; index < event.impacts.length; index += 1) {
       const impact = event.impacts[index];
       if (!impact || !this.isVisible(impact.x, impact.y)) continue;
-      if (impact.kind === "zombie") this.emitBloodImpact(impact.x, impact.y, event.angle, event.weapon, event.sequence, event.startedAt);
-      else this.emitWallImpact(impact.x, impact.y, event.angle, event.sequence, event.startedAt);
+      if (impact.kind === "wall") this.emitWallImpact(impact.x, impact.y, event.angle, event.sequence, event.startedAt);
     }
   }
 
@@ -82,6 +88,8 @@ export class PixelEffectSystem implements AttackEffectSink {
         now, now + lifetime, 1, true, PIXEL_EFFECT_PRIORITY.impact, DEPTH.effectWorld, false);
     }
   }
+
+  emitDirectionalBlood(context:DamageImpactContext,now:number):void{const plan=createBloodEffectPlan(context);this.bloodDecals.add(plan.decal.x,plan.decal.y,plan.decal.radius,now);if(!this.isVisible(context.hitX,context.hitY))return;for(let index=0;index<plan.particles.length;index++){const particle=plan.particles[index]!;this.spawn(this.blood,particle.x,particle.y,particle.velocityX,particle.velocityY,plan.profile==="projectile"?12:22,plan.profile==="projectile"?1.4:2.4,BLOOD_COLORS[index%BLOOD_COLORS.length]!,particle.size,particle.size,now,now+particle.lifetimeMs,1,true,PIXEL_EFFECT_PRIORITY.impact,DEPTH.effectWorld,false);}}
 
   emitWallImpact(x: number, y: number, shotAngle: number, sequence: number, now: number): void {
     if (!this.isVisible(x, y)) return;
@@ -129,6 +137,7 @@ export class PixelEffectSystem implements AttackEffectSink {
     this.updatePool(this.swings, now, deltaSeconds);
     this.updatePool(this.muzzle, now, deltaSeconds);
     this.updatePool(this.tracers, now, deltaSeconds);
+    this.updatePool(this.blood,now,deltaSeconds);
   }
 
   clear(): void {
@@ -136,6 +145,7 @@ export class PixelEffectSystem implements AttackEffectSink {
     this.clearPool(this.swings);
     this.clearPool(this.muzzle);
     this.clearPool(this.tracers);
+    this.clearPool(this.blood);
   }
 
   destroy(): void {
@@ -143,6 +153,7 @@ export class PixelEffectSystem implements AttackEffectSink {
     this.destroyPool(this.swings);
     this.destroyPool(this.muzzle);
     this.destroyPool(this.tracers);
+    this.destroyPool(this.blood);this.bloodDecals.destroy();
   }
 
   getStats(): PixelEffectStats {
@@ -151,7 +162,8 @@ export class PixelEffectSystem implements AttackEffectSink {
       swings: this.swings.slots.activeCount,
       muzzle: this.muzzle.slots.activeCount,
       tracers: this.tracers.slots.activeCount,
-      capacity: PARTICLE_CAPACITY + SWING_CAPACITY + MUZZLE_CAPACITY + TRACER_CAPACITY,
+      blood:this.blood.slots.activeCount,
+      capacity: PARTICLE_CAPACITY + SWING_CAPACITY + MUZZLE_CAPACITY + TRACER_CAPACITY+BLOOD_PARTICLE_CAPACITY,
     };
   }
 
