@@ -83,14 +83,22 @@ button:focus-visible {
   color: #eff3ef;
 }
 
-.hud__needs {
+.hud__bottom-right {
   position: absolute;
-  top: 43px;
-  left: 8px;
+  right: 12px;
+  bottom: 48px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  pointer-events: none;
+}
+
+.hud__needs {
   display: grid;
-  grid-template-columns: repeat(3, minmax(104px, 1fr));
-  gap: 4px 8px;
-  width: min(68%, 430px);
+  grid-template-columns: 1fr;
+  gap: 4px;
+  width: 190px;
   padding: 5px 7px;
 }
 
@@ -107,10 +115,18 @@ button:focus-visible {
 .hud-need--hunger i b { background: #b77b3d; }
 .hud-need--thirst i b { background: #4b8fb5; }
 .hud-need--stamina i b { background: #91aa4d; }
+.hud-need--health i b { background: #bd4f45; }
+.hud-need--infection i b { background: #75634a; }
 .hud-need.is-low { color: #e5b563; }
 .hud-need.is-empty { color: #ff6656; animation: need-alert 800ms steps(2) infinite; }
 
 @keyframes need-alert { 50% { opacity: .5; } }
+
+.hud__weapon { display:flex;align-items:center;gap:7px;width:190px;padding:5px 7px;box-sizing:border-box; }
+.hud__weapon > span:last-child { display:flex;min-width:0;flex-direction:column;gap:3px; }
+.hud__weapon strong { color:#e6d79d;white-space:nowrap; }
+.hud-weapon-icon { width:66px;height:66px; }
+.hud-weapon-icon .item-icon { width:64px;height:64px; }
 
 .day-announcement {
   position: absolute;
@@ -453,7 +469,11 @@ button:focus-visible {
   .inventory-grid { grid-template-columns: 1fr; }
   .inventory-slot small { display: none; }
   .hud__objective { top: 42px; max-width: 45%; }
-  .hud__needs { top: 48px; grid-template-columns: 1fr; width: min(42%, 180px); }
+  .hud__bottom-right { right:6px;bottom:42px;gap:3px; }
+  .hud__needs,.hud__weapon { width:170px;padding:3px 5px; }
+  .hud__needs { gap:2px; }
+  .hud-weapon-icon { width:50px;height:50px; }
+  .hud-weapon-icon .item-icon { width:48px;height:48px; }
   .minimap-panel__local { top: 72px; width: min(38cqh, 46cqw, 190px); }
   .compendium-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }

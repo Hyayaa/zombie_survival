@@ -1,5 +1,7 @@
 export type ItemCategory = "food" | "medical" | "material" | "ammo" | "tool" | "quest";
 
+export interface ConsumableEffect { hunger?: number; thirst?: number; health?: number; infection?: number; stamina?: number }
+
 export interface ItemDefinition {
   id: string;
   name: string;
@@ -8,14 +10,27 @@ export interface ItemDefinition {
   iconColor: number;
   description: string;
   devGrantAmount?: number;
+  consumableEffect?: ConsumableEffect;
 }
 
 const ITEMS: ItemDefinition[] = [
-  { id: "canned_food", name: "통조림", category: "food", maxStack: 5, iconColor: 0xb9a06d, description: "허기를 달래고 체력을 조금 회복한다." },
-  { id: "water", name: "물", category: "food", maxStack: 5, iconColor: 0x77a9b4, description: "마시거나 빈 병을 화염병 재료로 쓴다." },
+  { id: "canned_food", name: "통조림", category: "food", maxStack: 5, iconColor: 0xb9a06d, description: "허기를 달래고 체력을 조금 회복한다.", consumableEffect: { hunger: 28, health: 10 } },
+  { id: "water", name: "물", category: "food", maxStack: 5, iconColor: 0x77a9b4, description: "마시거나 빈 병을 화염병 재료로 쓴다.", consumableEffect: { thirst: 35, health: 5 } },
+  { id: "cabbage", name: "양배추", category: "food", maxStack: 6, iconColor: 0x75a65b, description: "수분이 남은 보존 채소.", consumableEffect: { hunger: 16, thirst: 5 } },
+  { id: "carrot", name: "당근", category: "food", maxStack: 8, iconColor: 0xd87935, description: "작지만 든든한 뿌리채소.", consumableEffect: { hunger: 12, thirst: 3 } },
+  { id: "potato", name: "감자", category: "food", maxStack: 8, iconColor: 0x9a7548, description: "오래 보관된 감자.", consumableEffect: { hunger: 20 } },
+  { id: "apple", name: "사과", category: "food", maxStack: 6, iconColor: 0xb94b42, description: "허기와 갈증을 함께 달랜다.", consumableEffect: { hunger: 14, thirst: 10 } },
+  { id: "beef", name: "소고기", category: "food", maxStack: 4, iconColor: 0xa54842, description: "바로 먹을 수 있게 포장된 보존육.", consumableEffect: { hunger: 34, health: 3 } },
+  { id: "pork", name: "돼지고기", category: "food", maxStack: 4, iconColor: 0xd17b78, description: "밀봉 포장된 보존육.", consumableEffect: { hunger: 30, health: 2 } },
   { id: "cloth", name: "천", category: "material", maxStack: 12, iconColor: 0xb4aaa0, description: "붕대와 광원 제작 재료." },
   { id: "wood", name: "목재", category: "material", maxStack: 12, iconColor: 0x9b744b, description: "횃불과 바리케이드 제작 재료." },
   { id: "metal", name: "금속", category: "material", maxStack: 12, iconColor: 0x899397, description: "탄약과 바리케이드 제작 재료." },
+  { id: "screws", name: "나사", category: "material", maxStack: 40, iconColor: 0xaab3b2, description: "기계 구조물을 조립하는 작은 체결 부품." },
+  { id: "steel_plate", name: "철판", category: "material", maxStack: 16, iconColor: 0x758184, description: "발전기와 터렛의 골격 재료." },
+  { id: "solar_panel", name: "태양광 패널", category: "material", maxStack: 6, iconColor: 0x416e91, description: "낮의 빛을 전력으로 바꾸는 패널." },
+  { id: "duct_tape", name: "테이프", category: "material", maxStack: 12, iconColor: 0x8b8a79, description: "배선과 외장을 임시 고정한다." },
+  { id: "circuit_board", name: "회로 기판", category: "material", maxStack: 8, iconColor: 0x4f8b65, description: "전력 장치의 제어 회로." },
+  { id: "electric_motor", name: "전동 모터", category: "material", maxStack: 6, iconColor: 0x8a735d, description: "터렛과 발전기에 쓰는 구동부." },
   { id: "fuel", name: "연료", category: "quest", maxStack: 6, iconColor: 0xd19b4a, description: "광원·화염 제작과 탈출 차량에 필요하다." },
   { id: "medicine", name: "약품", category: "medical", maxStack: 4, iconColor: 0x9ecf91, description: "감염도를 24 낮춘다." },
   { id: "ammo", name: "구형 권총탄", category: "ammo", maxStack: 36, iconColor: 0xd6c477, description: "이전 저장과 호환되는 권총탄." },

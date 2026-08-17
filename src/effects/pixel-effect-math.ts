@@ -1,5 +1,14 @@
 import type { AttackEffectWeapon } from "./pixel-effect-definitions";
 
+export interface MuzzleFlashProfile { length: number; branches: number; lifetimeMs: number; muzzleOffset: number }
+export const MUZZLE_FLASH_PROFILES: Readonly<Record<Exclude<AttackEffectWeapon, "knife" | "bat">, MuzzleFlashProfile>> = {
+  pistol: { length: 12, branches: 4, lifetimeMs: 60, muzzleOffset: 12 },
+  smg: { length: 9, branches: 3, lifetimeMs: 45, muzzleOffset: 13 },
+  shotgun: { length: 21, branches: 7, lifetimeMs: 82, muzzleOffset: 15 },
+  hunting_rifle: { length: 25, branches: 6, lifetimeMs: 76, muzzleOffset: 18 },
+  turret: { length: 10, branches: 4, lifetimeMs: 46, muzzleOffset: 16 },
+};
+
 export interface PixelPoint {
   x: number;
   y: number;

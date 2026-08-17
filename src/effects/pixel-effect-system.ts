@@ -2,15 +2,17 @@ import type Phaser from "phaser";
 import { DEPTH } from "../config/game-config";
 import type { AttackEffectSink } from "./attack-effect-controller";
 import { PIXEL_EFFECT_PRIORITY, type AttackEffectEvent } from "./pixel-effect-definitions";
-import { effectRandom, effectSeed, getMuzzlePosition, getTracerSegment, getTracerSegmentCount, sampleSwingPixel } from "./pixel-effect-math";
+import { effectRandom, effectSeed, getMuzzlePosition, getTracerSegment, getTracerSegmentCount, MUZZLE_FLASH_PROFILES, sampleSwingPixel } from "./pixel-effect-math";
 import { PixelSlotPool } from "./pixel-effect-pool";
 import { createBloodEffectPlan, type DamageImpactContext } from "./blood-effect-math";
 import { BloodDecalLayer } from "./blood-decal-layer";
+import { createFootstepDustPlan, type FootstepDustTerrain } from "./footstep-dust";
 
 const PARTICLE_CAPACITY = 192;
 const SWING_CAPACITY = 64;
 const MUZZLE_CAPACITY = 24;
 const TRACER_CAPACITY = 32;
+export const FOOTSTEP_DUST_CAPACITY = 96;
 export const BLOOD_PARTICLE_CAPACITY = 224;
 const KNIFE_COLORS = [0xe8e3cf, 0xbcc4bf, 0x6e7774] as const;
 const BAT_COLORS = [0xb5976d, 0x80664c, 0x54473c] as const;
@@ -49,6 +51,7 @@ export class PixelEffectSystem implements AttackEffectSink {
   private readonly swings: RuntimePool;
   private readonly muzzle: RuntimePool;
   private readonly tracers: RuntimePool;
+  private readonly footstepDust: RuntimePool;
   private readonly blood:RuntimeBloodPool;
   private readonly bloodDecals:BloodDecalLayer;
 
@@ -57,6 +60,7 @@ export class PixelEffectSystem implements AttackEffectSink {
     this.swings = this.createPool(SWING_CAPACITY);
     this.muzzle = this.createPool(MUZZLE_CAPACITY);
     this.tracers = this.createPool(TRACER_CAPACITY);
+    this.footstepDust = this.createPool(FOOTSTEP_DUST_CAPACITY);
     this.blood=this.createBloodPool();this.bloodDecals=new BloodDecalLayer(scene);
   }
 
@@ -66,7 +70,7 @@ export class PixelEffectSystem implements AttackEffectSink {
     if (event.weapon === "knife" || event.weapon === "bat") {
       if (showCore) this.emitSwing(event, seed);
     } else if (showCore) {
-      this.emitPistol(event, seed);
+      this.emitFirearm(event, seed);
     }
     for (let index = 0; index < event.impacts.length; index += 1) {
       const impact = event.impacts[index];
@@ -75,7 +79,7 @@ export class PixelEffectSystem implements AttackEffectSink {
     }
   }
 
-  emitDirectionalBlood(context:DamageImpactContext,now:number):void{const plan=createBloodEffectPlan(context);this.bloodDecals.add(plan.decal,now);if(!this.isVisible(context.hitX,context.hitY))return;for(let index=0;index<plan.particles.length;index++){const particle=plan.particles[index]!;this.spawnBlood(particle.x,particle.y,particle.velocityX,particle.velocityY,particle.role==="droplet"?25:particle.role==="impact"?16:10,particle.role==="streak"?1.15:2.1,BLOOD_COLORS[index%BLOOD_COLORS.length]!,particle.size,particle.tailLength,now,now+particle.lifetimeMs);}}
+  emitDirectionalBlood(context:DamageImpactContext,now:number):void{const plan=createBloodEffectPlan(context);this.bloodDecals.add(plan.decal,now);if(!this.isVisible(context.hitX,context.hitY))return;for(let index=0;index<plan.particles.length;index++){const particle=plan.particles[index]!;const color=particle.role==="impact"&&index<2?0xce5a4e:BLOOD_COLORS[index%BLOOD_COLORS.length]!;this.spawnBlood(particle.x,particle.y,particle.velocityX,particle.velocityY,particle.role==="droplet"?25:particle.role==="impact"?16:10,particle.role==="streak"?1.15:2.1,color,particle.size,particle.tailLength,now,now+particle.lifetimeMs);}}
 
   emitWallImpact(x: number, y: number, shotAngle: number, sequence: number, now: number): void {
     if (!this.isVisible(x, y)) return;
@@ -118,11 +122,18 @@ export class PixelEffectSystem implements AttackEffectSink {
     }
   }
 
+  emitFootstepDust(x: number, y: number, movementAngle: number, running: boolean, terrain: FootstepDustTerrain, sequence: number, now: number): void {
+    if (!this.isVisible(x, y)) return;
+    const plans = createFootstepDustPlan(sequence, movementAngle, running, terrain);
+    for (const plan of plans) this.spawn(this.footstepDust, x, y + 4, plan.velocityX, plan.velocityY, -2, 2.6, plan.color, plan.size, Math.min(2, plan.size), now, now + plan.lifetimeMs, .78, true, PIXEL_EFFECT_PRIORITY.dust, DEPTH.actor - 1, false);
+  }
+
   update(now: number, deltaSeconds: number): void {
     this.updatePool(this.particles, now, deltaSeconds);
     this.updatePool(this.swings, now, deltaSeconds);
     this.updatePool(this.muzzle, now, deltaSeconds);
     this.updatePool(this.tracers, now, deltaSeconds);
+    this.updatePool(this.footstepDust, now, deltaSeconds);
     this.updateBlood(now,deltaSeconds);
   }
 
@@ -131,6 +142,7 @@ export class PixelEffectSystem implements AttackEffectSink {
     this.clearPool(this.swings);
     this.clearPool(this.muzzle);
     this.clearPool(this.tracers);
+    this.clearPool(this.footstepDust);
     this.blood.slots.clear();this.blood.graphics.clear();
   }
 
@@ -139,6 +151,7 @@ export class PixelEffectSystem implements AttackEffectSink {
     this.destroyPool(this.swings);
     this.destroyPool(this.muzzle);
     this.destroyPool(this.tracers);
+    this.destroyPool(this.footstepDust);
     this.blood.slots.destroy();this.blood.graphics.destroy();this.bloodDecals.destroy();
   }
 
@@ -149,7 +162,7 @@ export class PixelEffectSystem implements AttackEffectSink {
       muzzle: this.muzzle.slots.activeCount,
       tracers: this.tracers.slots.activeCount,
       blood:this.blood.slots.activeCount,
-      capacity: PARTICLE_CAPACITY + SWING_CAPACITY + MUZZLE_CAPACITY + TRACER_CAPACITY+BLOOD_PARTICLE_CAPACITY,
+      capacity: PARTICLE_CAPACITY + SWING_CAPACITY + MUZZLE_CAPACITY + TRACER_CAPACITY + FOOTSTEP_DUST_CAPACITY+BLOOD_PARTICLE_CAPACITY,
     };
   }
 
@@ -171,29 +184,31 @@ export class PixelEffectSystem implements AttackEffectSink {
     if (weapon === "bat") this.emitDust(event.originX, event.originY + 5, event.angle + Math.PI, seed, 4, event.startedAt + 30);
   }
 
-  private emitPistol(event: AttackEffectEvent, seed: number): void {
-    const muzzle = getMuzzlePosition(event.originX, event.originY, event.angle, 12);
+  private emitFirearm(event: AttackEffectEvent, seed: number): void {
+    const profile = MUZZLE_FLASH_PROFILES[event.weapon as keyof typeof MUZZLE_FLASH_PROFILES]!;
+    const muzzle = getMuzzlePosition(event.originX, event.originY, event.angle, profile.muzzleOffset);
     const directionX = Math.cos(event.angle);
     const directionY = Math.sin(event.angle);
     const perpendicularX = -directionY;
     const perpendicularY = directionX;
     this.spawn(this.muzzle, muzzle.x, muzzle.y, 0, 0, 0, 0, 0xfff4c2, 2, 2,
-      event.startedAt, event.startedAt + 54, 1, false, PIXEL_EFFECT_PRIORITY.muzzle, DEPTH.effectEmissive, true);
-    for (let index = 1; index <= 4; index += 1) {
-      const phase = index >= 3 ? 16 : 0;
-      const distance = 1 + index * 1.45;
-      this.spawn(this.muzzle, muzzle.x + directionX * distance, muzzle.y + directionY * distance, 0, 0, 0, 0,
-        index === 1 ? 0xfff4c2 : index < 4 ? 0xffcf58 : 0xe77a32, index < 3 ? 2 : 1, index % 2 === 0 ? 2 : 1,
-        event.startedAt + phase, event.startedAt + phase + 38, 1, false, PIXEL_EFFECT_PRIORITY.muzzle, DEPTH.effectEmissive, true);
+      event.startedAt, event.startedAt + profile.lifetimeMs, 1, false, PIXEL_EFFECT_PRIORITY.muzzle, DEPTH.effectEmissive, true);
+    for (let index = 1; index <= profile.branches; index += 1) {
+      const phase = index > profile.branches / 2 ? 12 : 0;
+      const distance = 2 + profile.length * (index / profile.branches) * (.72 + effectRandom(seed, index) * .28);
+      const side = (effectRandom(seed, 30 + index) - .5) * Math.min(6, profile.length * .28);
+      this.spawn(this.muzzle, muzzle.x + directionX * distance + perpendicularX * side, muzzle.y + directionY * distance + perpendicularY * side, 0, 0, 0, 0,
+        index === 1 ? 0xfff4c2 : index < profile.branches - 1 ? 0xffcf58 : 0xe77a32, index < 3 ? 2 : 1, index % 3 === 0 ? 2 : 1,
+        event.startedAt + phase, event.startedAt + profile.lifetimeMs, 1, false, PIXEL_EFFECT_PRIORITY.muzzle, DEPTH.effectEmissive, true);
     }
-    for (let sideIndex = 0; sideIndex < 2; sideIndex += 1) {
+    for (let sideIndex = 0; sideIndex < Math.min(2, profile.branches - 1); sideIndex += 1) {
       const side = sideIndex === 0 ? -1 : 1;
       for (let index = 1; index <= 2; index += 1) {
         const forward = 1 + index * 1.2;
         const sideways = side * (1 + index);
         this.spawn(this.muzzle, muzzle.x + directionX * forward + perpendicularX * sideways, muzzle.y + directionY * forward + perpendicularY * sideways,
           0, 0, 0, 0, index === 1 ? 0xffcf58 : 0xa84524, index === 1 ? 2 : 1, 1,
-          event.startedAt + (index - 1) * 14, event.startedAt + 42 + index * 6, 1, false,
+          event.startedAt + (index - 1) * 10, event.startedAt + profile.lifetimeMs, 1, false,
           PIXEL_EFFECT_PRIORITY.muzzle, DEPTH.effectEmissive, true);
       }
     }

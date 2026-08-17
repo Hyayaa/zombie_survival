@@ -17,10 +17,10 @@ export const RECIPE_DEFINITIONS: readonly RecipeDefinition[] = [
   { id: "rifle_ammo", name: "소총탄 5발", resultItemId: "rifle_ammo", resultQuantity: 5, ingredients: { metal: 2, fuel: 1 }, craftTimeMs: 3_000, noiseIntensity: 24 },
   { id: "barricade", name: "간이 바리케이드", resultItemId: "barricade", resultQuantity: 1, ingredients: { wood: 3, metal: 1 }, craftTimeMs: 3_000, noiseIntensity: 24 },
   { id: "molotov", name: "화염병", resultItemId: "molotov", resultQuantity: 1, ingredients: { water: 1, cloth: 1, fuel: 2 }, craftTimeMs: 2_000, noiseIntensity: 15 },
-  { id: "turret_kit", name: "터렛 키트", resultItemId: "turret_kit", resultQuantity: 1, ingredients: { metal: 5, scrap_cache: 2 }, craftTimeMs: 5_000, noiseIntensity: 34 },
-  { id: "solar_generator_kit", name: "태양광 발전기 키트", resultItemId: "solar_generator_kit", resultQuantity: 1, ingredients: { metal: 4, scrap_cache: 2 }, craftTimeMs: 5_500, noiseIntensity: 30 },
-  { id: "fuel_generator_kit", name: "연료 발전기 키트", resultItemId: "fuel_generator_kit", resultQuantity: 1, ingredients: { metal: 5, wood: 2, scrap_cache: 2 }, craftTimeMs: 6_000, noiseIntensity: 38 },
-  { id: "battery_bank_kit", name: "축전지 키트", resultItemId: "battery_bank_kit", resultQuantity: 1, ingredients: { metal: 4, scrap_cache: 2 }, craftTimeMs: 5_000, noiseIntensity: 28 },
+  { id: "turret_kit", name: "터렛 키트", resultItemId: "turret_kit", resultQuantity: 1, ingredients: { steel_plate: 2, screws: 6, circuit_board: 1, electric_motor: 1, duct_tape: 1 }, craftTimeMs: 5_000, noiseIntensity: 34 },
+  { id: "solar_generator_kit", name: "태양광 발전기 키트", resultItemId: "solar_generator_kit", resultQuantity: 1, ingredients: { solar_panel: 2, steel_plate: 2, screws: 4, duct_tape: 1 }, craftTimeMs: 5_500, noiseIntensity: 30 },
+  { id: "fuel_generator_kit", name: "연료 발전기 키트", resultItemId: "fuel_generator_kit", resultQuantity: 1, ingredients: { steel_plate: 3, screws: 6, electric_motor: 1, duct_tape: 1 }, craftTimeMs: 6_000, noiseIntensity: 38 },
+  { id: "battery_bank_kit", name: "축전지 키트", resultItemId: "battery_bank_kit", resultQuantity: 1, ingredients: { steel_plate: 2, screws: 4, circuit_board: 1, duct_tape: 1 }, craftTimeMs: 5_000, noiseIntensity: 28 },
   { id: "generator_fuel", name: "발전기 연료", resultItemId: "generator_fuel", resultQuantity: 1, ingredients: { scrap_cache: 1, cloth: 1 }, craftTimeMs: 1_600, noiseIntensity: 10 },
 ];
 

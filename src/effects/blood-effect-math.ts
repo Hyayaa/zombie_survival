@@ -17,7 +17,7 @@ export function createBloodEffectPlan(context:DamageImpactContext):BloodEffectPl
   const primaryLength=clamp(tuning.minimum+context.damage*tuning.damageScale,tuning.minimum,tuning.maximum);
   for(let index=0;index<tuning.impactCount;index++){
     const angle=baseAngle+(random(seed,index*5)-.5)*2.5;const travel=2+random(seed,index*5+1)*4;
-    particles.push(particle(context,angle,travel,105+random(seed,index*5+2)*80,index%3===0?2:1,1+index%3,"impact"));
+    particles.push(particle(context,angle,travel,50+random(seed,index*5+2)*40,index%3===0?2:1,1+index%3,"impact"));
   }
   const streakCount=tuning.streakCount+damageBonus;
   for(let index=0;index<streakCount;index++){
@@ -25,7 +25,7 @@ export function createBloodEffectPlan(context:DamageImpactContext):BloodEffectPl
     const travel=primaryLength*(.52+random(seed,71+index*3)*.48);const lifetime=190+random(seed,72+index*3)*180;
     particles.push(particle(context,angle,travel,lifetime,index%5===0?2:1,Math.max(3,Math.round(travel/5)),"streak"));
   }
-  const dropletCount=Math.min(12,tuning.dropletCount+damageBonus+(context.killed?2:0));
+  const dropletCount=Math.min(18,tuning.dropletCount+damageBonus+(context.killed?2:0));
   for(let index=0;index<dropletCount;index++){
     const angle=baseAngle+(random(seed,130+index*3)-.5)*tuning.dropletSpread;const travel=3+random(seed,131+index*3)*Math.min(17,primaryLength*.5);const lifetime=230+random(seed,132+index*3)*240;
     particles.push(particle(context,angle,travel,lifetime,index%4===0?2:1,index%3===0?2:1,"droplet"));
@@ -57,10 +57,10 @@ function particle(context:DamageImpactContext,angle:number,travelDistance:number
 }
 
 function getProjectileTuning(weaponId?:string):ProjectileTuning{
-  if(weaponId==="smg")return{profile:"smg",impactCount:3,streakCount:3,dropletCount:3,spread:.72,dropletSpread:1.9,minimum:8,maximum:22,damageScale:.42};
-  if(weaponId==="shotgun")return{profile:"shotgun",impactCount:5,streakCount:7,dropletCount:9,spread:1.18,dropletSpread:2.35,minimum:16,maximum:38,damageScale:.48};
-  if(weaponId==="hunting_rifle")return{profile:"rifle",impactCount:4,streakCount:6,dropletCount:5,spread:.45,dropletSpread:1.55,minimum:20,maximum:44,damageScale:.55};
-  if(weaponId==="pistol")return{profile:"pistol",impactCount:4,streakCount:5,dropletCount:5,spread:.82,dropletSpread:1.95,minimum:12,maximum:34,damageScale:.5};
+  if(weaponId==="smg")return{profile:"smg",impactCount:4,streakCount:4,dropletCount:5,spread:.72,dropletSpread:1.9,minimum:12,maximum:26,damageScale:.42};
+  if(weaponId==="shotgun")return{profile:"shotgun",impactCount:7,streakCount:9,dropletCount:14,spread:1.3,dropletSpread:2.55,minimum:18,maximum:42,damageScale:.48};
+  if(weaponId==="hunting_rifle")return{profile:"rifle",impactCount:6,streakCount:7,dropletCount:10,spread:.42,dropletSpread:1.55,minimum:26,maximum:54,damageScale:.55};
+  if(weaponId==="pistol")return{profile:"pistol",impactCount:6,streakCount:6,dropletCount:9,spread:.88,dropletSpread:2.1,minimum:16,maximum:36,damageScale:.5};
   return{profile:"projectile",impactCount:4,streakCount:5,dropletCount:5,spread:.9,dropletSpread:2,minimum:14,maximum:44,damageScale:.5};
 }
 

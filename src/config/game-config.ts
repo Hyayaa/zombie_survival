@@ -29,7 +29,7 @@ export const LOCAL_MINIMAP_ZOOM_LEVELS = [16, 24, 32, 48, 64] as const;
 export const MAX_PATHFINDING_PER_FRAME = 4;
 
 export const VISION = {
-  proximityRadius: 36,
+  proximityRadius: 72,
   dayConeRadius: 420,
   dayConeAngle: 2.20,
   nightBareConeRadius: 78,
@@ -39,7 +39,7 @@ export const VISION = {
   torchRadius: 170,
   fireRadius: 76,
   fireIntensity: 0.9,
-  companionOmniRadius: 96,
+  companionOmniRadius: 192,
 } as const;
 
 export const COMPANION_MOVEMENT = {

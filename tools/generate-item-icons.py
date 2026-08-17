@@ -45,6 +45,18 @@ def draw_icon(item_id):
         r(d, (9, 5, 23, 27), METAL); r(d, (8, 5, 24, 8), METAL_LIGHT); r(d, (8, 24, 24, 27), SHADOW); r(d, (10, 11, 22, 21), "#b48b55"); d.rectangle((11, 12, 13, 20), fill="#dbc27a")
     elif item_id == "water":
         p(d, [(12, 4), (19, 4), (19, 8), (22, 12), (21, 27), (10, 27), (9, 12), (12, 8)], BLUE); r(d, (12, 3, 19, 7), METAL_LIGHT); d.polygon([(11, 14), (20, 12), (20, 24), (11, 24)], fill=BLUE_LIGHT); d.rectangle((12, 10, 14, 13), fill="#b9d7d8")
+    elif item_id == "cabbage":
+        p(d, [(5, 17), (8, 9), (15, 5), (22, 8), (27, 15), (24, 24), (16, 28), (8, 24)], GREEN); p(d, [(9, 17), (12, 9), (17, 7), (22, 13), (21, 22), (15, 26)], GREEN_LIGHT); l(d, [(16, 9), (15, 25)], "#d0d99a", 1); l(d, [(8, 16), (15, 20), (23, 14)], "#4c6547", 1)
+    elif item_id == "carrot":
+        p(d, [(12, 9), (24, 11), (16, 28), (10, 15)], "#d96f2f"); l(d, [(13, 8), (9, 3)], GREEN_LIGHT, 2); l(d, [(17, 8), (18, 2)], GREEN, 2); l(d, [(20, 9), (25, 4)], GREEN_LIGHT, 2); d.rectangle((13, 14, 18, 15), fill="#f39a43"); d.rectangle((13, 20, 16, 21), fill="#9f4828")
+    elif item_id == "potato":
+        p(d, [(6, 13), (11, 7), (21, 6), (27, 12), (25, 22), (18, 27), (8, 24), (4, 19)], "#9b7547"); d.rectangle((10, 12, 12, 14), fill="#5d442e"); d.rectangle((20, 10, 22, 12), fill="#c69a58"); d.rectangle((17, 20, 19, 22), fill="#60472f")
+    elif item_id == "apple":
+        p(d, [(8, 11), (14, 8), (18, 10), (22, 8), (27, 13), (24, 24), (17, 28), (9, 24), (5, 16)], RED); l(d, [(16, 10), (18, 3)], WOOD, 2); p(d, [(18, 6), (24, 4), (23, 9), (18, 10)], GREEN_LIGHT); d.rectangle((9, 13, 12, 17), fill=RED_LIGHT)
+    elif item_id == "beef":
+        p(d, [(5, 12), (11, 6), (23, 7), (28, 14), (24, 23), (14, 27), (6, 22)], "#9e3f3b"); p(d, [(9, 13), (14, 9), (21, 10), (24, 15), (20, 21), (13, 22), (9, 19)], RED_LIGHT); p(d, [(13, 14), (17, 12), (21, 15), (19, 19), (14, 20), (11, 17)], LIGHT)
+    elif item_id == "pork":
+        p(d, [(5, 15), (9, 8), (19, 5), (27, 11), (26, 21), (18, 27), (8, 24)], "#d17b78"); p(d, [(9, 14), (13, 9), (20, 9), (23, 14), (21, 21), (14, 23), (9, 20)], "#efa6a0"); d.rectangle((8, 10, 22, 11), fill=LIGHT); d.rectangle((20, 12, 23, 19), fill="#f2c7b3")
     elif item_id == "cloth":
         p(d, [(6, 10), (20, 6), (26, 12), (22, 25), (9, 27), (5, 20)], "#aaa39a"); l(d, [(8, 13), (22, 9)], LIGHT, 1); l(d, [(8, 20), (22, 17)], "#77746f", 1); l(d, [(12, 25), (10, 12)], "#d0c8bb", 1)
     elif item_id == "wood":
@@ -52,6 +64,18 @@ def draw_icon(item_id):
         l(d, [(8, 21), (19, 6)], WOOD_LIGHT, 1); l(d, [(17, 24), (27, 9)], "#69482f", 1)
     elif item_id == "metal":
         p(d, [(5, 12), (20, 5), (27, 11), (13, 18)], METAL); p(d, [(7, 19), (22, 12), (27, 18), (12, 26)], SHADOW); d.rectangle((10, 12, 11, 13), fill=METAL_LIGHT); d.rectangle((21, 9, 22, 10), fill=METAL_LIGHT); d.rectangle((11, 21, 12, 22), fill=METAL_LIGHT)
+    elif item_id == "screws":
+        for x, y in ((7, 8), (14, 5), (20, 10)): l(d, [(x, y), (x + 7, y + 15)], METAL_LIGHT, 2); r(d, (x - 2, y - 2, x + 4, y + 3), METAL); d.line((x - 1, y, x + 3, y), fill=SHADOW); d.line((x + 4, y + 9, x + 9, y + 7), fill=OUTLINE)
+    elif item_id == "steel_plate":
+        p(d, [(5, 12), (22, 7), (28, 12), (11, 18)], METAL); p(d, [(6, 19), (23, 14), (28, 19), (11, 26)], SHADOW); d.rectangle((8, 12, 10, 14), fill=METAL_LIGHT); d.rectangle((23, 10, 25, 12), fill=METAL_LIGHT); d.rectangle((11, 21, 13, 23), fill="#aab5b5")
+    elif item_id == "solar_panel":
+        p(d, [(4, 9), (24, 5), (29, 21), (8, 26)], "#284f70"); l(d, [(10, 8), (14, 24)], BLUE_LIGHT, 1); l(d, [(17, 6), (21, 22)], BLUE_LIGHT, 1); l(d, [(6, 15), (27, 11)], BLUE_LIGHT, 1); l(d, [(8, 21), (29, 17)], BLUE_LIGHT, 1); l(d, [(17, 25), (18, 29)], METAL, 2)
+    elif item_id == "duct_tape":
+        d.ellipse((5, 6, 27, 27), fill=SHADOW, outline=OUTLINE, width=2); d.ellipse((10, 10, 22, 22), fill="#171b1a", outline=METAL_LIGHT); p(d, [(18, 20), (29, 17), (28, 23), (20, 26)], METAL); d.rectangle((8, 8, 12, 11), fill=METAL_LIGHT)
+    elif item_id == "circuit_board":
+        r(d, (5, 6, 27, 27), "#3f7656"); r(d, (12, 11, 21, 20), SHADOW); r(d, (7, 9, 10, 13), GOLD); r(d, (22, 20, 25, 24), GOLD); l(d, [(7, 18), (12, 18)], "#d4b258", 1); l(d, [(20, 9), (24, 9), (24, 16)], "#d4b258", 1); d.rectangle((7, 25, 25, 27), fill=METAL_LIGHT)
+    elif item_id == "electric_motor":
+        p(d, [(7, 10), (12, 6), (23, 8), (26, 13), (24, 24), (18, 27), (8, 24), (5, 18)], METAL); r(d, (9, 11, 22, 23), SHADOW); l(d, [(23, 16), (30, 16)], METAL_LIGHT, 3); d.rectangle((11, 13, 13, 21), fill="#b96f42"); d.rectangle((15, 11, 17, 23), fill="#d39355"); d.rectangle((19, 13, 21, 21), fill="#8d552f")
     elif item_id == "fuel":
         p(d, [(8, 8), (12, 5), (23, 5), (26, 9), (25, 27), (7, 27)], GOLD); r(d, (12, 4, 20, 8), SHADOW); l(d, [(12, 12), (21, 22)], "#d1a75a", 2); l(d, [(21, 12), (12, 22)], "#7f5b2e", 2)
     elif item_id == "medicine":
@@ -108,7 +132,8 @@ def draw_icon(item_id):
 
 
 ITEM_IDS = (
-    "canned_food", "water", "cloth", "wood", "metal", "fuel", "medicine", "ammo",
+    "canned_food", "water", "cabbage", "carrot", "potato", "apple", "beef", "pork",
+    "cloth", "wood", "metal", "screws", "steel_plate", "solar_panel", "duct_tape", "circuit_board", "electric_motor", "fuel", "medicine", "ammo",
     "pistol_ammo", "smg_ammo", "shotgun_shell", "rifle_ammo", "battery", "engine_part",
     "bandage", "torch", "barricade", "turret_kit", "solar_generator_kit",
     "fuel_generator_kit", "battery_bank_kit", "generator_fuel", "molotov", "scrap_cache",

@@ -393,10 +393,10 @@ function rasterizeWalkway(terrain: Uint8Array, occupied: Uint8Array, width: numb
 function createContainers(buildings: readonly BuildingDefinition[], width: number, battery: BuildingDefinition, fuel: BuildingDefinition, engine: BuildingDefinition, mapSeed: number): ContainerDefinition[] {
   const containers: ContainerDefinition[] = [];
   const lootSets: LootStack[][] = [
-    [{ itemId: "canned_food", quantity: 1 }, { itemId: "cloth", quantity: 1 }],
-    [{ itemId: "water", quantity: 1 }, { itemId: "medicine", quantity: 1 }],
-    [{ itemId: "wood", quantity: 2 }, { itemId: "metal", quantity: 1 }],
-    [{ itemId: "pistol_ammo", quantity: 4 }, { itemId: "cloth", quantity: 1 }],
+    [{ itemId: "cabbage", quantity: 1 }, { itemId: "carrot", quantity: 2 }, { itemId: "cloth", quantity: 1 }],
+    [{ itemId: "apple", quantity: 2 }, { itemId: "water", quantity: 1 }, { itemId: "medicine", quantity: 1 }],
+    [{ itemId: "potato", quantity: 2 }, { itemId: "beef", quantity: 1 }, { itemId: "wood", quantity: 2 }],
+    [{ itemId: "pork", quantity: 1 }, { itemId: "canned_food", quantity: 1 }, { itemId: "pistol_ammo", quantity: 4 }],
   ];
   for (let buildingIndex = 0; buildingIndex < buildings.length; buildingIndex += 1) {
     const building = buildings[buildingIndex]!;
@@ -420,6 +420,18 @@ function createContainers(buildings: readonly BuildingDefinition[], width: numbe
   ];
   const candidates = containers.filter((container) => !container.part);
   const start = (mapSeed >>> 0) % candidates.length;
+  const coreSupplies: LootStack[][] = [
+    [{ itemId: "screws", quantity: 8 }, { itemId: "steel_plate", quantity: 3 }],
+    [{ itemId: "screws", quantity: 6 }, { itemId: "duct_tape", quantity: 2 }],
+    [{ itemId: "solar_panel", quantity: 2 }, { itemId: "circuit_board", quantity: 1 }],
+    [{ itemId: "steel_plate", quantity: 3 }, { itemId: "electric_motor", quantity: 1 }],
+    [{ itemId: "screws", quantity: 6 }, { itemId: "steel_plate", quantity: 3 }],
+    [{ itemId: "duct_tape", quantity: 2 }, { itemId: "circuit_board", quantity: 1 }, { itemId: "electric_motor", quantity: 1 }],
+  ];
+  coreSupplies.forEach((supply, index) => {
+    const container = candidates[(start + 5 + index * 7) % candidates.length]!;
+    container.loot = [...supply, ...container.loot];
+  });
   equipment.forEach((entry, index) => {
     const container = candidates[(start + index * 13) % candidates.length]!;
     container.equipment = entry.weapon;

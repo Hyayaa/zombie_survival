@@ -21,12 +21,12 @@ describe("noise and zombie perception", () => {
     expect(next.currentTargetId).toBeUndefined();
   });
 
-  it("chases a visible target then searches its last known position", () => {
-    const chasing = updateZombieMind(createZombieMind(), { canSeeTarget: true, targetPosition: { x: 20, y: 10 }, targetId: "player", inAttackRange: false });
+  it("chases a visible target and keeps its visual lock through brief LOS loss", () => {
+    const chasing = updateZombieMind(createZombieMind(), { canSeeTarget: true, targetPosition: { x: 20, y: 10 }, targetId: "player", inAttackRange: false, nowMs: 100 });
     expect(chasing.state).toBe("Chase");
-    const searching = updateZombieMind(chasing, { canSeeTarget: false });
-    expect(searching.state).toBe("SearchLastKnownPosition");
-    expect(searching.lastSeenTargetPosition).toEqual({ x: 20, y: 10 });
+    const pursuing = updateZombieMind(chasing, { canSeeTarget: false, targetAlive: true, targetDistance: 80, targetPosition: { x: 30, y: 10 }, nowMs: 500 });
+    expect(pursuing.state).toBe("Chase");
+    expect(pursuing.lastSeenTargetPosition).toEqual({ x: 30, y: 10 });
   });
 
   it("reduces long-range perception while keeping runners more sensitive", () => {

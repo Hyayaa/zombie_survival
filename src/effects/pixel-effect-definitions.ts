@@ -1,4 +1,4 @@
-export type AttackEffectWeapon = "knife" | "bat" | "pistol" | "smg" | "shotgun" | "hunting_rifle";
+export type AttackEffectWeapon = "knife" | "bat" | "pistol" | "smg" | "shotgun" | "hunting_rifle" | "turret";
 export type AttackImpactKind = "zombie" | "wall";
 
 export interface AttackEffectImpact {
@@ -27,6 +27,7 @@ export const ATTACK_EFFECT_DURATION_MS: Record<AttackEffectWeapon, number> = {
   smg: 70,
   shotgun: 120,
   hunting_rifle: 125,
+  turret: 70,
 };
 
 export const PIXEL_EFFECT_PRIORITY = {

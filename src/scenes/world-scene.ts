@@ -4,7 +4,7 @@ import { GameSettingsStore, type GameSettings } from "../core/game-settings";
 import { GameClock } from "../core/game-clock";
 import type { SaveGame, SavedBarricadeState } from "../core/save-state";
 import { SeededRng } from "../core/seeded-rng";
-import { createCityBlockMap, isRoad, type ContainerDefinition, type DoorDefinition, type WorldObstacle } from "../data/map-definitions";
+import { createCityBlockMap, getTerrain, isRoad, TerrainType, type ContainerDefinition, type DoorDefinition, type WorldObstacle } from "../data/map-definitions";
 import { assertValidMap } from "../data/map-validation";
 import { getItemDefinition } from "../data/item-definitions";
 import { RECIPE_DEFINITIONS } from "../data/recipe-definitions";
@@ -38,6 +38,7 @@ import { createFormationState, getFormationSlot, updateFormationDirection, type 
 import { CraftingSystem } from "../systems/crafting-system";
 import { FogInvalidationTracker, FogOfWarSystem, VisibilityState, type VisionSource } from "../systems/fog-of-war-system";
 import { InfectionSystem } from "../systems/infection-system";
+import { applyConsumable, canApplyConsumable } from "../systems/consumable-system";
 import { InventorySystem } from "../systems/inventory-system";
 import { buildVisionSources, getCompanionVisionSignature, getVisionProfile, shouldConsumeFlashlightCharge, type ActiveFire } from "../systems/lighting-system";
 import { InteractionSystem } from "../systems/interaction-system";
@@ -53,8 +54,8 @@ import { createPelletAngles } from "../systems/weapon-system";
 import { getBuildablePlacementFailure } from "../systems/buildable-placement";
 import { GENERATOR_FUEL_SECONDS, MAX_GENERATOR_FUEL_SECONDS, POWER_TICK_MS, PowerGridSystem } from "../systems/power-grid-system";
 import { rotateTurretToward, selectTurretTarget, TURRET_AIM_TOLERANCE, TURRET_COOLDOWN_MS, TURRET_DAMAGE, TURRET_RANGE, TURRET_SCAN_INTERVAL_MS, type TurretTarget } from "../systems/turret-system";
-import { updateZombieMind, type Point } from "../systems/zombie-ai-system";
-import { canRun, createSurvivalNeeds, getRunSpeedMultiplier, restoreHunger, restoreThirst, updateSurvivalNeeds } from "../systems/survival-needs-system";
+import { updateZombieMind, ZOMBIE_CHASE_MULTIPLIER, type Point } from "../systems/zombie-ai-system";
+import { canRun, createSurvivalNeeds, getRunSpeedMultiplier, updateSurvivalNeeds } from "../systems/survival-needs-system";
 import { getHordeActivationCount, getHordeActivationIntervalMs, HORDE_SPAWN_SCAN_BUDGET, isEligibleHordeSpawn } from "../systems/gunshot-horde-system";
 import { CompanionCommandPanel } from "../ui/companion-command-panel";
 import { Hud } from "../ui/hud";
@@ -772,6 +773,9 @@ export class WorldScene extends Phaser.Scene {
     if (footstep) {
       this.noise.emit({ x: next.x, y: next.y, intensity: NOISE_LEVELS[footstep.category], category: footstep.category, createdAt: this.simulationTime });
       this.audio.play(footstep.cue);
+      const terrain = getTerrain(this.map, Math.floor(next.x / TILE_SIZE), Math.floor(next.y / TILE_SIZE));
+      const dustTerrain = terrain === TerrainType.Ground ? "ground" : terrain === TerrainType.Road ? "road" : terrain === TerrainType.Sidewalk ? "sidewalk" : "floor";
+      this.effects.emitFootstepDust(next.x, next.y, Math.atan2(movedY, movedX), actualRunning, dustTerrain, ++this.ambientEffectSequence, this.simulationTime);
       this.nextFootstepAt = footstep.nextAt;
     }
     if (shouldConsumeFlashlightCharge(this.player.flashlightOn, this.player.flashlightCharge, this.clock)) {
@@ -826,7 +830,6 @@ export class WorldScene extends Phaser.Scene {
       const pelletAngles = createPelletAngles(this.player.aimAngle, weapon, () => this.rng.next());
       const bloodByZombie=new Map<string,DamageImpactContext[]>();
       for (const pelletAngle of pelletAngles) {
-        const pelletImpacts: AttackEffectImpact[] = [];
         const rawEnd = { x: this.player.position.x + Math.cos(pelletAngle) * weapon.range, y: this.player.position.y + Math.sin(pelletAngle) * weapon.range };
         const wallHit = this.collision.firstProjectileCollision(this.player.position, rawEnd);
         const end = wallHit ?? rawEnd;
@@ -836,14 +839,13 @@ export class WorldScene extends Phaser.Scene {
         endpointX = tracerEnd.x; endpointY = tracerEnd.y;
         if (zombie) {
           impacts.push({ x: zombie.position.x, y: zombie.position.y, kind: "zombie" });
-          pelletImpacts.push({ x: zombie.position.x, y: zombie.position.y, kind: "zombie" });
           const direction = normalize({ x: Math.cos(pelletAngle), y: Math.sin(pelletAngle) });
           const rawKnockback = weapon.id === "shotgun" ? { x: 0, y: 0 } : { x: direction.x * weapon.knockback, y: direction.y * weapon.knockback };
           const killed=this.damageZombie(zombie, weapon.damage, rawKnockback);
           const contexts=bloodByZombie.get(zombie.id)??[];contexts.push({kind:"projectile",damage:weapon.damage,hitX:zombie.position.x,hitY:zombie.position.y,directionX:direction.x,directionY:direction.y,weaponId:weapon.id,sequence:++this.ambientEffectSequence,killed});bloodByZombie.set(zombie.id,contexts);
-        } else if (wallHit) { impacts.push({ x: wallHit.x, y: wallHit.y, kind: "wall" }); pelletImpacts.push({ x: wallHit.x, y: wallHit.y, kind: "wall" }); }
-        this.attackEffects.play({ weapon: weapon.id, originX: this.player.position.x, originY: this.player.position.y, angle: pelletAngle, startedAt: this.simulationTime, endpointX, endpointY, impacts: pelletImpacts, alwaysShowCore: true });
+        } else if (wallHit) { impacts.push({ x: wallHit.x, y: wallHit.y, kind: "wall" }); }
       }
+      this.attackEffects.play({ weapon: weapon.id, originX: this.player.position.x, originY: this.player.position.y, angle: this.player.aimAngle, startedAt: this.simulationTime, endpointX, endpointY, impacts, alwaysShowCore: true });
       for(const [zombieId,contexts] of bloodByZombie){const context=aggregateProjectileDamage(contexts);if(!context)continue;this.effects.emitDirectionalBlood(context,this.simulationTime);if(weapon.id==="shotgun"){const zombie=this.zombies.find((candidate)=>candidate.id===zombieId);if(zombie?.isAlive()){const direction=normalize({x:context.directionX,y:context.directionY});const magnitude=Math.min(weapon.knockback*1.6,weapon.knockback*Math.sqrt(contexts.length));this.applyZombieKnockback(zombie,{x:direction.x*magnitude,y:direction.y*magnitude},context.damage,"ranged");}}}
       if(isFirearmId(weapon.id))playFirearmShotForEvent(this.audio,weapon.id,this.attackEffects.lastSequence,{source:this.player.position,listener:this.player.position});
     }
@@ -927,6 +929,9 @@ export class WorldScene extends Phaser.Scene {
         const zombie = new Zombie(this, state.id, state.kind, state, state.state);
         const healthRatio = state.maxHealth && state.maxHealth > 0 ? state.health / state.maxHealth : undefined;
         zombie.health = Math.max(0, Math.min(zombie.definition.health, healthRatio === undefined ? state.health : zombie.definition.health * healthRatio));
+        zombie.mind.visualLock = state.visualLock ?? false;
+        zombie.mind.currentTargetId = state.currentTargetId;
+        zombie.mind.lastSeenAt = state.lastSeenAt ?? 0;
         return zombie;
       });
     } else {
@@ -946,7 +951,7 @@ export class WorldScene extends Phaser.Scene {
         zombie.updateView(time, this.fog.getStateAtWorld(zombie.position.x, zombie.position.y) === VisibilityState.Visible);
         return;
       }
-      if (this.isZombieDormant(zombie)) {
+      if (this.isZombieDormant(zombie) && !zombie.mind.visualLock) {
         zombie.view.setVisible(false);
         return;
       }
@@ -963,6 +968,7 @@ export class WorldScene extends Phaser.Scene {
       if (this.simulationTime >= zombie.nextThinkAt && zombie.mind.state !== "Stagger") {
         const farFromPlayer = distance(zombie.position, this.player.position) > 360;
         zombie.nextThinkAt = this.simulationTime + 220 + (index % 5) * 47 + (farFromPlayer ? 380 : 0);
+        const lockedTarget = zombie.mind.visualLock ? targets.find((target) => target.id === zombie.mind.currentTargetId) : undefined;
         const sightTarget = this.findVisibleZombieTarget(zombie, targets);
         const heardNoise = sightTarget ? undefined : this.noise.loudestHeard(zombie.position.x, zombie.position.y, zombie.definition.hearingMultiplier, this.simulationTime);
         const previousState = zombie.mind.state;
@@ -970,8 +976,12 @@ export class WorldScene extends Phaser.Scene {
           canSeeTarget: Boolean(sightTarget),
           targetPosition: sightTarget?.position,
           targetId: sightTarget?.id,
-          inAttackRange: sightTarget ? distance(zombie.position, sightTarget.position) <= 17 : false,
+          inAttackRange: sightTarget ? distance(zombie.position, sightTarget.position) <= 17 : lockedTarget ? distance(zombie.position, lockedTarget.position) <= 17 : false,
           heardNoise,
+          nowMs: this.simulationTime,
+          targetAlive: zombie.mind.visualLock ? lockedTarget?.alive ?? false : undefined,
+          targetDistance: lockedTarget ? distance(zombie.position, lockedTarget.position) : undefined,
+          ...(sightTarget ? {} : lockedTarget ? { targetPosition: lockedTarget.position, targetId: lockedTarget.id } : {}),
         });
         perceivedTarget = sightTarget ?? targets.find((target) => target.id === zombie.mind.currentTargetId);
         if (zombie.kind === "runner" && sightTarget && previousState !== "Chase" && previousState !== "Attack") {
@@ -1016,6 +1026,7 @@ export class WorldScene extends Phaser.Scene {
       }
       const targetDistance = distance(zombie.position, target.position);
       if (targetDistance > sight || targetDistance >= bestDistance || !this.collision.hasLineOfSight(zombie.position, target.position)) continue;
+      if (target.id === zombie.mind.currentTargetId && zombie.mind.visualLock) return target;
       best = target;
       bestDistance = targetDistance;
     }
@@ -1047,7 +1058,9 @@ export class WorldScene extends Phaser.Scene {
       const farFromPlayer = distance(zombie.position, this.player.position) > 360;
       const nextPath = this.tryFindZombiePath(zombie.position, goal, 650);
       if (nextPath) {
-        zombie.nextPathAt = this.simulationTime + 650 + (zombieIndex % 5) * 65 + (farFromPlayer ? 500 : 0);
+        zombie.nextPathAt = zombie.mind.visualLock
+          ? this.simulationTime + 600 + (zombieIndex % 4) * 45
+          : this.simulationTime + 650 + (zombieIndex % 5) * 65 + (farFromPlayer ? 500 : 0);
         zombie.path = nextPath;
         zombie.pathIndex = 0;
       } else {
@@ -1072,11 +1085,12 @@ export class WorldScene extends Phaser.Scene {
       }
     }
     const direction = normalize({ x: currentTarget.x - zombie.position.x, y: currentTarget.y - zombie.position.y });
-    const speed = zombie.definition.speed * this.clock.getZombieActivityMultiplier();
+    const chaseMultiplier = zombie.mind.state === "Chase" || zombie.mind.visualLock ? ZOMBIE_CHASE_MULTIPLIER[zombie.kind] : 1;
+    const speed = zombie.definition.speed * chaseMultiplier * this.clock.getZombieActivityMultiplier();
     zombie.position = this.collision.moveCircle(zombie.position, direction.x * speed * deltaSeconds, direction.y * speed * deltaSeconds, BALANCE.zombieRadius);
     zombie.aimAngle = Math.atan2(direction.y, direction.x);
     if (distance(zombie.position, goal) < 10 && (zombie.mind.state === "InvestigateNoise" || zombie.mind.state === "SearchLastKnownPosition")) {
-      zombie.mind = updateZombieMind(zombie.mind, { canSeeTarget: false, reachedDestination: true });
+      zombie.mind = updateZombieMind(zombie.mind, { canSeeTarget: false, reachedDestination: true, nowMs: this.simulationTime });
       zombie.path = [];
     }
   }
@@ -1714,19 +1728,17 @@ export class WorldScene extends Phaser.Scene {
       return;
     }
     let consumed = false;
-    if (itemId === "bandage" && this.player.vitals.health < this.player.vitals.maxHealth) {
+    const consumable = getItemDefinition(itemId).consumableEffect;
+    if (consumable && canApplyConsumable(consumable, this.player.vitals, this.player.survivalNeeds)) {
+      const applied = applyConsumable(consumable, this.player.vitals, this.player.survivalNeeds);
+      this.player.vitals = applied.vitals;
+      this.player.survivalNeeds = applied.needs;
+      consumed = true;
+    } else if (itemId === "bandage" && this.player.vitals.health < this.player.vitals.maxHealth) {
       this.player.vitals = this.infection.heal(this.player.vitals, 28);
       consumed = true;
     } else if (itemId === "medicine" && this.player.vitals.infection > 0) {
       this.player.vitals = this.infection.useMedicine(this.player.vitals);
-      consumed = true;
-    } else if (itemId === "canned_food" && (this.player.survivalNeeds.hunger < 100 || this.player.vitals.health < this.player.vitals.maxHealth)) {
-      this.player.survivalNeeds = restoreHunger(this.player.survivalNeeds);
-      this.player.vitals = this.infection.heal(this.player.vitals, 10);
-      consumed = true;
-    } else if (itemId === "water" && (this.player.survivalNeeds.thirst < 100 || this.player.vitals.health < this.player.vitals.maxHealth)) {
-      this.player.survivalNeeds = restoreThirst(this.player.survivalNeeds);
-      this.player.vitals = this.infection.heal(this.player.vitals, 5);
       consumed = true;
     } else if (itemId === "torch") {
       this.player.torchRemaining = Math.max(this.player.torchRemaining, BALANCE.torchSeconds);
@@ -2094,7 +2106,7 @@ export class WorldScene extends Phaser.Scene {
       if (wallHit) continue;
       this.damageZombie(target, TURRET_DAMAGE, { x: Math.cos(turret.aimAngle) * 5, y: Math.sin(turret.aimAngle) * 5 },{kind:"projectile",hitX:target.position.x,hitY:target.position.y,directionX:Math.cos(turret.aimAngle),directionY:Math.sin(turret.aimAngle),weaponId:"pistol",sequence:++this.ambientEffectSequence});
       this.noise.emitGunshot("turret", origin.x, origin.y, 72, this.simulationTime);
-      this.attackEffects.play({ weapon: "pistol", originX: origin.x, originY: origin.y, angle: turret.aimAngle, startedAt: this.simulationTime, endpointX: target.position.x, endpointY: target.position.y, impacts: [{ x: target.position.x, y: target.position.y, kind: "zombie" }], alwaysShowCore: false });
+      this.attackEffects.play({ weapon: "turret", originX: origin.x, originY: origin.y, angle: turret.aimAngle, startedAt: this.simulationTime, endpointX: target.position.x, endpointY: target.position.y, impacts: [{ x: target.position.x, y: target.position.y, kind: "zombie" }], alwaysShowCore: false });
       this.audio.play("remote-shot",{source:origin,listener:this.player.position});
     }
   }
@@ -2186,10 +2198,12 @@ export class WorldScene extends Phaser.Scene {
       dayNumber: this.clock.getDayNumber(),
       time: this.clock.getClockLabel(),
       phase: this.clock.getPhase(),
+      weaponId: weapon.id,
       weapon: weapon.name,
       magazine: this.player.magazine,
       reserveAmmo: weapon.ammoItemId ? this.inventory.count(weapon.ammoItemId) : 0,
       showAmmo: weapon.kind === "ranged",
+      reloading: this.player.reloadingUntil > 0,
       flashlightCharge: this.player.flashlightCharge,
       flashlightOn: this.player.flashlightOn,
       torchRemaining: this.player.torchRemaining,
@@ -2253,6 +2267,9 @@ export class WorldScene extends Phaser.Scene {
         y: zombie.position.y,
         health: zombie.health,
         maxHealth: zombie.definition.health,
+        visualLock: zombie.mind.visualLock,
+        currentTargetId: zombie.mind.currentTargetId,
+        lastSeenAt: zombie.mind.lastSeenAt,
       })),
       exploredFog: this.fog.exportExplored(),
       extraction: { active: this.defenseActive, remainingSeconds: this.defenseRemaining },

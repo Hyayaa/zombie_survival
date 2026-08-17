@@ -16,6 +16,9 @@ export interface SavedZombie extends SavedActor {
   kind: ZombieKind;
   state: ZombieStateName;
   maxHealth?: number;
+  visualLock?: boolean;
+  currentTargetId?: string;
+  lastSeenAt?: number;
 }
 
 export interface SavedCompanion extends SavedActor {

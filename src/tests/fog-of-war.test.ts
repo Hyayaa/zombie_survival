@@ -22,7 +22,7 @@ describe("FogOfWarSystem", () => {
     const dayOn = buildVisionSources({ x: 12, y: 12, aimAngle: 0, flashlightOn: true, torchRemaining: 1 }, clock, [{ id: "fire-a", x: 30, y: 30, remaining: 1 }]);
     expect(dayOn).toEqual(dayOff);
     expect(dayOn.find((candidate) => candidate.sourceType === "ambient-cone")).toMatchObject({ radius: 420, coneAngle: 2.2 });
-    expect(dayOn.find((candidate) => candidate.sourceType === "proximity")?.radius).toBe(36);
+    expect(dayOn.find((candidate) => candidate.sourceType === "proximity")?.radius).toBe(72);
     expect(shouldConsumeFlashlightCharge(true, 100, clock)).toBe(false);
 
     clock.restore({ elapsedSeconds: BALANCE.daySeconds + BALANCE.duskSeconds });
@@ -82,7 +82,7 @@ describe("FogOfWarSystem", () => {
     expect(tracker.shouldRecompute(input)).toBe(true);
   });
 
-  it("adds stable 96px omnidirectional sources only for rescued living companions", () => {
+  it("adds stable 192px omnidirectional sources only for rescued living companions", () => {
     const clock = new GameClock();
     const companions = [
       { id: "companion-0", position: { x: 120, y: 120 }, rescued: true, alive: true },
@@ -91,7 +91,7 @@ describe("FogOfWarSystem", () => {
     ];
     const sources = buildVisionSources({ x: 20, y: 20, aimAngle: Math.PI, flashlightOn: false, torchRemaining: 0 }, clock, [], companions);
     const companionSource = sources.find((candidate) => candidate.sourceType === "companion");
-    expect(companionSource).toMatchObject({ id: "companion:companion-0", x: 120, y: 120, radius: 96 });
+    expect(companionSource).toMatchObject({ id: "companion:companion-0", x: 120, y: 120, radius: 192 });
     expect(companionSource?.direction).toBeUndefined();
     expect(sources.filter((candidate) => candidate.sourceType === "companion")).toHaveLength(1);
     const fog = new FogOfWarSystem(300, 300, FOG_CELL_SIZE, 91);
