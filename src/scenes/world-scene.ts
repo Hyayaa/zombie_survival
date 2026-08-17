@@ -6,7 +6,7 @@ import type { SaveGame, SavedBarricadeState } from "../core/save-state";
 import { SeededRng } from "../core/seeded-rng";
 import { createCityBlockMap, getTerrain, isRoad, TerrainType, type ContainerDefinition, type DoorDefinition, type WorldObstacle } from "../data/map-definitions";
 import { assertValidMap } from "../data/map-validation";
-import { getItemDefinition } from "../data/item-definitions";
+import { getItemDefinition, type StorageSlot } from "../data/item-definitions";
 import { RECIPE_DEFINITIONS } from "../data/recipe-definitions";
 import { BUILDABLE_ITEM_KIND, BUILDABLE_DEFINITIONS, type BuildableKind } from "../data/buildable-definitions";
 import { isFirearmId, WEAPON_DEFINITIONS, type WeaponId } from "../data/weapon-definitions";
@@ -242,6 +242,7 @@ export class WorldScene extends Phaser.Scene {
     this.rebuildPowerTopology();
 
     this.inventory = new InventorySystem(BALANCE.inventorySlots, saved?.inventory);
+    const legacyInventoryOverflow = this.inventory.takeLegacyOverflow();
     this.quickslots = saved?.quickslots.slice(0, 5) ?? ["bandage", "medicine", "torch", "molotov", "barricade"];
     while (this.quickslots.length < 5) this.quickslots.push(null);
     this.collectedParts = new Set(saved?.collectedParts ?? []);
@@ -258,6 +259,7 @@ export class WorldScene extends Phaser.Scene {
 
     this.createZombies(saved);
     this.createGroundItems();
+    legacyInventoryOverflow.forEach((slot, index) => this.spawnDrop(slot.itemId, slot.quantity, this.player.position.x + 18 + (index % 3) * 8, this.player.position.y + Math.floor(index / 3) * 8));
     this.applySearchedContainerViews();
 
     this.fog = new FogOfWarSystem(WORLD_WIDTH, WORLD_HEIGHT, FOG_CELL_SIZE, this.seed);
@@ -282,7 +284,7 @@ export class WorldScene extends Phaser.Scene {
     this.recomputeFog(true);
     this.updateHud();
     this.wasInSafehouse = this.isInsideSafehouse(this.player.position);
-    this.hud.showMessage(mapReset ? "도시 확장으로 기존 기록을 초기화하고 새 게임을 시작했습니다." : saved ? "저장된 생존 기록을 불러왔습니다." : "해가 지기 전에 탈출 부품 3개와 생존자를 찾으세요.", 4_000);
+    this.hud.showMessage(legacyInventoryOverflow.length > 0 ? `기존 인벤토리의 초과 물자 ${legacyInventoryOverflow.length}묶음을 발밑에 내려놓았습니다.` : mapReset ? "도시 확장으로 기존 기록을 초기화하고 새 게임을 시작했습니다." : saved ? "저장된 생존 기록을 불러왔습니다." : "해가 지기 전에 탈출 부품 3개와 생존자를 찾으세요.", 4_000);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.shutdownUi());
   }
 
@@ -655,9 +657,12 @@ export class WorldScene extends Phaser.Scene {
     this.inventoryPanel = new InventoryPanel(this.uiRoot, {
       onClose: () => this.inventoryPanel.hide(),
       onCraft: (recipeId) => this.craft(recipeId),
-      onUseSlot: (index) => this.useInventorySlot(index),
-      onDropSlot: (index) => this.dropInventorySlot(index),
-      onAssignQuickslot: (index, quickslot) => this.assignQuickslot(index, quickslot),
+      onUseItem: (instanceId) => this.useInventoryItem(instanceId),
+      onDropItem: (instanceId) => this.dropInventoryItem(instanceId),
+      onAssignQuickslot: (instanceId, quickslot) => this.assignQuickslot(instanceId, quickslot),
+      onMoveItem: (instanceId, target) => { this.inventory.moveItem(instanceId, target); this.refreshInventoryPanel(); },
+      onEquipItem: (instanceId) => this.equipInventoryItem(instanceId),
+      onUnequipItem: (slot) => this.unequipInventoryItem(slot),
       onEquipWeapon: (weaponId) => this.equipWeapon(weaponId),
     });
     this.commandPanel = new CompanionCommandPanel(this.uiRoot, (command) => this.chooseCompanionCommand(command));
@@ -1708,9 +1713,9 @@ export class WorldScene extends Phaser.Scene {
     this.refreshInventoryPanel();
   }
 
-  private useInventorySlot(index: number): void {
-    const slot = this.inventory.getSlots()[index];
-    if (slot) this.useItem(slot.itemId);
+  private useInventoryItem(instanceId: string): void {
+    const item = this.inventory.getItem(instanceId);
+    if (item) this.useItem(item.itemId);
   }
 
   private useQuickslot(index: number): void {
@@ -1867,19 +1872,36 @@ export class WorldScene extends Phaser.Scene {
     if (expired) this.fogInvalidation.invalidate();
   }
 
-  private dropInventorySlot(index: number): void {
-    const dropped = this.inventory.dropFromSlot(index, 1);
+  private dropInventoryItem(instanceId: string): void {
+    const dropped = this.inventory.dropInstance(instanceId, 1);
     if (!dropped) return;
     this.spawnDrop(dropped.itemId, dropped.quantity, this.player.position.x + Math.cos(this.player.aimAngle) * 14, this.player.position.y + Math.sin(this.player.aimAngle) * 14);
     this.syncCollectedParts();
     this.refreshInventoryPanel();
   }
 
-  private assignQuickslot(index: number, quickslot: number): void {
-    const slot = this.inventory.getSlots()[index];
-    if (!slot || quickslot < 0 || quickslot >= 5) return;
-    this.quickslots[quickslot] = slot.itemId;
-    this.hud.showMessage(`${quickslot + 1}번 퀵슬롯: ${getItemDefinition(slot.itemId).name}`);
+  private assignQuickslot(instanceId: string, quickslot: number): void {
+    const item = this.inventory.getItem(instanceId);
+    if (!item || item.containerId === null || quickslot < 0 || quickslot >= 5) return;
+    this.quickslots[quickslot] = item.itemId;
+    this.hud.showMessage(`${quickslot + 1}번 퀵슬롯: ${getItemDefinition(item.itemId).name}`);
+    this.refreshInventoryPanel();
+  }
+
+  private equipInventoryItem(instanceId: string): void {
+    const item = this.inventory.getItem(instanceId);
+    if (!item) return;
+    const success = this.inventory.equip(instanceId);
+    this.hud.showMessage(success ? `${getItemDefinition(item.itemId).name} 장착` : "수납공간을 비우거나 장비를 넣을 공간을 확보하세요.");
+    this.refreshInventoryPanel();
+  }
+
+  private unequipInventoryItem(slot: StorageSlot): void {
+    const itemId = this.inventory.getEquipment()[slot];
+    const item = itemId ? this.inventory.getItem(itemId) : null;
+    if (!item) return;
+    const success = this.inventory.unequip(slot);
+    this.hud.showMessage(success ? `${getItemDefinition(item.itemId).name} 해제` : "장비 수납공간을 먼저 비워야 합니다.");
     this.refreshInventoryPanel();
   }
 
@@ -1893,7 +1915,9 @@ export class WorldScene extends Phaser.Scene {
 
   private getInventoryPanelState(): InventoryPanelState {
     return {
-      slots: this.inventory.getSlots(),
+      containers: this.inventory.getContainers(),
+      items: this.inventory.getItems(),
+      equipment: this.inventory.getEquipment(),
       quickslots: [...this.quickslots],
       recipes: this.crafting.getRecipes(),
       unlockedWeapons: [...this.player.unlockedWeapons],

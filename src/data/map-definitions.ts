@@ -432,6 +432,11 @@ function createContainers(buildings: readonly BuildingDefinition[], width: numbe
     const container = candidates[(start + 5 + index * 7) % candidates.length]!;
     container.loot = [...supply, ...container.loot];
   });
+  const wearableLoot = ["basic_tshirt", "work_pants", "utility_belt", "utility_vest", "school_backpack", "hiking_backpack", "military_backpack"];
+  wearableLoot.forEach((itemId, index) => {
+    const container = candidates[(start + 3 + index * 9) % candidates.length]!;
+    container.loot = [{ itemId, quantity: 1 }, ...container.loot];
+  });
   equipment.forEach((entry, index) => {
     const container = candidates[(start + index * 13) % candidates.length]!;
     container.equipment = entry.weapon;

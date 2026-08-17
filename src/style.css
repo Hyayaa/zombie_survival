@@ -283,49 +283,25 @@ button:focus-visible {
   gap: 12px;
 }
 
-.inventory-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 4px;
-}
-
-.inventory-slot {
-  display: grid;
-  grid-template-columns: 36px minmax(0, 1fr) auto;
-  align-items: start;
-  gap: 5px;
-  min-height: 38px;
-  padding: 4px;
-  background: #151d1b;
-  border: 1px solid #36423e;
-}
-
-.inventory-slot.is-empty {
-  color: #4f5a56;
-  background: #101513;
-}
-
-.inventory-slot small {
-  display: block;
-  margin-top: 2px;
-  color: #7f8b86;
-}
-
-.inventory-slot em {
-  color: #d7bd6f;
-  font-style: normal;
-}
-
-.slot-actions {
-  grid-column: 1 / -1;
-  display: flex;
-  gap: 2px;
-}
-
-.slot-actions button {
-  padding: 2px 5px;
-  font-size: 0.78em;
-}
+.grid-inventory { display:grid;grid-template-columns:repeat(2,minmax(180px,1fr));gap:8px;align-content:start; }
+.grid-inventory__container { min-width:0;padding:6px;background:#101614;border:1px solid #34413c; }
+.grid-inventory__container h3 { display:flex;align-items:center;gap:6px;min-height:28px; }
+.grid-inventory__container h3>small { color:#76827c;font-weight:normal; }
+.grid-inventory__equipped { display:flex;align-items:center;gap:4px;margin-left:auto;color:#aab5ae;font-size:.78em; }
+.grid-inventory__equipped button { padding:2px 4px; }
+.equipment-icon { width:26px;height:26px; }.equipment-icon .item-icon { width:24px;height:24px; }
+.grid-inventory__surface { --cell:40px;position:relative;width:calc(var(--grid-w) * var(--cell));height:calc(var(--grid-h) * var(--cell));max-width:100%;background-color:#111816;background-image:linear-gradient(to right,#34413c 1px,transparent 1px),linear-gradient(to bottom,#34413c 1px,transparent 1px);background-size:var(--cell) var(--cell);border-right:1px solid #34413c;border-bottom:1px solid #34413c; }
+.grid-inventory__item { position:absolute;left:calc(var(--item-x) * var(--cell) + 2px);top:calc(var(--item-y) * var(--cell) + 2px);width:calc(var(--item-w) * var(--cell) - 4px);height:calc(var(--item-h) * var(--cell) - 4px);display:grid;place-items:center;padding:0;overflow:hidden;background:#25312d;border:1px solid #718079;touch-action:none;cursor:grab; }
+.grid-inventory__item:active { cursor:grabbing; }.grid-inventory__item:hover { border-color:#d6c27c; }
+.grid-item-icon { width:min(64px,90%);height:min(64px,90%);border:0;background:transparent; }.grid-item-icon .item-icon { width:100%;height:100%; }
+.grid-inventory__quantity,.grid-inventory__item em { position:absolute;right:2px;bottom:1px;padding:0 2px;color:#f3e5b0;background:#070a09;font-size:10px;font-style:normal; }
+.grid-inventory__item em { right:auto;left:2px;color:#d7bd6f; }
+.inventory-drag-ghost { position:fixed;z-index:80;width:48px;height:48px;display:grid;place-items:center;pointer-events:none;opacity:.78;background:#25312d;border:1px solid #d6c27c; }
+.inventory-drag-ghost[hidden],.item-context-popover[hidden] { display:none; }
+.inventory-drag-ghost .grid-item-icon { width:44px;height:44px; }
+.item-context-popover { position:fixed;z-index:81;width:min(230px,calc(100vw - 16px));padding:7px;background:#18211e; }
+.item-context-popover small { display:block;margin:4px 0 7px;color:#95a19b;line-height:1.35; }
+.item-context-popover div { display:flex;flex-wrap:wrap;gap:3px; }.item-context-popover button { padding:3px 6px; }
 
 .recipe-list,
 .weapon-list {
@@ -466,8 +442,8 @@ button:focus-visible {
 
 @media (max-width: 700px), (max-height: 480px) {
   .inventory-panel__content { grid-template-columns: 1fr 190px; }
-  .inventory-grid { grid-template-columns: 1fr; }
-  .inventory-slot small { display: none; }
+  .grid-inventory { grid-template-columns:1fr; }
+  .grid-inventory__surface { --cell:36px; }
   .hud__objective { top: 42px; max-width: 45%; }
   .hud__bottom-right { right:6px;bottom:42px;gap:3px; }
   .hud__needs,.hud__weapon { width:170px;padding:3px 5px; }

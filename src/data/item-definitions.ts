@@ -1,4 +1,7 @@
-export type ItemCategory = "food" | "medical" | "material" | "ammo" | "tool" | "quest";
+export type ItemCategory = "food" | "medical" | "material" | "ammo" | "tool" | "quest" | "equipment";
+export interface InventoryFootprint { width: number; height: number }
+export type StorageSlot = "shirt" | "pants" | "belt" | "vest" | "backpack";
+export interface StorageEquipmentDefinition { slot: StorageSlot; containerWidth: number; containerHeight: number }
 
 export interface ConsumableEffect { hunger?: number; thirst?: number; health?: number; infection?: number; stamina?: number }
 
@@ -11,9 +14,19 @@ export interface ItemDefinition {
   description: string;
   devGrantAmount?: number;
   consumableEffect?: ConsumableEffect;
+  inventoryFootprint: InventoryFootprint;
+  storageEquipment?: StorageEquipmentDefinition;
 }
 
-const ITEMS: ItemDefinition[] = [
+type ItemSource = Omit<ItemDefinition, "inventoryFootprint">;
+const ITEM_FOOTPRINTS: Readonly<Record<string, InventoryFootprint>> = Object.freeze({
+  canned_food:{width:1,height:1},water:{width:1,height:2},cabbage:{width:1,height:1},carrot:{width:1,height:1},potato:{width:1,height:1},apple:{width:1,height:1},beef:{width:1,height:2},pork:{width:1,height:2},
+  cloth:{width:1,height:1},wood:{width:2,height:1},metal:{width:1,height:1},screws:{width:1,height:1},steel_plate:{width:2,height:2},solar_panel:{width:2,height:2},duct_tape:{width:1,height:1},circuit_board:{width:1,height:1},electric_motor:{width:1,height:2},
+  fuel:{width:1,height:2},medicine:{width:1,height:1},ammo:{width:1,height:1},pistol_ammo:{width:1,height:1},smg_ammo:{width:1,height:1},shotgun_shell:{width:1,height:1},rifle_ammo:{width:1,height:1},battery:{width:2,height:1},engine_part:{width:2,height:2},bandage:{width:1,height:1},torch:{width:1,height:2},barricade:{width:2,height:2},turret_kit:{width:3,height:2},solar_generator_kit:{width:2,height:2},fuel_generator_kit:{width:3,height:2},battery_bank_kit:{width:2,height:2},generator_fuel:{width:1,height:1},molotov:{width:1,height:2},scrap_cache:{width:2,height:2},
+  basic_tshirt:{width:2,height:2},work_pants:{width:2,height:2},utility_belt:{width:2,height:1},utility_vest:{width:2,height:3},school_backpack:{width:2,height:3},hiking_backpack:{width:3,height:3},military_backpack:{width:3,height:4},
+});
+
+const ITEM_SOURCES: ItemSource[] = [
   { id: "canned_food", name: "통조림", category: "food", maxStack: 5, iconColor: 0xb9a06d, description: "허기를 달래고 체력을 조금 회복한다.", consumableEffect: { hunger: 28, health: 10 } },
   { id: "water", name: "물", category: "food", maxStack: 5, iconColor: 0x77a9b4, description: "마시거나 빈 병을 화염병 재료로 쓴다.", consumableEffect: { thirst: 35, health: 5 } },
   { id: "cabbage", name: "양배추", category: "food", maxStack: 6, iconColor: 0x75a65b, description: "수분이 남은 보존 채소.", consumableEffect: { hunger: 16, thirst: 5 } },
@@ -50,7 +63,20 @@ const ITEMS: ItemDefinition[] = [
   { id: "generator_fuel", name: "발전기 연료", category: "material", maxStack: 8, iconColor: 0xb37a3e, description: "연료 발전기 전용 연료. 탈출 연료와 별개다." },
   { id: "molotov", name: "화염병", category: "tool", maxStack: 2, iconColor: 0xcf5d42, description: "조준 지점에 짧은 범위 화염을 만든다." },
   { id: "scrap_cache", name: "잡동사니", category: "material", maxStack: 8, iconColor: 0x736d61, description: "분해해 쓸 수 있는 잡다한 생존 물자." },
+  { id: "basic_tshirt", name: "기본 티셔츠", category: "equipment", maxStack: 1, iconColor: 0xa9aaa2, description: "작은 수납공간이 달린 기본 상의.", storageEquipment:{slot:"shirt",containerWidth:2,containerHeight:2} },
+  { id: "work_pants", name: "작업 바지", category: "equipment", maxStack: 1, iconColor: 0x59685f, description: "튼튼한 주머니가 달린 작업 바지.", storageEquipment:{slot:"pants",containerWidth:4,containerHeight:2} },
+  { id: "utility_belt", name: "공구 벨트", category: "equipment", maxStack: 1, iconColor: 0x8d6a43, description: "작은 도구를 빠르게 꺼내는 벨트.", storageEquipment:{slot:"belt",containerWidth:4,containerHeight:1} },
+  { id: "utility_vest", name: "다용도 조끼", category: "equipment", maxStack: 1, iconColor: 0x687557, description: "여러 칸의 파우치가 달린 조끼.", storageEquipment:{slot:"vest",containerWidth:4,containerHeight:3} },
+  { id: "school_backpack", name: "학생용 가방", category: "equipment", maxStack: 1, iconColor: 0x557b8d, description: "작고 다루기 쉬운 학생용 가방.", storageEquipment:{slot:"backpack",containerWidth:4,containerHeight:4} },
+  { id: "hiking_backpack", name: "등산용 가방", category: "equipment", maxStack: 1, iconColor: 0x697852, description: "장거리 이동용 대형 등산 가방.", storageEquipment:{slot:"backpack",containerWidth:5,containerHeight:5} },
+  { id: "military_backpack", name: "군용 가방", category: "equipment", maxStack: 1, iconColor: 0x4d5945, description: "가장 넓은 수납공간을 가진 군용 가방.", storageEquipment:{slot:"backpack",containerWidth:6,containerHeight:6} },
 ];
+
+const ITEMS: ItemDefinition[] = ITEM_SOURCES.map((item) => {
+  const inventoryFootprint = ITEM_FOOTPRINTS[item.id];
+  if (!inventoryFootprint) throw new Error(`Missing inventory footprint: ${item.id}`);
+  return { ...item, inventoryFootprint };
+});
 
 export const ITEM_DEFINITIONS: Readonly<Record<string, ItemDefinition>> = Object.freeze(
   Object.fromEntries(ITEMS.map((item) => [item.id, item])),

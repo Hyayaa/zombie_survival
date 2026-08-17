@@ -5,6 +5,14 @@ import { InventorySystem } from "../systems/inventory-system";
 
 describe("CraftingSystem", () => {
   const crafting = new CraftingSystem(RECIPE_DEFINITIONS);
+  const bulkyCrafting = new CraftingSystem([...RECIPE_DEFINITIONS, { id: "test-bulky", name: "test", resultItemId: "barricade", resultQuantity: 1, ingredients: { cloth: 2 }, craftTimeMs: 1, noiseIntensity: 0 }]);
+
+  function fragmentedInventory(): InventorySystem {
+    const inventory = new InventorySystem();
+    inventory.add("cloth", 3);
+    inventory.add("engine_part", 4);
+    return inventory;
+  }
 
   it("crafts when materials are sufficient and consumes them", () => {
     const inventory = new InventorySystem();
@@ -23,9 +31,8 @@ describe("CraftingSystem", () => {
   });
 
   it("restores ingredients when the result cannot fit", () => {
-    const inventory = new InventorySystem(1);
-    inventory.add("cloth", 3);
-    expect(crafting.craft("bandage", inventory)).toMatchObject({ success: false, reason: "inventory-full" });
+    const inventory = fragmentedInventory();
+    expect(bulkyCrafting.craft("test-bulky", inventory)).toMatchObject({ success: false, reason: "inventory-full" });
     expect(inventory.count("cloth")).toBe(3);
     expect(inventory.count("bandage")).toBe(0);
   });
@@ -39,10 +46,9 @@ describe("CraftingSystem", () => {
   });
 
   it("still rejects developer crafting when the result cannot fit", () => {
-    const inventory = new InventorySystem(1);
-    inventory.add("water", 1);
-    expect(crafting.craft("bandage", inventory, { ignoreIngredients: true })).toMatchObject({ success: false, reason: "inventory-full" });
-    expect(inventory.count("water")).toBe(1);
+    const inventory = fragmentedInventory();
+    expect(bulkyCrafting.craft("test-bulky", inventory, { ignoreIngredients: true })).toMatchObject({ success: false, reason: "inventory-full" });
+    expect(inventory.count("cloth")).toBe(3);
     expect(inventory.count("bandage")).toBe(0);
   });
 });

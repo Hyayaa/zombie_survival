@@ -1,5 +1,5 @@
 import type { ClockSnapshot } from "./game-clock";
-import type { InventorySlot } from "../systems/inventory-system";
+import type { InventorySnapshot } from "../systems/inventory-system";
 import type { ZombieKind, ZombieStateName } from "../data/zombie-definitions";
 import type { SavedStructureState } from "../entities/placed-structure";
 import type { WeaponMagazines } from "../systems/weapon-system";
@@ -73,7 +73,7 @@ export interface SaveGame {
     survivalNeeds: SurvivalNeeds;
   };
   clock: ClockSnapshot;
-  inventory: Array<InventorySlot | null>;
+  inventory: InventorySnapshot;
   quickslots: Array<string | null>;
   companions: SavedCompanion[];
   /** v4 migration input only. */
