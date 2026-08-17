@@ -83,6 +83,53 @@ button:focus-visible {
   color: #eff3ef;
 }
 
+.hud__needs {
+  position: absolute;
+  top: 43px;
+  left: 8px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(104px, 1fr));
+  gap: 4px 8px;
+  width: min(68%, 430px);
+  padding: 5px 7px;
+}
+
+.hud-need {
+  display: grid;
+  grid-template-columns: auto minmax(34px, 1fr) 24px;
+  align-items: center;
+  gap: 4px;
+}
+
+.hud-need i { height: 5px; overflow: hidden; background: #171a18; border: 1px solid #3d4843; }
+.hud-need i b { display: block; height: 100%; transition: width 120ms steps(4); }
+.hud-need strong { text-align: right; font-size: .9em; }
+.hud-need--hunger i b { background: #b77b3d; }
+.hud-need--thirst i b { background: #4b8fb5; }
+.hud-need--stamina i b { background: #91aa4d; }
+.hud-need.is-low { color: #e5b563; }
+.hud-need.is-empty { color: #ff6656; animation: need-alert 800ms steps(2) infinite; }
+
+@keyframes need-alert { 50% { opacity: .5; } }
+
+.day-announcement {
+  position: absolute;
+  z-index: 20;
+  top: 50%;
+  left: 50%;
+  color: #e5e8e2;
+  font-size: clamp(32px, 11cqh, 72px);
+  font-weight: 900;
+  letter-spacing: .12em;
+  text-shadow: 3px 3px #090c0d, -1px -1px #343b39;
+  opacity: 0;
+  transform: translate(-50%, -50%) scale(.96);
+  pointer-events: none;
+}
+
+.day-announcement.is-visible { animation: day-announcement 2500ms steps(12) forwards; }
+@keyframes day-announcement { 0% { opacity: 0; transform: translate(-50%, -50%) scale(.96); } 12%, 52% { opacity: 1; transform: translate(-50%, -50%) scale(1); } 100% { opacity: 0; transform: translate(-50%, -54%) scale(1); } }
+
 .companion-summary,
 .companion-chip {
   display: inline-flex;
@@ -184,6 +231,7 @@ button:focus-visible {
   padding: 18px;
   pointer-events: auto;
   background: rgb(1 4 5 / 60%);
+  z-index: 30;
 }
 
 .modal-layer[hidden],
@@ -405,6 +453,7 @@ button:focus-visible {
   .inventory-grid { grid-template-columns: 1fr; }
   .inventory-slot small { display: none; }
   .hud__objective { top: 42px; max-width: 45%; }
+  .hud__needs { top: 48px; grid-template-columns: 1fr; width: min(42%, 180px); }
   .minimap-panel__local { top: 72px; width: min(38cqh, 46cqw, 190px); }
   .compendium-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }

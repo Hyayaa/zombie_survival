@@ -65,7 +65,7 @@ describe("expanded road-first city map", () => {
     expect(map.groundItems.length).toBeGreaterThanOrEqual(12);
     expect(map.zombieSpawns.length).toBeGreaterThanOrEqual(240);
     expect(map.zombieSpawns.length).toBeLessThanOrEqual(300);
-    expect(BALANCE.maxActiveZombies).toBe(64);
+    expect(BALANCE.maxActiveZombies).toBe(72);
     expect(map.zombieSpawns.every((spawn) => Math.hypot(
       spawn.tileX * TILE_SIZE + TILE_SIZE / 2 - map.playerSpawn.x,
       spawn.tileY * TILE_SIZE + TILE_SIZE / 2 - map.playerSpawn.y,

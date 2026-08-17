@@ -4,6 +4,8 @@ import { ITEM_DEFINITIONS } from "../data/item-definitions";
 import { createCityBlockMap } from "../data/map-definitions";
 import { emptyFogExploration, isValidExploredFog } from "./fog-save-codec";
 import { createWeaponMagazines } from "./weapon-system";
+import { GameClock } from "../core/game-clock";
+import { createSurvivalNeeds } from "./survival-needs-system";
 
 export interface StorageLike {
   getItem(key: string): string | null;
@@ -18,7 +20,8 @@ export class SaveSystem {
   save(data: SaveGame): boolean {
     try {
       const exploredFog = isValidExploredFog(data.exploredFog) ? data.exploredFog : emptyFogExploration();
-      this.storage.setItem(this.key, JSON.stringify({ ...data, exploredFog, version: SAVE_VERSION, savedAt: Date.now() }));
+      const player = { ...data.player, survivalNeeds: createSurvivalNeeds(data.player.survivalNeeds) };
+      this.storage.setItem(this.key, JSON.stringify({ ...data, player, exploredFog, version: SAVE_VERSION, savedAt: Date.now() }));
       return true;
     } catch {
       return false;
@@ -38,14 +41,15 @@ export class SaveSystem {
       if (parsed.version === 3) return this.migrateV3(parsed);
       if (parsed.version === 4) return this.migrateV4(parsed);
       if (parsed.version === 5) return this.migrateV5(parsed);
+      if (parsed.version === 6) return this.migrateV6(parsed);
       if (parsed.version !== SAVE_VERSION) {
         this.storage.removeItem(this.key);
         this.incompatibleMapReset = true;
         return null;
       }
-      if (!this.isValidBase(parsed, SAVE_VERSION) || !this.hasValidObstacleState(parsed) || !this.hasValidCompanions(parsed) || !this.hasValidStructures(parsed)) return null;
+      if (!this.isValidBase(parsed, SAVE_VERSION) || !this.hasValidObstacleState(parsed) || !this.hasValidCompanions(parsed) || !this.hasValidStructures(parsed) || !this.hasValidSurvivalState(parsed)) return null;
       const exploredFog = isValidExploredFog(parsed.exploredFog) ? parsed.exploredFog : emptyFogExploration();
-      return { ...parsed, version: SAVE_VERSION, exploredFog } as SaveGame;
+      return { ...parsed, player: { ...parsed.player!, survivalNeeds: createSurvivalNeeds(parsed.player!.survivalNeeds) }, version: SAVE_VERSION, exploredFog } as SaveGame;
     } catch {
       return null;
     }
@@ -116,13 +120,26 @@ export class SaveSystem {
     if (!this.isValidBase(value, 5) || !this.hasValidObstacleState(value) || !this.hasValidCompanions(value)) return null;
     const inventory = value.inventory!.map((slot) => slot?.itemId === "ammo" ? { ...slot, itemId: "pistol_ammo" } : slot);
     const quickslots = value.quickslots!.map((itemId) => itemId === "ammo" ? "pistol_ammo" : itemId);
-    const migrated = {
+    const v6 = {
       ...value,
-      version: SAVE_VERSION,
+      version: 6,
       player: { ...value.player!, magazines: createWeaponMagazines({ pistol: value.player!.magazine ?? 0 }), magazine: undefined },
       inventory,
       quickslots,
       structures: [],
+    } as SaveCandidate;
+    return this.migrateV6(v6);
+  }
+
+  private migrateV6(value: SaveCandidate): SaveGame | null {
+    if (!this.isValidBase(value, 6) || !this.hasValidObstacleState(value) || !this.hasValidCompanions(value) || !this.hasValidStructures(value)) return null;
+    const clock = new GameClock();
+    clock.restore({ elapsedSeconds: value.clock!.elapsedSeconds!, dayNumber: 1 });
+    const migrated = {
+      ...value,
+      version: SAVE_VERSION,
+      player: { ...value.player!, survivalNeeds: createSurvivalNeeds() },
+      clock: clock.snapshot(),
     } as SaveGame;
     this.save(migrated);
     return migrated;
@@ -154,6 +171,7 @@ export class SaveSystem {
       && value.quickslots.every((itemId) => itemId === null || (typeof itemId === "string" && ITEM_DEFINITIONS[itemId] !== undefined))
       && Array.isArray(value.zombies)
       && typeof value.clock?.elapsedSeconds === "number"
+      && (version < 7 || typeof value.clock?.dayNumber === "number")
       && (version >= 5 ? Array.isArray(value.companions) : (
         typeof value.companion?.x === "number"
         && typeof value.companion?.y === "number"
@@ -198,6 +216,14 @@ export class SaveSystem {
       && ["turret", "solar-generator", "fuel-generator", "battery-bank"].includes(state.kind)
       && typeof state.tileX === "number" && typeof state.tileY === "number" && typeof state.storedEnergy === "number"
       && (state.fuelSeconds === undefined || typeof state.fuelSeconds === "number"));
+  }
+
+  private hasValidSurvivalState(value: SaveCandidate): boolean {
+    const needs = value.player?.survivalNeeds;
+    return needs !== undefined
+      && typeof needs.hunger === "number" && Number.isFinite(needs.hunger)
+      && typeof needs.thirst === "number" && Number.isFinite(needs.thirst)
+      && typeof needs.stamina === "number" && Number.isFinite(needs.stamina);
   }
 }
 

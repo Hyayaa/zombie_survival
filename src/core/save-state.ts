@@ -3,6 +3,7 @@ import type { InventorySlot } from "../systems/inventory-system";
 import type { ZombieKind, ZombieStateName } from "../data/zombie-definitions";
 import type { SavedStructureState } from "../entities/placed-structure";
 import type { WeaponMagazines } from "../systems/weapon-system";
+import type { SurvivalNeeds } from "../systems/survival-needs-system";
 
 export interface SavedActor {
   x: number;
@@ -14,6 +15,7 @@ export interface SavedZombie extends SavedActor {
   id: string;
   kind: ZombieKind;
   state: ZombieStateName;
+  maxHealth?: number;
 }
 
 export interface SavedCompanion extends SavedActor {
@@ -65,6 +67,7 @@ export interface SaveGame {
     flashlightCharge: number;
     flashlightOn: boolean;
     torchRemaining: number;
+    survivalNeeds: SurvivalNeeds;
   };
   clock: ClockSnapshot;
   inventory: Array<InventorySlot | null>;

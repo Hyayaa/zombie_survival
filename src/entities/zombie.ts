@@ -36,10 +36,9 @@ export class Zombie {
   }
 
   damage(amount: number, knockback: Point, now: number): boolean {
-    if (!this.isAlive()) return false;
+    if (!this.isAlive() || amount <= 0) return false;
     this.health = Math.max(0, this.health - amount);
-    this.position.x += knockback.x;
-    this.position.y += knockback.y;
+    this.applyKnockback(knockback);
     this.view.flashHit(now);
     if (this.health === 0) {
       this.mind = { ...this.mind, state: "Dead" };
@@ -49,6 +48,11 @@ export class Zombie {
     this.staggerUntil = now + 180;
     this.mind = { ...this.mind, state: "Stagger" };
     return false;
+  }
+
+  applyKnockback(knockback: Point): void {
+    this.position.x += Number.isFinite(knockback.x) ? knockback.x : 0;
+    this.position.y += Number.isFinite(knockback.y) ? knockback.y : 0;
   }
 
   updateView(time: number, visible: boolean): void {

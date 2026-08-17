@@ -5,6 +5,7 @@ import type { VitalState } from "../systems/infection-system";
 import type { Point } from "../systems/zombie-ai-system";
 import { ACTOR_PALETTES, TopDownActorView } from "../rendering/generated-sprites";
 import type Phaser from "phaser";
+import { createSurvivalNeeds, createSurvivalRuntime } from "../systems/survival-needs-system";
 
 export class Player {
   readonly id = "player";
@@ -13,6 +14,8 @@ export class Player {
   movement: Point = { x: 0, y: 0 };
   aimAngle = 0;
   vitals: VitalState = { health: 100, maxHealth: 100, infection: 0 };
+  survivalNeeds = createSurvivalNeeds();
+  readonly survivalRuntime = createSurvivalRuntime();
   equippedWeapon: WeaponId = "knife";
   readonly unlockedWeapons = new Set<WeaponId>(["knife"]);
   magazines: WeaponMagazines = createWeaponMagazines();

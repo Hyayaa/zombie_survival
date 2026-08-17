@@ -19,5 +19,11 @@ Download date: 2026-08-17. All assets below are CC0 1.0. Editing is documented p
 | `player-hurt.ogg` | `impactPunch_heavy_000.ogg` | Impact Sounds / Kenney | https://kenney.nl/assets/impact-sounds | CC0 1.0 | Renamed only |
 | `door.ogg` | `impactWood_heavy_000.ogg` | Impact Sounds / Kenney | https://kenney.nl/assets/impact-sounds | CC0 1.0 | Renamed only |
 | `mechanical.ogg` | `impactMetal_light_000.ogg` | Impact Sounds / Kenney | https://kenney.nl/assets/impact-sounds | CC0 1.0 | Renamed only |
+| `footstep-walk-1.ogg` | `01-footstep.ogg` | Footsteps / GboxMikeFozzy | https://opengameart.org/content/footsteps-0 | CC0 1.0 | Downloaded 2026-08-18; renamed only; walk variation 1 |
+| `footstep-walk-2.ogg` | `02-footstep.ogg` | Footsteps / GboxMikeFozzy | https://opengameart.org/content/footsteps-0 | CC0 1.0 | Downloaded 2026-08-18; renamed only; walk variation 2 |
+| `footstep-run-1.ogg` | `03-footstep.ogg` | Footsteps / GboxMikeFozzy | https://opengameart.org/content/footsteps-0 | CC0 1.0 | Downloaded 2026-08-18; renamed only; run variation 1 |
+| `footstep-run-2.ogg` | `04-footstep.ogg` | Footsteps / GboxMikeFozzy | https://opengameart.org/content/footsteps-0 | CC0 1.0 | Downloaded 2026-08-18; renamed only; run variation 2 |
 
-Runtime audio total: 15 files, 4,535,676 bytes. Source ZIP archives were used only in a temporary directory and are not part of this repository.
+`mechanical.ogg` is also reused for the short `DAY` impact cue. `creepy-ambient-loop.ogg` remains the single tension BGM (`bgm-tension`) by epb9000 under CC0 1.0; no additional music track was added.
+
+Runtime audio total: 19 files, 4,583,829 bytes. Source ZIP archives were used only in a temporary directory and are not part of this repository.

@@ -4,6 +4,10 @@ import type { DayPhase } from "../core/game-clock";
 export interface HudState {
   health: number;
   infection: number;
+  hunger: number;
+  thirst: number;
+  stamina: number;
+  dayNumber: number;
   time: string;
   phase: DayPhase;
   weapon: string;
@@ -29,6 +33,9 @@ export class Hud {
   private readonly objective: HTMLDivElement;
   private readonly message: HTMLDivElement;
   private readonly prompt: HTMLDivElement;
+  private readonly needs: HTMLDivElement;
+  private readonly needBars: Record<"hunger" | "thirst" | "stamina", { row: HTMLDivElement; value: HTMLElement; fill: HTMLElement }>;
+  private readonly lastNeedValues = { hunger: Number.NaN, thirst: Number.NaN, stamina: Number.NaN };
   private messageTimeout?: number;
 
   constructor(parent: HTMLElement) {
@@ -45,7 +52,14 @@ export class Hud {
     this.prompt = document.createElement("div");
     this.prompt.className = "hud__prompt pixel-panel";
     this.prompt.hidden = true;
-    this.root.append(this.status, this.quickslots, this.objective, this.message, this.prompt);
+    this.needs = document.createElement("div");
+    this.needs.className = "hud__needs pixel-panel";
+    this.needBars = {
+      hunger: this.createNeedBar("허기", "hunger"),
+      thirst: this.createNeedBar("갈증", "thirst"),
+      stamina: this.createNeedBar("스태미나", "stamina"),
+    };
+    this.root.append(this.status, this.needs, this.quickslots, this.objective, this.message, this.prompt);
     parent.append(this.root);
   }
 
@@ -59,12 +73,15 @@ export class Hud {
     this.status.innerHTML = `
       <span>체력 <b>${Math.ceil(state.health)}</b></span>
       <span>감염 <b class="${infectionClass}">${Math.ceil(state.infection)}%</b></span>
-      <span>${state.time} · ${PHASE_LABELS[state.phase]}</span>
+      <span>DAY ${state.dayNumber} · ${state.time} · ${PHASE_LABELS[state.phase]}</span>
       <span>${state.weapon}${state.showAmmo ? ` ${state.magazine}/${state.reserveAmmo}` : ""}</span>
       <span>손전등 ${state.flashlightOn ? "ON" : "OFF"} ${Math.ceil(state.flashlightCharge)}s</span>
       ${state.torchRemaining > 0 ? `<span>횃불 ${Math.ceil(state.torchRemaining)}s</span>` : ""}
       ${companion}
     `;
+    this.updateNeedBar("hunger", state.hunger);
+    this.updateNeedBar("thirst", state.thirst);
+    this.updateNeedBar("stamina", state.stamina);
     this.quickslots.innerHTML = state.quickslots.map((itemId, index) => {
       const label = itemId ? getItemDefinition(itemId).name : "비어 있음";
       return `<span class="quickslot"><b>${index + 1}</b>${label}</span>`;
@@ -88,5 +105,30 @@ export class Hud {
   destroy(): void {
     if (this.messageTimeout !== undefined) window.clearTimeout(this.messageTimeout);
     this.root.remove();
+  }
+
+  private createNeedBar(label: string, kind: "hunger" | "thirst" | "stamina"): { row: HTMLDivElement; value: HTMLElement; fill: HTMLElement } {
+    const row = document.createElement("div");
+    row.className = `hud-need hud-need--${kind}`;
+    const name = document.createElement("span");
+    name.textContent = label;
+    const track = document.createElement("i");
+    const fill = document.createElement("b");
+    track.append(fill);
+    const value = document.createElement("strong");
+    row.append(name, track, value);
+    this.needs.append(row);
+    return { row, value, fill };
+  }
+
+  private updateNeedBar(kind: "hunger" | "thirst" | "stamina", rawValue: number): void {
+    const value = Math.max(0, Math.min(100, Math.round(rawValue)));
+    if (this.lastNeedValues[kind] === value) return;
+    this.lastNeedValues[kind] = value;
+    const bar = this.needBars[kind];
+    bar.value.textContent = String(value);
+    bar.fill.style.width = `${value}%`;
+    bar.row.classList.toggle("is-low", value > 0 && value <= 25);
+    bar.row.classList.toggle("is-empty", value === 0);
   }
 }

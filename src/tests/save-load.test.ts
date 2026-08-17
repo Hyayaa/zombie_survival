@@ -21,8 +21,8 @@ function saveFixture(): SaveGame {
     seed: 42,
     rngState: 42,
     savedAt: 1,
-    player: { x: 12, y: 24, health: 81, infection: 13, equippedWeapon: "knife", unlockedWeapons: ["knife"], magazines: { pistol: 3, smg: 7, shotgun: 2, hunting_rifle: 1 }, flashlightCharge: 100, flashlightOn: false, torchRemaining: 0 },
-    clock: { elapsedSeconds: 52 },
+    player: { x: 12, y: 24, health: 81, infection: 13, equippedWeapon: "knife", unlockedWeapons: ["knife"], magazines: { pistol: 3, smg: 7, shotgun: 2, hunting_rifle: 1 }, flashlightCharge: 100, flashlightOn: false, torchRemaining: 0, survivalNeeds: { hunger: 74, thirst: 63, stamina: 52 } },
+    clock: { elapsedSeconds: 52, dayNumber: 1 },
     inventory: [{ itemId: "cloth", quantity: 2 }, null],
     quickslots: ["bandage", null, null, null, null],
     companions: [0, 1, 2, 3].map((index) => ({ id: `companion-${index}`, x: 30 + index * 4, y: 40 + index * 4, health: 80, rescued: index === 0, alive: true, command: "follow" as const })),
@@ -177,5 +177,23 @@ describe("SaveSystem", () => {
     expect(loaded?.structures).toEqual(fixture.structures);
     expect(loaded?.player.magazines).toEqual(fixture.player.magazines);
     expect(JSON.stringify(loaded)).not.toContain("powerEdges");
+  });
+
+  it("round-trips survival needs and day number", () => {
+    const storage = new MemoryStorage(); const saves = new SaveSystem(storage, "test");
+    const fixture = saveFixture(); fixture.clock = { elapsedSeconds: 2_100, dayNumber: 3 };
+    fixture.player.survivalNeeds = { hunger: 41, thirst: 32, stamina: 18 };
+    expect(saves.save(fixture)).toBe(true);
+    expect(saves.load()).toMatchObject({ clock: { elapsedSeconds: 2_100, dayNumber: 3 }, player: { survivalNeeds: { hunger: 41, thirst: 32, stamina: 18 } } });
+  });
+
+  it("migrates v6 survival needs and day number without changing existing player state", () => {
+    const storage = new MemoryStorage(); const saves = new SaveSystem(storage, "test");
+    const fixture = saveFixture();
+    const legacy = { ...fixture, version: 6, player: { ...fixture.player, survivalNeeds: undefined }, clock: { elapsedSeconds: 52 } };
+    storage.setItem("test", JSON.stringify(legacy));
+    const loaded = saves.load();
+    expect(loaded?.player).toMatchObject({ health: 81, infection: 13, survivalNeeds: { hunger: 100, thirst: 100, stamina: 100 } });
+    expect(loaded?.clock.dayNumber).toBe(1);
   });
 });
