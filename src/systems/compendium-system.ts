@@ -1,13 +1,14 @@
 import { getItemDevGrantAmount, ITEM_DEFINITIONS, type ItemCategory } from "../data/item-definitions";
 import { WEAPON_DEFINITIONS, type WeaponId } from "../data/weapon-definitions";
+import { getItemIconPath } from "../data/item-icons";
 
 export type CompendiumCategory = ItemCategory | "weapon";
-export interface CompendiumEntry { id: string; sourceId: string; kind: "item" | "weapon"; name: string; description: string; category: CompendiumCategory; maxStack?: number; devGrantAmount: number; color: number }
+export interface CompendiumEntry { id: string; sourceId: string; kind: "item" | "weapon"; name: string; description: string; category: CompendiumCategory; maxStack?: number; devGrantAmount: number; color: number; iconPath:string }
 
 export function createCompendiumEntries(): CompendiumEntry[] {
   const entries: CompendiumEntry[] = [];
-  for (const item of Object.values(ITEM_DEFINITIONS)) entries.push({ id: `item:${item.id}`, sourceId: item.id, kind: "item", name: item.name, description: item.description, category: item.category, maxStack: item.maxStack, devGrantAmount: getItemDevGrantAmount(item), color: item.iconColor });
-  for (const weapon of Object.values(WEAPON_DEFINITIONS)) entries.push({ id: `weapon:${weapon.id}`, sourceId: weapon.id, kind: "weapon", name: weapon.name, description: weapon.kind === "ranged" ? `사거리 ${weapon.range} · 피해 ${weapon.damage}` : `근접 사거리 ${weapon.range} · 피해 ${weapon.damage}`, category: "weapon", devGrantAmount: 1, color: weapon.kind === "ranged" ? 0x8d9693 : 0xa4815b });
+  for (const item of Object.values(ITEM_DEFINITIONS)) entries.push({ id: `item:${item.id}`, sourceId: item.id, kind: "item", name: item.name, description: item.description, category: item.category, maxStack: item.maxStack, devGrantAmount: getItemDevGrantAmount(item), color: item.iconColor,iconPath:getItemIconPath(item.id) });
+  for (const weapon of Object.values(WEAPON_DEFINITIONS)) entries.push({ id: `weapon:${weapon.id}`, sourceId: weapon.id, kind: "weapon", name: weapon.name, description: weapon.kind === "ranged" ? `사거리 ${weapon.range} · 피해 ${weapon.damage}` : `근접 사거리 ${weapon.range} · 피해 ${weapon.damage}`, category: "weapon", devGrantAmount: 1, color: weapon.kind === "ranged" ? 0x8d9693 : 0xa4815b,iconPath:getItemIconPath(weapon.id) });
   return entries.sort((a, b) => a.name.localeCompare(b.name, "ko") || a.id.localeCompare(b.id));
 }
 

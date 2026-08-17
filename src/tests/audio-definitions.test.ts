@@ -1,10 +1,15 @@
 /// <reference types="vite/client" />
 import { describe, expect, it } from "vitest";
+// @ts-expect-error Vitest supplies Node at runtime without adding Node types to the game build.
+import { readFileSync } from "node:fs";
 import { AUDIO_ASSETS, AUDIO_CUES, BGM_DEFINITION } from "../data/audio-definitions";
+import { AudioEventGate } from "../systems/audio-system";
 const runtimeFiles=import.meta.glob("../../public/assets/audio/*.{ogg,wav}",{eager:true,query:"?url",import:"default"});
 describe("audio manifest",()=>{
   it("uses unique CC0 runtime asset paths that exist",()=>{const keys=new Set<string>();const paths=new Set<string>();for(const asset of AUDIO_ASSETS){expect(asset.license).toBe("CC0-1.0");expect(keys.has(asset.key)).toBe(false);expect(paths.has(asset.path)).toBe(false);expect(asset.path).toMatch(/^assets\/audio\/.+\.(ogg|wav)$/);expect(runtimeFiles[`../../public/${asset.path}`]).toBeTruthy();keys.add(asset.key);paths.add(asset.path);}expect(keys.has(BGM_DEFINITION.asset)).toBe(true);expect(BGM_DEFINITION).toMatchObject({loop:true,category:"bgm"});});
   it("references only manifest assets and defines the minimum gameplay cues",()=>{const keys=new Set(AUDIO_ASSETS.map((asset)=>asset.key));for(const definition of Object.values(AUDIO_CUES))for(const asset of definition.assets)expect(keys.has(asset)).toBe(true);expect(Object.keys(AUDIO_CUES)).toEqual(expect.arrayContaining(["ui","pickup","pistol-shot","smg-shot","shotgun-shot","rifle-shot","player-hurt","zombie-hit","zombie-death","zombie-growl"]));});
   it("keeps UI non-spatial and zombie moans concurrency-limited",()=>{expect(AUDIO_CUES.ui.category).toBe("ui");expect(AUDIO_CUES.ui.spatialRange).toBeUndefined();expect(AUDIO_CUES["zombie-growl"].maxInstances).toBeLessThanOrEqual(3);});
+  it("keeps firearm sources unique and accepts an audio event sequence once",()=>{for(const cue of ["pistol-shot","smg-shot","shotgun-shot","rifle-shot"] as const)expect(new Set(AUDIO_CUES[cue].assets).size).toBe(AUDIO_CUES[cue].assets.length);const gate=new AudioEventGate();expect(gate.allow("pistol-shot",41)).toBe(true);expect(gate.allow("pistol-shot",41)).toBe(false);expect(gate.allow("pistol-shot",42)).toBe(true);});
+  it("uses a trimmed pistol sample with one high-energy shot cluster",()=>{const bytes=readFileSync("public/assets/audio/pistol-smg-single.wav");const channels=bytes.readUInt16LE(22);const rate=bytes.readUInt32LE(24);const dataMarker=bytes.indexOf("data");const dataSize=bytes.readUInt32LE(dataMarker+4);const dataOffset=dataMarker+8;expect(dataSize/(rate*channels*2)).toBeCloseTo(1.4,2);const windowFrames=Math.round(rate*.05);let clusters=0,wasHot=false;for(let frame=0;frame<dataSize/(channels*2);frame+=windowFrames){let sum=0,count=0;for(let sample=frame;sample<Math.min(dataSize/(channels*2),frame+windowFrames);sample++){const value=bytes.readInt16LE(dataOffset+sample*channels*2);sum+=value*value;count++;}const hot=Math.sqrt(sum/Math.max(1,count))>2500;if(hot&&!wasHot)clusters++;wasHot=hot;}expect(clusters).toBe(1);});
 });
 /// <reference types="vite/client" />

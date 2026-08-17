@@ -227,7 +227,7 @@ button:focus-visible {
 
 .inventory-slot {
   display: grid;
-  grid-template-columns: 12px minmax(0, 1fr) auto;
+  grid-template-columns: 36px minmax(0, 1fr) auto;
   align-items: start;
   gap: 5px;
   min-height: 38px;
@@ -250,14 +250,6 @@ button:focus-visible {
 .inventory-slot em {
   color: #d7bd6f;
   font-style: normal;
-}
-
-.item-swatch {
-  width: 8px;
-  height: 8px;
-  margin-top: 3px;
-  background: var(--swatch);
-  box-shadow: 1px 1px #000;
 }
 
 .slot-actions {
@@ -404,7 +396,9 @@ button:focus-visible {
   overflow: hidden;
   font-size: clamp(9px, 1.65cqh, 13px);
 }
-.compendium-panel header,.compendium-tools{display:flex;align-items:center;gap:8px;justify-content:space-between}.compendium-panel h2{margin:0;color:#d6c27c}.compendium-tools{margin:9px 0}.compendium-tools input{min-width:0;flex:1;color:#dce3dd;background:#121918;border:1px solid #53615b;padding:5px}.compendium-tools select{color:#dce3dd;background:#1d2825;border:1px solid #53615b;padding:5px}.compendium-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px;max-height:70vh;overflow:auto}.compendium-entry{display:grid;grid-template-columns:10px minmax(0,1fr) auto;gap:6px;padding:6px;background:#121a18;border:1px solid #35423d}.compendium-entry small,.compendium-entry p,.compendium-entry em{display:block;margin:2px 0;color:#84918b;font-size:.78em;font-style:normal}.compendium-entry em{color:#cbb872}.compendium-entry button{align-self:center}.compendium-entry[hidden]{display:none}
+
+.item-icon-frame{display:grid;place-items:center;flex:0 0 auto;background:#0c1110;border:1px solid #34403c;overflow:hidden}.item-icon,.item-icon-fallback{grid-area:1/1;display:block;object-fit:contain;image-rendering:pixelated;image-rendering:crisp-edges;pointer-events:none}.item-icon-fallback{width:70%;height:70%;background:var(--swatch);box-shadow:2px 2px #000}.item-icon-fallback[hidden]{display:none}.inventory-icon,.weapon-icon{width:34px;height:34px}.inventory-icon .item-icon,.weapon-icon .item-icon{width:32px;height:32px}.weapon-button{display:flex;align-items:center;gap:6px;text-align:left}
+.compendium-panel header,.compendium-tools{display:flex;align-items:center;gap:8px;justify-content:space-between}.compendium-panel h2{margin:0;color:#d6c27c}.compendium-tools{margin:9px 0}.compendium-tools input{min-width:0;flex:1;color:#dce3dd;background:#121918;border:1px solid #53615b;padding:5px}.compendium-tools select{color:#dce3dd;background:#1d2825;border:1px solid #53615b;padding:5px}.compendium-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px;max-height:70vh;overflow:auto}.compendium-entry{display:grid;grid-template-columns:50px minmax(0,1fr) auto;gap:6px;padding:6px;background:#121a18;border:1px solid #35423d}.compendium-icon{width:50px;height:50px}.compendium-icon .item-icon{width:48px;height:48px}.compendium-entry small,.compendium-entry p,.compendium-entry em{display:block;margin:2px 0;color:#84918b;font-size:.78em;font-style:normal}.compendium-entry em{color:#cbb872}.compendium-entry button{align-self:center}.compendium-entry[hidden]{display:none}
 
 @media (max-width: 700px), (max-height: 480px) {
   .inventory-panel__content { grid-template-columns: 1fr 190px; }

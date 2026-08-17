@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { WEAPON_DEFINITIONS } from "../data/weapon-definitions";
 import { AttackEffectController, getAttackBlockReason, type AttackEffectSink } from "../effects/attack-effect-controller";
 import type { AttackEffectEvent } from "../effects/pixel-effect-definitions";
+import { AudioEventGate,playFirearmShotForEvent,type FirearmShotCue } from "../systems/audio-system";
 
 class RecordingSink implements AttackEffectSink {
   readonly events: AttackEffectEvent[] = [];
@@ -73,4 +74,8 @@ describe("attack effect integration", () => {
     expect(sink.events[1]?.impacts[0]?.kind).toBe("zombie");
     expect(sink.events[2]?.impacts).toHaveLength(0);
   });
+
+  it("dispatches exactly one firearm sound for each accepted shot sequence",()=>{const gate=new AudioEventGate();const calls:FirearmShotCue[]=[];const audio={playForEvent:(cue:FirearmShotCue,sequence:number)=>{if(!gate.allow(cue,sequence))return false;calls.push(cue);return true;}};const pistol=readiness({magazine:3});if(getAttackBlockReason(pistol,WEAPON_DEFINITIONS.pistol)===null){playFirearmShotForEvent(audio,"pistol",12);playFirearmShotForEvent(audio,"pistol",12);}expect(calls).toEqual(["pistol-shot"]);const shotgun=readiness({magazine:2});if(getAttackBlockReason(shotgun,WEAPON_DEFINITIONS.shotgun)===null){for(let pellet=0;pellet<(WEAPON_DEFINITIONS.shotgun.pelletCount??1);pellet++)void pellet;playFirearmShotForEvent(audio,"shotgun",13);}expect(calls).toEqual(["pistol-shot","shotgun-shot"]);});
+
+  it("dispatches no firearm sound for cooldown, reload, empty magazine, or blocked UI",()=>{const calls:FirearmShotCue[]=[];const audio={playForEvent:(cue:FirearmShotCue)=>{calls.push(cue);return true;}};for(const state of [readiness({lastAttackAt:900}),readiness({reloadingUntil:1200}),readiness({magazine:0}),readiness({blocked:true})])if(getAttackBlockReason(state,WEAPON_DEFINITIONS.pistol)===null)playFirearmShotForEvent(audio,"pistol",20);expect(calls).toEqual([]);});
 });

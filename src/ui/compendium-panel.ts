@@ -1,4 +1,5 @@
 import { createCompendiumEntries, type CompendiumCategory, type CompendiumEntry } from "../systems/compendium-system";
+import { bindItemIconFallbacks, createItemIconMarkup } from "./item-icon";
 
 export interface CompendiumPanelState { developerMode: boolean; count(entry: CompendiumEntry): number }
 export class CompendiumPanel {
@@ -19,10 +20,10 @@ export class CompendiumPanel {
     const grid=this.root.querySelector<HTMLElement>(".compendium-grid")!; const fragment=document.createDocumentFragment();
     for (const entry of this.entries) {
       const card=document.createElement("article"); card.className="compendium-entry"; card.dataset.category=entry.category; card.dataset.search=`${entry.name} ${entry.description}`.toLocaleLowerCase("ko");
-      card.innerHTML=`<span class="item-swatch" style="--swatch:#${entry.color.toString(16).padStart(6,"0")}"></span><div><b>${entry.name}</b><small>${categoryLabel(entry.category)} · ${entry.kind === "weapon" ? "장비" : `최대 ${entry.maxStack}`}</small><p>${entry.description}</p><em>보유 <span>0</span></em></div><button data-grant="${entry.id}">획득</button>`;
+      card.innerHTML=`${createItemIconMarkup({id:entry.sourceId,name:entry.name,color:entry.color,className:"compendium-icon",path:entry.iconPath})}<div><b>${entry.name}</b><small>${categoryLabel(entry.category)} · ${entry.kind === "weapon" ? "장비" : `최대 ${entry.maxStack}`}</small><p>${entry.description}</p><em>보유 <span>0</span></em></div><button data-grant="${entry.id}">획득</button>`;
       this.cards.set(entry.id,card); this.counts.set(entry.id,card.querySelector("em span")!); this.grantButtons.push(card.querySelector("button")!); fragment.append(card);
     }
-    grid.append(fragment); this.resultCount=this.root.querySelector(".compendium-tools span")!;
+    grid.append(fragment);bindItemIconFallbacks(grid); this.resultCount=this.root.querySelector(".compendium-tools span")!;
     const apply=()=>this.applyFilter((this.root.querySelector("input") as HTMLInputElement).value,select.value as CompendiumCategory|"all");
     this.root.querySelector("input")!.addEventListener("input",apply); select.addEventListener("change",apply);
     this.root.addEventListener("click",(event)=>{ const button=(event.target as HTMLElement).closest<HTMLButtonElement>("button"); if(button?.dataset.action==="back") onBack(); const id=button?.dataset.grant; if(id){const entry=this.entries.find((candidate)=>candidate.id===id); if(entry) onGrant(entry);} });

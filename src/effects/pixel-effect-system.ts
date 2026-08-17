@@ -1,7 +1,7 @@
 import type Phaser from "phaser";
 import { DEPTH } from "../config/game-config";
 import type { AttackEffectSink } from "./attack-effect-controller";
-import { PIXEL_EFFECT_PRIORITY, type AttackEffectEvent, type AttackEffectWeapon } from "./pixel-effect-definitions";
+import { PIXEL_EFFECT_PRIORITY, type AttackEffectEvent } from "./pixel-effect-definitions";
 import { effectRandom, effectSeed, getMuzzlePosition, getTracerSegment, getTracerSegmentCount, sampleSwingPixel } from "./pixel-effect-math";
 import { PixelSlotPool } from "./pixel-effect-pool";
 import { createBloodEffectPlan, type DamageImpactContext } from "./blood-effect-math";
@@ -11,7 +11,7 @@ const PARTICLE_CAPACITY = 192;
 const SWING_CAPACITY = 64;
 const MUZZLE_CAPACITY = 24;
 const TRACER_CAPACITY = 32;
-export const BLOOD_PARTICLE_CAPACITY = 96;
+export const BLOOD_PARTICLE_CAPACITY = 224;
 const KNIFE_COLORS = [0xe8e3cf, 0xbcc4bf, 0x6e7774] as const;
 const BAT_COLORS = [0xb5976d, 0x80664c, 0x54473c] as const;
 const BLOOD_COLORS = [0x7d342f, 0x612824, 0xa7473e] as const;
@@ -33,6 +33,8 @@ interface RuntimePool {
   fade: Uint8Array;
 }
 
+interface RuntimeBloodPool{slots:PixelSlotPool;graphics:Phaser.GameObjects.Graphics;x:Float32Array;y:Float32Array;previousX:Float32Array;previousY:Float32Array;velocityX:Float32Array;velocityY:Float32Array;gravity:Float32Array;drag:Float32Array;startsAt:Float64Array;expiresAt:Float64Array;color:Uint32Array;size:Uint8Array;tailLength:Uint8Array}
+
 export interface PixelEffectStats {
   particles: number;
   swings: number;
@@ -47,7 +49,7 @@ export class PixelEffectSystem implements AttackEffectSink {
   private readonly swings: RuntimePool;
   private readonly muzzle: RuntimePool;
   private readonly tracers: RuntimePool;
-  private readonly blood:RuntimePool;
+  private readonly blood:RuntimeBloodPool;
   private readonly bloodDecals:BloodDecalLayer;
 
   constructor(private readonly scene: Phaser.Scene, private readonly isVisible: (x: number, y: number) => boolean) {
@@ -55,7 +57,7 @@ export class PixelEffectSystem implements AttackEffectSink {
     this.swings = this.createPool(SWING_CAPACITY);
     this.muzzle = this.createPool(MUZZLE_CAPACITY);
     this.tracers = this.createPool(TRACER_CAPACITY);
-    this.blood=this.createPool(BLOOD_PARTICLE_CAPACITY);this.bloodDecals=new BloodDecalLayer(scene);
+    this.blood=this.createBloodPool();this.bloodDecals=new BloodDecalLayer(scene);
   }
 
   playAttack(event: AttackEffectEvent): void {
@@ -73,23 +75,7 @@ export class PixelEffectSystem implements AttackEffectSink {
     }
   }
 
-  emitBloodImpact(x: number, y: number, angle: number, weapon: AttackEffectWeapon, sequence: number, now: number): void {
-    if (!this.isVisible(x, y)) return;
-    const seed = effectSeed(sequence, weapon, x, y);
-    const count = weapon === "knife" ? 5 : weapon === "bat" ? 7 : 4;
-    const spread = weapon === "bat" ? 1.1 : weapon === "knife" ? 0.52 : 0.4;
-    const baseSpeed = weapon === "pistol" ? 36 : weapon === "bat" ? 25 : 22;
-    for (let index = 0; index < count; index += 1) {
-      const particleAngle = angle + (effectRandom(seed, index * 3) - 0.5) * spread;
-      const speed = baseSpeed * (0.65 + effectRandom(seed, index * 3 + 1) * 0.7);
-      const lifetime = 180 + effectRandom(seed, index * 3 + 2) * 220;
-      this.spawn(this.particles, x, y, Math.cos(particleAngle) * speed, Math.sin(particleAngle) * speed, 18, 1.5,
-        BLOOD_COLORS[index % BLOOD_COLORS.length] as number, index % 3 === 0 ? 2 : 1, index % 4 === 0 ? 2 : 1,
-        now, now + lifetime, 1, true, PIXEL_EFFECT_PRIORITY.impact, DEPTH.effectWorld, false);
-    }
-  }
-
-  emitDirectionalBlood(context:DamageImpactContext,now:number):void{const plan=createBloodEffectPlan(context);this.bloodDecals.add(plan.decal.x,plan.decal.y,plan.decal.radius,now);if(!this.isVisible(context.hitX,context.hitY))return;for(let index=0;index<plan.particles.length;index++){const particle=plan.particles[index]!;this.spawn(this.blood,particle.x,particle.y,particle.velocityX,particle.velocityY,plan.profile==="projectile"?12:22,plan.profile==="projectile"?1.4:2.4,BLOOD_COLORS[index%BLOOD_COLORS.length]!,particle.size,particle.size,now,now+particle.lifetimeMs,1,true,PIXEL_EFFECT_PRIORITY.impact,DEPTH.effectWorld,false);}}
+  emitDirectionalBlood(context:DamageImpactContext,now:number):void{const plan=createBloodEffectPlan(context);this.bloodDecals.add(plan.decal,now);if(!this.isVisible(context.hitX,context.hitY))return;for(let index=0;index<plan.particles.length;index++){const particle=plan.particles[index]!;this.spawnBlood(particle.x,particle.y,particle.velocityX,particle.velocityY,particle.role==="droplet"?25:particle.role==="impact"?16:10,particle.role==="streak"?1.15:2.1,BLOOD_COLORS[index%BLOOD_COLORS.length]!,particle.size,particle.tailLength,now,now+particle.lifetimeMs);}}
 
   emitWallImpact(x: number, y: number, shotAngle: number, sequence: number, now: number): void {
     if (!this.isVisible(x, y)) return;
@@ -137,7 +123,7 @@ export class PixelEffectSystem implements AttackEffectSink {
     this.updatePool(this.swings, now, deltaSeconds);
     this.updatePool(this.muzzle, now, deltaSeconds);
     this.updatePool(this.tracers, now, deltaSeconds);
-    this.updatePool(this.blood,now,deltaSeconds);
+    this.updateBlood(now,deltaSeconds);
   }
 
   clear(): void {
@@ -145,7 +131,7 @@ export class PixelEffectSystem implements AttackEffectSink {
     this.clearPool(this.swings);
     this.clearPool(this.muzzle);
     this.clearPool(this.tracers);
-    this.clearPool(this.blood);
+    this.blood.slots.clear();this.blood.graphics.clear();
   }
 
   destroy(): void {
@@ -153,7 +139,7 @@ export class PixelEffectSystem implements AttackEffectSink {
     this.destroyPool(this.swings);
     this.destroyPool(this.muzzle);
     this.destroyPool(this.tracers);
-    this.destroyPool(this.blood);this.bloodDecals.destroy();
+    this.blood.slots.destroy();this.blood.graphics.destroy();this.bloodDecals.destroy();
   }
 
   getStats(): PixelEffectStats {
@@ -256,6 +242,12 @@ export class PixelEffectSystem implements AttackEffectSink {
         now, now + 120 + index * 28, 0.72, true, PIXEL_EFFECT_PRIORITY.dust, DEPTH.effectWorld, false);
     }
   }
+
+  private createBloodPool():RuntimeBloodPool{return{slots:new PixelSlotPool(BLOOD_PARTICLE_CAPACITY),graphics:this.scene.add.graphics().setDepth(DEPTH.effectWorld),x:new Float32Array(BLOOD_PARTICLE_CAPACITY),y:new Float32Array(BLOOD_PARTICLE_CAPACITY),previousX:new Float32Array(BLOOD_PARTICLE_CAPACITY),previousY:new Float32Array(BLOOD_PARTICLE_CAPACITY),velocityX:new Float32Array(BLOOD_PARTICLE_CAPACITY),velocityY:new Float32Array(BLOOD_PARTICLE_CAPACITY),gravity:new Float32Array(BLOOD_PARTICLE_CAPACITY),drag:new Float32Array(BLOOD_PARTICLE_CAPACITY),startsAt:new Float64Array(BLOOD_PARTICLE_CAPACITY),expiresAt:new Float64Array(BLOOD_PARTICLE_CAPACITY),color:new Uint32Array(BLOOD_PARTICLE_CAPACITY),size:new Uint8Array(BLOOD_PARTICLE_CAPACITY),tailLength:new Uint8Array(BLOOD_PARTICLE_CAPACITY)};}
+
+  private spawnBlood(x:number,y:number,velocityX:number,velocityY:number,gravity:number,drag:number,color:number,size:number,tailLength:number,startsAt:number,expiresAt:number):void{const index=this.blood.slots.acquire(PIXEL_EFFECT_PRIORITY.impact,startsAt);if(index<0)return;this.blood.x[index]=x;this.blood.y[index]=y;this.blood.previousX[index]=x;this.blood.previousY[index]=y;this.blood.velocityX[index]=velocityX;this.blood.velocityY[index]=velocityY;this.blood.gravity[index]=gravity;this.blood.drag[index]=drag;this.blood.color[index]=color;this.blood.size[index]=size;this.blood.tailLength[index]=tailLength;this.blood.startsAt[index]=startsAt;this.blood.expiresAt[index]=expiresAt;}
+
+  private updateBlood(now:number,deltaSeconds:number):void{const pool=this.blood;pool.graphics.clear();for(let index=0;index<pool.slots.capacity;index++){if(!pool.slots.isActive(index))continue;if(now>=pool.expiresAt[index]!){pool.slots.release(index);continue;}if(now<pool.startsAt[index]!)continue;pool.previousX[index]=pool.x[index]!;pool.previousY[index]=pool.y[index]!;const damping=Math.max(0,1-pool.drag[index]!*deltaSeconds);pool.velocityX[index]=pool.velocityX[index]!*damping;pool.velocityY[index]=(pool.velocityY[index]!+pool.gravity[index]!*deltaSeconds)*damping;pool.x[index]=pool.x[index]!+pool.velocityX[index]!*deltaSeconds;pool.y[index]=pool.y[index]!+pool.velocityY[index]!*deltaSeconds;const duration=Math.max(1,pool.expiresAt[index]!-pool.startsAt[index]!);const remaining=(pool.expiresAt[index]!-now)/duration;const alpha=remaining>.66?.92:remaining>.33?.64:.34;const x=Math.round(pool.x[index]!),y=Math.round(pool.y[index]!);pool.graphics.fillStyle(pool.color[index]!,alpha).fillRect(x,y,pool.size[index]!,pool.size[index]!);const movedX=pool.x[index]!-pool.previousX[index]!,movedY=pool.y[index]!-pool.previousY[index]!;const moved=Math.hypot(movedX,movedY);const vx=moved>.01?movedX/moved:pool.velocityX[index]!/Math.max(1,Math.hypot(pool.velocityX[index]!,pool.velocityY[index]!));const vy=moved>.01?movedY/moved:pool.velocityY[index]!/Math.max(1,Math.hypot(pool.velocityX[index]!,pool.velocityY[index]!));const tail=Math.max(0,Math.round(pool.tailLength[index]!*remaining));for(let step=1;step<=tail;step++){if(step>2&&step%2===0)continue;pool.graphics.fillRect(Math.round(x-vx*step),Math.round(y-vy*step),1,1);}}}
 
   private createPool(capacity: number): RuntimePool {
     const views: Phaser.GameObjects.Rectangle[] = [];

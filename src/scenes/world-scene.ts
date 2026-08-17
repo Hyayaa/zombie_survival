@@ -28,7 +28,7 @@ import { createMapRendering, updateDoorView, type MapViews } from "../rendering/
 import { BarricadeView } from "../rendering/obstacle-views";
 import { createPowerWirePolyline } from "../rendering/power-wire-geometry";
 import { StructureView } from "../rendering/structure-view";
-import { AudioSystem } from "../systems/audio-system";
+import { AudioSystem,playFirearmShotForEvent } from "../systems/audio-system";
 import { CameraController, configurePaddedCameraBounds } from "../systems/camera-controller";
 import { CollisionSystem } from "../systems/collision-system";
 import { pointSegmentDistanceSquared, visibilityProbeTowardPoint } from "../systems/collision-geometry";
@@ -805,8 +805,7 @@ export class WorldScene extends Phaser.Scene {
         this.attackEffects.play({ weapon: weapon.id, originX: this.player.position.x, originY: this.player.position.y, angle: pelletAngle, startedAt: this.simulationTime, endpointX, endpointY, impacts: pelletImpacts, alwaysShowCore: true });
       }
       for(const contexts of bloodByZombie.values()){const context=aggregateProjectileDamage(contexts);if(context)this.effects.emitDirectionalBlood(context,this.simulationTime);}
-      const shotCue=weapon.id==="smg"?"smg-shot":weapon.id==="shotgun"?"shotgun-shot":weapon.id==="hunting_rifle"?"rifle-shot":"pistol-shot";
-      this.audio.play(shotCue,{source:this.player.position,listener:this.player.position});
+      if(isFirearmId(weapon.id))playFirearmShotForEvent(this.audio,weapon.id,this.attackEffects.lastSequence,{source:this.player.position,listener:this.player.position});
     }
     this.player.beginAttack(this.simulationTime);
     const feedbackEvent:CameraFeedbackEvent=weapon.kind==="melee"?(impacts.length>0?"melee-hit":"melee-swing"):weapon.id==="smg"?"smg-shot":weapon.id==="shotgun"?"shotgun-shot":weapon.id==="hunting_rifle"?"rifle-shot":"pistol-shot";

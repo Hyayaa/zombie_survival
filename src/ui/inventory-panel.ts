@@ -2,6 +2,7 @@ import { getItemDefinition } from "../data/item-definitions";
 import type { RecipeDefinition } from "../data/recipe-definitions";
 import type { WeaponId } from "../data/weapon-definitions";
 import type { InventorySlot } from "../systems/inventory-system";
+import { bindItemIconFallbacks, createItemIconMarkup } from "./item-icon";
 
 export interface InventoryPanelState {
   slots: ReadonlyArray<InventorySlot | null>;
@@ -21,6 +22,8 @@ export interface InventoryPanelCallbacks {
   onAssignQuickslot(index: number, quickslot: number): void;
   onEquipWeapon(weaponId: WeaponId): void;
 }
+
+export function createInventorySlotIconMarkup(slot:InventorySlot|null):string{if(!slot)return"";const item=getItemDefinition(slot.itemId);return createItemIconMarkup({id:item.id,name:item.name,color:item.iconColor,className:"inventory-icon"});}
 
 export class InventoryPanel {
   readonly root: HTMLDivElement;
@@ -69,7 +72,7 @@ export class InventoryPanel {
       const item = getItemDefinition(slot.itemId);
       const quick = this.state?.quickslots.map((id, quickIndex) => id === slot.itemId ? quickIndex + 1 : null).filter(Boolean).join(",") ?? "";
       return `<div class="inventory-slot">
-        <span class="item-swatch" style="--swatch:#${item.iconColor.toString(16).padStart(6, "0")}"></span>
+        ${createInventorySlotIconMarkup(slot)}
         <span><b>${item.name}</b> ×${slot.quantity}<small>${item.description}</small></span>
         ${quick ? `<em>Q${quick}</em>` : ""}
         <div class="slot-actions">
@@ -83,11 +86,12 @@ export class InventoryPanel {
       const ingredients = Object.entries(recipe.ingredients).map(([id, quantity]) => `${getItemDefinition(id).name} ${quantity}`).join(" + ");
       return `<button class="recipe" data-action="craft" data-recipe="${recipe.id}"><b>${recipe.name}</b><span>${ingredients}</span><small>소음 ${recipe.noiseIntensity}</small></button>`;
     }).join("");
-    const weapons = this.state.unlockedWeapons.map((weaponId) => `<button data-action="equip" data-weapon="${weaponId}" class="weapon-button ${this.state?.equippedWeapon === weaponId ? "is-active" : ""}">${this.state?.weaponNames[weaponId]}</button>`).join("");
+    const weapons = this.state.unlockedWeapons.map((weaponId) => `<button data-action="equip" data-weapon="${weaponId}" class="weapon-button ${this.state?.equippedWeapon === weaponId ? "is-active" : ""}">${createItemIconMarkup({id:weaponId,name:this.state?.weaponNames[weaponId]??weaponId,color:0x879395,className:"weapon-icon"})}<span>${this.state?.weaponNames[weaponId]}</span></button>`).join("");
     this.content.innerHTML = `
       <div><h3>인벤토리 20칸</h3><div class="inventory-grid">${slotHtml}</div></div>
       <aside><h3>무기</h3><div class="weapon-list">${weapons}</div><h3>제작</h3>${this.state.developerMode ? '<p class="developer-mode-note">개발자 모드 · 제작 재료 무시</p>' : ""}<div class="recipe-list">${recipeHtml}</div><p class="panel-note">제작 소음은 주변 좀비를 끌어들입니다.</p></aside>
     `;
+    bindItemIconFallbacks(this.content);
   }
 
   private handleClick(event: Event): void {
