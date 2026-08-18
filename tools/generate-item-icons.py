@@ -1,4 +1,6 @@
 from pathlib import Path
+import argparse
+import re
 from PIL import Image, ImageDraw
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -142,7 +144,7 @@ def draw_icon(item_id):
         l(d, [(3, 10), (29, 7)], METAL_LIGHT, 2); p(d, [(6, 13), (17, 12), (21, 17), (14, 20), (9, 27), (3, 27), (8, 18), (3, 16)], WOOD); r(d, (14, 8, 21, 11), SHADOW); d.rectangle((20, 9, 29, 10), fill=OUTLINE)
     else:
         raise KeyError(item_id)
-    return image.resize((64, 64), Image.Resampling.NEAREST)
+    return image
 
 
 ITEM_IDS = (
@@ -156,14 +158,43 @@ ITEM_IDS = (
 WEAPON_IDS = ("knife", "bat", "pistol", "smg", "shotgun", "hunting_rifle")
 
 
+def load_footprints():
+    item_source = (ROOT / "src" / "data" / "item-definitions.ts").read_text(encoding="utf-8")
+    weapon_source = (ROOT / "src" / "data" / "weapon-definitions.ts").read_text(encoding="utf-8")
+    footprints = {
+        item_id: (int(width), int(height))
+        for item_id, width, height in re.findall(r"([a-z_]+):\{width:(\d+),height:(\d+)\}", item_source)
+    }
+    for item_id, width, height in re.findall(r'id:\s*"([a-z_]+)".*?inventoryFootprint:\{width:(\d+),height:(\d+)\}', weapon_source):
+        footprints[item_id] = (int(width), int(height))
+    return footprints
+
+
+def render_footprint_icon(item_id, footprint):
+    source = draw_icon(item_id)
+    width, height = footprint
+    logical_size = (width * 32, height * 32)
+    margin = 3
+    artwork = source.resize((logical_size[0] - margin * 2, logical_size[1] - margin * 2), Image.Resampling.NEAREST)
+    canvas = Image.new("RGBA", logical_size, (0, 0, 0, 0))
+    canvas.alpha_composite(artwork, (margin, margin))
+    return canvas.resize((width * 64, height * 64), Image.Resampling.NEAREST)
+
+
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--ids", nargs="*", choices=ITEM_IDS + WEAPON_IDS)
+    args = parser.parse_args()
+    selected = tuple(args.ids) if args.ids else ITEM_IDS + WEAPON_IDS
+    footprints = load_footprints()
     OUTPUT.mkdir(parents=True, exist_ok=True)
-    for item_id in ITEM_IDS + WEAPON_IDS:
-        image = draw_icon(item_id)
-        assert image.size == (64, 64)
+    for item_id in selected:
+        footprint = footprints[item_id]
+        image = render_footprint_icon(item_id, footprint)
+        assert image.size == (footprint[0] * 64, footprint[1] * 64)
         assert set(image.getchannel("A").get_flattened_data()).issubset({0, 255})
         image.save(OUTPUT / f"{item_id}.png", optimize=True)
-    print(f"generated {len(ITEM_IDS) + len(WEAPON_IDS)} icons in {OUTPUT}")
+    print(f"generated {len(selected)} icons in {OUTPUT}")
 
 
 if __name__ == "__main__":
