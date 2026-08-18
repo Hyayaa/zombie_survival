@@ -1,10 +1,11 @@
-import { getItemIconPath, ITEM_ICON_SOURCE_SIZE } from "../data/item-icons";
+import { getItemIconPath, getItemIconSourceDimensions } from "../data/item-icons";
 
-export interface ItemIconMarkupOptions{id:string;name:string;color:number;className?:string;path?:string}
+export interface ItemIconMarkupOptions{id:string;name:string;color:number;className?:string;path?:string;rotation?:0|1}
 
 export function createItemIconMarkup(options:ItemIconMarkupOptions):string{
   const color=options.color.toString(16).padStart(6,"0");
-  return `<span class="item-icon-frame ${options.className??""}" style="--swatch:#${color}"><img class="item-icon" src="${options.path??getItemIconPath(options.id)}" alt="${escapeAttribute(options.name)}" width="${ITEM_ICON_SOURCE_SIZE}" height="${ITEM_ICON_SOURCE_SIZE}"><span class="item-icon-fallback" hidden></span></span>`;
+  const dimensions=getItemIconSourceDimensions(options.id);
+  return `<span class="item-icon-frame ${options.className??""}" style="--swatch:#${color};--icon-rotation:${options.rotation===1?90:0}deg"><img class="item-icon" src="${options.path??getItemIconPath(options.id)}" alt="${escapeAttribute(options.name)}" width="${dimensions.width}" height="${dimensions.height}"><span class="item-icon-fallback" hidden></span></span>`;
 }
 
 export function bindItemIconFallbacks(root:ParentNode):void{

@@ -677,10 +677,13 @@ export class WorldScene extends Phaser.Scene {
       onUseItem: (instanceId) => this.useInventoryItem(instanceId),
       onDropItem: (instanceId) => this.dropInventoryItem(instanceId),
       onAssignQuickslot: (instanceId, quickslot) => this.assignQuickslot(instanceId, quickslot),
-      onMoveItem: (instanceId, target) => { this.inventory.moveItem(instanceId, target); this.refreshInventoryPanel(); },
+      onMoveItem: (instanceId, target) => { const success = this.inventory.moveItem(instanceId, target); this.refreshInventoryPanel(); return success; },
+      onRotateItem: (instanceId) => this.rotateInventoryItem(instanceId),
+      canPlaceItem: (instanceId, target) => this.inventory.canPlace(instanceId, target),
       onEquipItem: (instanceId) => this.equipInventoryItem(instanceId),
       onUnequipItem: (slot) => this.unequipInventoryItem(slot),
       onEquipWeapon: (weaponId) => this.equipWeapon(weaponId),
+      onAudio: (cue) => { this.audio.play(cue); },
     });
     this.commandPanel = new CompanionCommandPanel(this.uiRoot, (command) => this.chooseCompanionCommand(command));
     this.pauseMenu = new PauseMenu(this.uiRoot, {
@@ -1788,6 +1791,8 @@ export class WorldScene extends Phaser.Scene {
       return;
     }
     this.inventory.remove(itemId, 1);
+    const useAudioId = getItemDefinition(itemId).useAudioId;
+    if (useAudioId) this.audio.play(useAudioId);
     this.syncCollectedParts();
     this.hud.showMessage(`${getItemDefinition(itemId).name} 사용`);
     this.refreshInventoryPanel();
@@ -1898,6 +1903,7 @@ export class WorldScene extends Phaser.Scene {
     const dropped = this.inventory.dropInstance(instanceId, 1);
     if (!dropped) return;
     this.spawnDrop(dropped.itemId, dropped.quantity, this.player.position.x + Math.cos(this.player.aimAngle) * 14, this.player.position.y + Math.sin(this.player.aimAngle) * 14);
+    this.audio.play("inventory-drop");
     this.syncCollectedParts();
     this.refreshInventoryPanel();
   }
@@ -1914,8 +1920,16 @@ export class WorldScene extends Phaser.Scene {
     const item = this.inventory.getItem(instanceId);
     if (!item) return;
     const success = this.inventory.equip(instanceId);
+    if (success) this.audio.play(getItemDefinition(item.itemId).storageEquipment?.slot === "backpack" ? "equip-backpack" : "equip-clothing");
     this.hud.showMessage(success ? `${getItemDefinition(item.itemId).name} 장착` : "수납공간을 비우거나 장비를 넣을 공간을 확보하세요.");
     this.refreshInventoryPanel();
+  }
+
+  private rotateInventoryItem(instanceId: string): boolean {
+    const success = this.inventory.rotateItem(instanceId);
+    this.hud.showMessage(success ? "아이템을 회전했습니다." : "이 위치에서는 아이템을 회전할 수 없습니다.");
+    this.refreshInventoryPanel();
+    return success;
   }
 
   private unequipInventoryItem(slot: StorageSlot): void {
@@ -1923,6 +1937,7 @@ export class WorldScene extends Phaser.Scene {
     const item = itemId ? this.inventory.getItem(itemId) : null;
     if (!item) return;
     const success = this.inventory.unequip(slot);
+    if (success) this.audio.play("unequip-clothing");
     this.hud.showMessage(success ? `${getItemDefinition(item.itemId).name} 해제` : "장비 수납공간을 먼저 비워야 합니다.");
     this.refreshInventoryPanel();
   }
@@ -1936,12 +1951,16 @@ export class WorldScene extends Phaser.Scene {
   }
 
   private getInventoryPanelState(): InventoryPanelState {
+    const recipes = this.crafting.getRecipes();
+    const itemIds = new Set(recipes.flatMap((recipe) => [...Object.keys(recipe.ingredients), recipe.resultItemId]));
     return {
       containers: this.inventory.getContainers(),
       items: this.inventory.getItems(),
       equipment: this.inventory.getEquipment(),
       quickslots: [...this.quickslots],
-      recipes: this.crafting.getRecipes(),
+      recipes,
+      craftAvailability: Object.fromEntries(recipes.map((recipe) => [recipe.id, this.crafting.getAvailability(recipe.id, this.inventory, { ignoreIngredients: this.settings.developerMode })])),
+      itemCounts: Object.fromEntries([...itemIds].map((itemId) => [itemId, this.inventory.count(itemId)])),
       unlockedWeapons: [...this.player.unlockedWeapons],
       equippedWeapon: this.player.equippedWeapon,
       weaponNames: {
@@ -1953,6 +1972,7 @@ export class WorldScene extends Phaser.Scene {
         hunting_rifle: WEAPON_DEFINITIONS.hunting_rifle.name,
       },
       developerMode: this.settings.developerMode,
+      inventoryRevision: this.inventory.revision,
     };
   }
 

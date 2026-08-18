@@ -1,12 +1,12 @@
 import { BALANCE } from "../config/game-config";
-import { getItemDefinition, type StorageSlot } from "../data/item-definitions";
+import { getEffectiveFootprint, getItemDefinition, type InventoryRotation, type StorageSlot } from "../data/item-definitions";
 
 export interface InventorySlot { itemId: string; quantity: number; instanceId?: string }
 export type InventoryContainerKind = "pockets" | StorageSlot;
 
 export interface InventoryItemInstance {
   instanceId: string; itemId: string; quantity: number; containerId: string | null;
-  x: number; y: number; width: number; height: number;
+  x: number; y: number; width: number; height: number; rotation: InventoryRotation;
 }
 
 export interface InventoryContainerView {
@@ -15,21 +15,21 @@ export interface InventoryContainerView {
 }
 
 export interface GridInventorySnapshot {
-  version: 2;
+  version: 2 | 3;
   nextInstanceId: number;
-  items: InventoryItemInstance[];
+  items: Array<Omit<InventoryItemInstance, "rotation"> & { rotation?: InventoryRotation }>;
   equipment: Partial<Record<StorageSlot, string>>;
 }
 
 export type InventorySnapshot = Array<InventorySlot | null> | GridInventorySnapshot;
-export interface InventoryMoveTarget { containerId: string; x: number; y: number }
+export interface InventoryMoveTarget { containerId: string; x: number; y: number; rotation?: InventoryRotation }
 
 const CONTAINER_ORDER: readonly InventoryContainerKind[] = ["pockets", "shirt", "pants", "belt", "vest", "backpack"];
 const EQUIPMENT_SLOTS: readonly StorageSlot[] = ["shirt", "pants", "belt", "vest", "backpack"];
 interface MutableContainer extends InventoryContainerView {}
 
 function isGridSnapshot(value: InventorySnapshot): value is GridInventorySnapshot {
-  return !Array.isArray(value) && value.version === 2 && Array.isArray(value.items);
+  return !Array.isArray(value) && (value.version === 2 || value.version === 3) && Array.isArray(value.items);
 }
 
 function copyItem(item: InventoryItemInstance): InventoryItemInstance { return { ...item }; }
@@ -104,6 +104,7 @@ export class InventorySystem {
         continue;
       }
       const item = this.createItem(itemId, moved);
+      this.applyRotation(item, location.rotation ?? 0);
       if (!this.place(item, location.containerId, location.x, location.y)) { this.items.delete(item.instanceId); break; }
       remaining -= moved;
     }
@@ -129,11 +130,26 @@ export class InventorySystem {
   moveItem(instanceId: string, target: InventoryMoveTarget): boolean {
     const item = this.items.get(instanceId);
     if (!item || item.containerId === null) return false;
-    const previous = { containerId: item.containerId, x: item.x, y: item.y };
+    const previous = { containerId: item.containerId, x: item.x, y: item.y, rotation: item.rotation };
     this.clearOccupancy(item);
+    this.applyRotation(item, target.rotation ?? item.rotation);
     if (this.place(item, target.containerId, target.x, target.y)) { this.bumpRevision(); return true; }
+    this.applyRotation(item, previous.rotation);
     this.place(item, previous.containerId, previous.x, previous.y);
     return false;
+  }
+
+  canPlace(instanceId: string, target: InventoryMoveTarget): boolean {
+    const item = this.items.get(instanceId); const container = this.containers.get(target.containerId);
+    if (!item || item.containerId === null || !container || !this.canStoreInContainer(item.itemId, container)) return false;
+    const footprint = getEffectiveFootprint(getItemDefinition(item.itemId), target.rotation ?? item.rotation);
+    return this.cellsAreAvailable(container, target.x, target.y, footprint.width, footprint.height, this.occupancyIds.get(instanceId));
+  }
+
+  rotateItem(instanceId: string): boolean {
+    const item = this.items.get(instanceId);
+    if (!item || item.containerId === null || item.width === item.height) return false;
+    return this.moveItem(instanceId, { containerId: item.containerId, x: item.x, y: item.y, rotation: item.rotation === 0 ? 1 : 0 });
   }
 
   equip(instanceId: string): boolean {
@@ -163,7 +179,9 @@ export class InventorySystem {
     const before = this.snapshot();
     this.containers.delete(container.id); delete this.equipment[slot];
     const location = this.findFirstFit(item.itemId);
-    if (!location || !this.place(item, location.containerId, location.x, location.y)) { this.restore(before); return false; }
+    if (!location) { this.restore(before); return false; }
+    this.applyRotation(item, location.rotation ?? 0);
+    if (!this.place(item, location.containerId, location.x, location.y)) { this.restore(before); return false; }
     this.bumpRevision(); return true;
   }
 
@@ -185,15 +203,16 @@ export class InventorySystem {
   }
 
   snapshot(): GridInventorySnapshot {
-    return { version: 2, nextInstanceId: this.nextInstanceId, items: [...this.items.values()].map(copyItem), equipment: { ...this.equipment } };
+    return { version: 3, nextInstanceId: this.nextInstanceId, items: [...this.items.values()].map(copyItem), equipment: { ...this.equipment } };
   }
 
   restore(snapshot: InventorySnapshot): void {
     if (Array.isArray(snapshot)) { this.reset(); this.createStartingEquipment(); this.migrateLegacy(snapshot); return; }
     this.reset(); this.nextInstanceId = Math.max(1, snapshot.nextInstanceId);
     for (const saved of snapshot.items) {
-      const footprint = getItemDefinition(saved.itemId).inventoryFootprint;
-      const item = { ...saved, width: footprint.width, height: footprint.height };
+      const rotation: InventoryRotation = saved.rotation === 1 ? 1 : 0;
+      const footprint = getEffectiveFootprint(getItemDefinition(saved.itemId), rotation);
+      const item = { ...saved, rotation, width: footprint.width, height: footprint.height };
       this.items.set(item.instanceId, item); this.occupancyIds.set(item.instanceId, this.nextOccupancyId++);
     }
     for (const slot of EQUIPMENT_SLOTS) {
@@ -205,7 +224,8 @@ export class InventorySystem {
     for (const item of [...this.items.values()]) {
       if (item.containerId === null) continue;
       if (!this.place(item, item.containerId, item.x, item.y)) {
-        const fallback = this.findFirstFit(item.itemId);
+        const fallback = this.findFirstFit(item.itemId, item.rotation, item.containerId);
+        if (fallback) this.applyRotation(item, fallback.rotation ?? item.rotation);
         if (!fallback || !this.place(item, fallback.containerId, fallback.x, fallback.y)) {
           this.items.delete(item.instanceId); this.legacyOverflow.push({ itemId: item.itemId, quantity: item.quantity });
         }
@@ -238,7 +258,7 @@ export class InventorySystem {
   private createItem(itemId: string, quantity: number): InventoryItemInstance {
     const footprint = getItemDefinition(itemId).inventoryFootprint;
     const instanceId = `item-${this.nextInstanceId++}`;
-    const item: InventoryItemInstance = { instanceId, itemId, quantity, containerId: null, x: 0, y: 0, width: footprint.width, height: footprint.height };
+    const item: InventoryItemInstance = { instanceId, itemId, quantity, containerId: null, x: 0, y: 0, width: footprint.width, height: footprint.height, rotation: 0 };
     this.items.set(instanceId, item); this.occupancyIds.set(instanceId, this.nextOccupancyId++); return item;
   }
   private createEquipmentContainer(item: InventoryItemInstance): void {
@@ -254,14 +274,23 @@ export class InventorySystem {
   private sortedContainers(): MutableContainer[] {
     return [...this.containers.values()].sort((a, b) => CONTAINER_ORDER.indexOf(a.kind) - CONTAINER_ORDER.indexOf(b.kind));
   }
-  private findFirstFit(itemId: string): InventoryMoveTarget | null {
-    const footprint = getItemDefinition(itemId).inventoryFootprint;
-    for (const container of this.sortedContainers()) {
-      if (!this.canStoreInContainer(itemId, container)) continue;
-      for (let y = 0; y <= container.height - footprint.height; y += 1) {
-        for (let x = 0; x <= container.width - footprint.width; x += 1) {
-          if (this.cellsAreFree(container, x, y, footprint.width, footprint.height)) return { containerId: container.id, x, y };
-        }
+  private findFirstFit(itemId: string, preferredRotation: InventoryRotation = 0, preferredContainerId?: string): InventoryMoveTarget | null {
+    const rotations: InventoryRotation[] = preferredRotation === 0 ? [0, 1] : [1, 0];
+    const definition = getItemDefinition(itemId);
+    if (preferredContainerId) {
+      const preferred = this.containers.get(preferredContainerId);
+      if (preferred && this.canStoreInContainer(itemId, preferred)) for (const rotation of rotations) {
+        const footprint = getEffectiveFootprint(definition, rotation); const fit = this.findFitInContainer(preferred, footprint.width, footprint.height);
+        if (fit) return { ...fit, rotation };
+      }
+    }
+    for (const rotation of rotations) {
+      const footprint = getEffectiveFootprint(definition, rotation);
+      for (const container of this.sortedContainers()) {
+        if (container.id === preferredContainerId) continue;
+        if (!this.canStoreInContainer(itemId, container)) continue;
+        const fit = this.findFitInContainer(container, footprint.width, footprint.height);
+        if (fit) return { ...fit, rotation };
       }
     }
     return null;
@@ -278,9 +307,23 @@ export class InventorySystem {
     return true;
   }
   private cellsAreFree(container: MutableContainer, x: number, y: number, width: number, height: number): boolean {
+    return this.cellsAreAvailable(container, x, y, width, height);
+  }
+  private findFitInContainer(container: MutableContainer, width: number, height: number): Omit<InventoryMoveTarget, "rotation"> | null {
+    for (let y = 0; y <= container.height - height; y += 1) for (let x = 0; x <= container.width - width; x += 1) if (this.cellsAreFree(container, x, y, width, height)) return { containerId: container.id, x, y };
+    return null;
+  }
+  private cellsAreAvailable(container: MutableContainer, x: number, y: number, width: number, height: number, allowedOccupancyId?: number): boolean {
     if (x < 0 || y < 0 || x + width > container.width || y + height > container.height) return false;
-    for (let row = y; row < y + height; row += 1) for (let column = x; column < x + width; column += 1) if (container.occupancy[row * container.width + column] !== 0) return false;
+    for (let row = y; row < y + height; row += 1) for (let column = x; column < x + width; column += 1) {
+      const occupied = container.occupancy[row * container.width + column];
+      if (occupied !== 0 && occupied !== allowedOccupancyId) return false;
+    }
     return true;
+  }
+  private applyRotation(item: InventoryItemInstance, rotation: InventoryRotation): void {
+    const footprint = getEffectiveFootprint(getItemDefinition(item.itemId), rotation);
+    item.rotation = rotation; item.width = footprint.width; item.height = footprint.height;
   }
   private clearOccupancy(item: InventoryItemInstance): void {
     if (item.containerId === null) return;

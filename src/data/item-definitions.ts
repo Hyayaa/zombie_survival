@@ -1,5 +1,12 @@
+import type { AudioCue } from "./audio-definitions";
+
 export type ItemCategory = "food" | "medical" | "material" | "ammo" | "tool" | "quest" | "equipment";
 export interface InventoryFootprint { width: number; height: number }
+export type InventoryRotation = 0 | 1;
+export function getEffectiveFootprint(definition: Pick<ItemDefinition, "inventoryFootprint">, rotation: InventoryRotation): InventoryFootprint {
+  const footprint = definition.inventoryFootprint;
+  return rotation === 1 ? { width: footprint.height, height: footprint.width } : { ...footprint };
+}
 export type StorageSlot = "shirt" | "pants" | "belt" | "vest" | "backpack";
 export interface StorageEquipmentDefinition { slot: StorageSlot; containerWidth: number; containerHeight: number }
 
@@ -14,6 +21,7 @@ export interface ItemDefinition {
   description: string;
   devGrantAmount?: number;
   consumableEffect?: ConsumableEffect;
+  useAudioId?: AudioCue;
   inventoryFootprint: InventoryFootprint;
   storageEquipment?: StorageEquipmentDefinition;
 }
@@ -27,14 +35,14 @@ const ITEM_FOOTPRINTS: Readonly<Record<string, InventoryFootprint>> = Object.fre
 });
 
 const ITEM_SOURCES: ItemSource[] = [
-  { id: "canned_food", name: "통조림", category: "food", maxStack: 5, iconColor: 0xb9a06d, description: "허기를 달래고 체력을 조금 회복한다.", consumableEffect: { hunger: 28, health: 10 } },
-  { id: "water", name: "물", category: "food", maxStack: 5, iconColor: 0x77a9b4, description: "마시거나 빈 병을 화염병 재료로 쓴다.", consumableEffect: { thirst: 35, health: 5 } },
-  { id: "cabbage", name: "양배추", category: "food", maxStack: 6, iconColor: 0x75a65b, description: "수분이 남은 보존 채소.", consumableEffect: { hunger: 16, thirst: 5 } },
-  { id: "carrot", name: "당근", category: "food", maxStack: 8, iconColor: 0xd87935, description: "작지만 든든한 뿌리채소.", consumableEffect: { hunger: 12, thirst: 3 } },
-  { id: "potato", name: "감자", category: "food", maxStack: 8, iconColor: 0x9a7548, description: "오래 보관된 감자.", consumableEffect: { hunger: 20 } },
-  { id: "apple", name: "사과", category: "food", maxStack: 6, iconColor: 0xb94b42, description: "허기와 갈증을 함께 달랜다.", consumableEffect: { hunger: 14, thirst: 10 } },
-  { id: "beef", name: "소고기", category: "food", maxStack: 4, iconColor: 0xa54842, description: "바로 먹을 수 있게 포장된 보존육.", consumableEffect: { hunger: 34, health: 3 } },
-  { id: "pork", name: "돼지고기", category: "food", maxStack: 4, iconColor: 0xd17b78, description: "밀봉 포장된 보존육.", consumableEffect: { hunger: 30, health: 2 } },
+  { id: "canned_food", name: "통조림", category: "food", maxStack: 5, iconColor: 0xb9a06d, description: "허기를 달래고 체력을 조금 회복한다.", consumableEffect: { hunger: 28, health: 10 }, useAudioId: "eat-soft" },
+  { id: "water", name: "물", category: "food", maxStack: 5, iconColor: 0x77a9b4, description: "마시거나 빈 병을 화염병 재료로 쓴다.", consumableEffect: { thirst: 35, health: 5 }, useAudioId: "drink" },
+  { id: "cabbage", name: "양배추", category: "food", maxStack: 6, iconColor: 0x75a65b, description: "수분이 남은 보존 채소.", consumableEffect: { hunger: 16, thirst: 5 }, useAudioId: "eat-crunch" },
+  { id: "carrot", name: "당근", category: "food", maxStack: 8, iconColor: 0xd87935, description: "작지만 든든한 뿌리채소.", consumableEffect: { hunger: 12, thirst: 3 }, useAudioId: "eat-crunch" },
+  { id: "potato", name: "감자", category: "food", maxStack: 8, iconColor: 0x9a7548, description: "오래 보관된 감자.", consumableEffect: { hunger: 20 }, useAudioId: "eat-soft" },
+  { id: "apple", name: "사과", category: "food", maxStack: 6, iconColor: 0xb94b42, description: "허기와 갈증을 함께 달랜다.", consumableEffect: { hunger: 14, thirst: 10 }, useAudioId: "eat-crunch" },
+  { id: "beef", name: "소고기", category: "food", maxStack: 4, iconColor: 0xa54842, description: "바로 먹을 수 있게 포장된 보존육.", consumableEffect: { hunger: 34, health: 3 }, useAudioId: "eat-soft" },
+  { id: "pork", name: "돼지고기", category: "food", maxStack: 4, iconColor: 0xd17b78, description: "밀봉 포장된 보존육.", consumableEffect: { hunger: 30, health: 2 }, useAudioId: "eat-soft" },
   { id: "cloth", name: "천", category: "material", maxStack: 12, iconColor: 0xb4aaa0, description: "붕대와 광원 제작 재료." },
   { id: "wood", name: "목재", category: "material", maxStack: 12, iconColor: 0x9b744b, description: "횃불과 바리케이드 제작 재료." },
   { id: "metal", name: "금속", category: "material", maxStack: 12, iconColor: 0x899397, description: "탄약과 바리케이드 제작 재료." },

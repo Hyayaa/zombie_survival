@@ -10,12 +10,22 @@ export interface CraftResult {
 export interface CraftOptions {
   ignoreIngredients?: boolean;
 }
+export type CraftAvailability = "ready" | "missing-materials" | "inventory-full";
 
 export class CraftingSystem {
   constructor(private readonly recipes: readonly RecipeDefinition[]) {}
 
   getRecipes(): readonly RecipeDefinition[] {
     return this.recipes;
+  }
+
+  getAvailability(recipeId: string, inventory: InventorySystem, options: CraftOptions = {}): CraftAvailability {
+    const recipe = this.recipes.find((candidate) => candidate.id === recipeId);
+    if (!recipe) throw new Error(`Unknown recipe: ${recipeId}`);
+    if (!options.ignoreIngredients && !inventory.has(recipe.ingredients)) return "missing-materials";
+    const trial = inventory.clone();
+    if (!options.ignoreIngredients) for (const [itemId, quantity] of Object.entries(recipe.ingredients)) trial.remove(itemId, quantity);
+    return trial.canAdd(recipe.resultItemId, recipe.resultQuantity) ? "ready" : "inventory-full";
   }
 
   craft(recipeId: string, inventory: InventorySystem, options: CraftOptions = {}): CraftResult {

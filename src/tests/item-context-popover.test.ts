@@ -9,6 +9,6 @@ describe("item context popover", () => {
 
   it("offers equipment actions only for wearable items", () => {
     expect(getItemContextActions("bandage")).toEqual(["use", "drop", "quick"]);
-    expect(getItemContextActions("utility_vest")).toEqual(["equip", "drop"]);
+    expect(getItemContextActions("utility_vest")).toEqual(["equip", "rotate", "drop"]);
   });
 });

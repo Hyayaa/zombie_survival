@@ -21,4 +21,12 @@ describe("grid inventory save migration", () => {
     restored.add("bandage", 1);
     expect(restored.getStoredItems().find(({ itemId }) => itemId === "bandage")?.instanceId).toBe(`item-${saved.nextInstanceId}`);
   });
+
+  it("migrates version 2 items without a rotation field to base orientation", () => {
+    const current = new InventorySystem().snapshot();
+    const legacy = { ...current, version: 2 as const, items: current.items.map(({ rotation: _rotation, ...item }) => item) };
+    const restored = new InventorySystem(20, legacy as unknown as Parameters<InventorySystem["restore"]>[0]);
+    expect(restored.getItems().every((item) => item.rotation === 0)).toBe(true);
+    expect(restored.snapshot().version).toBe(3);
+  });
 });
