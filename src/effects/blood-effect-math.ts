@@ -1,7 +1,7 @@
-export type DamageImpactKind="projectile"|"melee"|"fire"|"other";
+export type DamageImpactKind="projectile"|"melee"|"melee-stab"|"melee-swing"|"melee-heavy"|"fire"|"other";
 export interface DamageImpactContext{kind:DamageImpactKind;damage:number;hitX:number;hitY:number;directionX:number;directionY:number;weaponId?:string;sequence:number;killed?:boolean}
 export type BloodParticleRole="impact"|"streak"|"droplet";
-export type BloodEffectProfile="pistol"|"smg"|"shotgun"|"rifle"|"projectile"|"melee";
+export type BloodEffectProfile="pistol"|"smg"|"shotgun"|"rifle"|"projectile"|"melee"|"melee-stab"|"melee-swing"|"melee-heavy";
 export interface BloodParticlePlan{x:number;y:number;velocityX:number;velocityY:number;lifetimeMs:number;size:1|2;tailLength:number;travelDistance:number;angle:number;role:BloodParticleRole}
 export interface BloodDecalPlan{x:number;y:number;radius:number;directionX:number;directionY:number;profile:BloodEffectProfile;sequence:number}
 export interface BloodEffectPlan{profile:BloodEffectProfile;particles:BloodParticlePlan[];decal:BloodDecalPlan}
@@ -37,9 +37,12 @@ export function createBloodEffectPlan(context:DamageImpactContext):BloodEffectPl
 export function aggregateProjectileDamage(contexts:readonly DamageImpactContext[]):DamageImpactContext|undefined{if(!contexts.length)return undefined;let damage=0,dx=0,dy=0,killed=false;for(const context of contexts){damage+=context.damage;dx+=context.directionX*context.damage;dy+=context.directionY*context.damage;killed||=Boolean(context.killed);}return{...contexts[0]!,damage,directionX:dx,directionY:dy,killed};}
 
 function createMeleePlan(context:DamageImpactContext,seed:number,dx:number,dy:number,baseAngle:number):BloodEffectPlan{
-  const particles:BloodParticlePlan[]=[];const impactCount=4+(context.killed?2:0);
+  const profile=context.kind==="melee-stab"?"melee-stab":context.kind==="melee-heavy"?"melee-heavy":context.kind==="melee-swing"?"melee-swing":"melee";
+  const spread=profile==="melee-stab"?.72:profile==="melee-heavy"?2.15:2.7;
+  const distanceScale=profile==="melee-stab"?1.5:profile==="melee-heavy"?1.3:1;
+  const impactCount=(profile==="melee-heavy"?7:profile==="melee-stab"?4:5)+(context.killed?2:0);const particles:BloodParticlePlan[]=[];
   for(let index=0;index<impactCount;index++){
-    const fan=(index/(Math.max(1,impactCount-1))-.5)*2.7;const angle=baseAngle+fan+(random(seed,index*4)-.5)*.35;const travel=2+random(seed,index*4+1)*7;
+    const fan=(index/(Math.max(1,impactCount-1))-.5)*spread;const angle=baseAngle+fan+(random(seed,index*4)-.5)*.35;const travel=(2+random(seed,index*4+1)*7)*distanceScale;
     particles.push(particle(context,angle,travel,180+random(seed,index*4+2)*180,index%3===0?2:1,index%2,"impact"));
   }
   const droplets=5+(context.killed?2:0);
@@ -48,7 +51,7 @@ function createMeleePlan(context:DamageImpactContext,seed:number,dx:number,dy:nu
     particles.push(particle(context,angle,travel,260+random(seed,62+index*3)*180,index%3===0?2:1,1,"droplet"));
   }
   const decalDistance=random(seed,121)*5;
-  return{profile:"melee",particles,decal:{x:context.hitX+dx*decalDistance+(random(seed,122)-.5)*5,y:context.hitY+dy*decalDistance+2+random(seed,123)*4,radius:clamp(2.5+context.damage/28+(context.killed?1:0),2.5,6),directionX:dx,directionY:dy,profile:"melee",sequence:context.sequence}};
+  return{profile,particles,decal:{x:context.hitX+dx*decalDistance+(random(seed,122)-.5)*5,y:context.hitY+dy*decalDistance+2+random(seed,123)*4,radius:clamp(2.5+context.damage/28+(context.killed?1:0),2.5,6),directionX:dx,directionY:dy,profile,sequence:context.sequence}};
 }
 
 function particle(context:DamageImpactContext,angle:number,travelDistance:number,lifetimeMs:number,size:number,tailLength:number,role:BloodParticleRole):BloodParticlePlan{

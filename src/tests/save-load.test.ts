@@ -51,6 +51,17 @@ describe("SaveSystem", () => {
     expect(loaded?.exploredFog).toEqual({ cellSize: 3, encoding: "rle-v1", runs: [1, 2, 50, 1] });
   });
 
+  it("preserves optional relative zombie posture timers without adding a player melee action", () => {
+    const storage = new MemoryStorage();
+    const saves = new SaveSystem(storage, "posture");
+    const fixture = saveFixture();
+    fixture.zombies = [{ id: "walker-1", kind: "walker", state: "Stagger", x: 40, y: 50, health: 60, postureValue: 25, postureRecoveryRemainingMs: 900, postureStaggerRemainingMs: 420, postureBreakImmunityRemainingMs: 360 }];
+    expect(saves.save(fixture)).toBe(true);
+    const loaded = saves.load();
+    expect(loaded?.zombies[0]).toMatchObject({ postureValue: 25, postureRecoveryRemainingMs: 900, postureStaggerRemainingMs: 420, postureBreakImmunityRemainingMs: 360 });
+    expect(loaded?.player).not.toHaveProperty("meleeAction");
+  });
+
   it("resets an incompatible 48x48 map save and emits a one-shot notice", () => {
     const storage = new MemoryStorage();
     const saves = new SaveSystem(storage, "test");

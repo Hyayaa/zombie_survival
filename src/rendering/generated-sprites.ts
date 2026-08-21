@@ -2,6 +2,7 @@ import Phaser from "phaser";
 import { DEPTH, ENTITY_OUTLINE } from "../config/game-config";
 import type { WeaponId } from "../data/weapon-definitions";
 import { swingOffsetAt } from "../effects/pixel-effect-math";
+import type { MeleeAttackMode } from "../data/melee-attack-definitions";
 import { EntityOutlineController, type EntityOutlineState, type OutlineableEntityView } from "./entity-outline";
 
 export interface ActorPalette {
@@ -25,6 +26,7 @@ export interface ActorAttackAnimation {
   startedAt: number;
   durationMs: number;
   baseAimAngle: number;
+  meleeMode?: MeleeAttackMode;
 }
 
 export class TopDownActorView implements OutlineableEntityView {
@@ -37,6 +39,8 @@ export class TopDownActorView implements OutlineableEntityView {
   private readonly strokeOutlineShapes: Phaser.GameObjects.Shape[];
   private readonly healthBarBackground: Phaser.GameObjects.Rectangle;
   private readonly healthBarFill: Phaser.GameObjects.Rectangle;
+  private readonly postureBarBackground: Phaser.GameObjects.Rectangle;
+  private readonly postureBarFill: Phaser.GameObjects.Rectangle;
   private attackAnimation?: ActorAttackAnimation;
   private weapon: WeaponId = "pistol";
   private hitUntil = 0;
@@ -52,6 +56,10 @@ export class TopDownActorView implements OutlineableEntityView {
   private lastHealth = Number.NaN;
   private lastMaximum = Number.NaN;
   private lastAlwaysVisible = false;
+  private lastPosture = Number.NaN;
+  private lastPostureMaximum = Number.NaN;
+  private lastPostureShown = false;
+  private lastPostureBroken = false;
   private visible = true;
   private dead = false;
   private readonly outline: EntityOutlineController;
@@ -78,7 +86,9 @@ export class TopDownActorView implements OutlineableEntityView {
     });
     this.healthBarBackground = scene.add.rectangle(-7, -13, 14, 2, 0x171a18, 0.9).setOrigin(0, 0);
     this.healthBarFill = scene.add.rectangle(-7, -13, 14, 2, 0x7aaa65, 1).setOrigin(0, 0);
-    this.visual.add([torsoOutline, torso, torsoLight, headOutline, head, headLight, this.aimLayer, this.healthBarBackground, this.healthBarFill]);
+    this.postureBarBackground = scene.add.rectangle(-9, -16, 18, 2, 0x171a18, 0.88).setOrigin(0, 0).setVisible(false);
+    this.postureBarFill = scene.add.rectangle(-9, -16, 18, 2, 0xd8a84e, 1).setOrigin(0, 0).setVisible(false);
+    this.visual.add([torsoOutline, torso, torsoLight, headOutline, head, headLight, this.aimLayer, this.healthBarBackground, this.healthBarFill, this.postureBarBackground, this.postureBarFill]);
     this.container.add([shadow, this.visual]);
     this.setAim(0);
     this.setWeapon("pistol");
@@ -163,10 +173,16 @@ export class TopDownActorView implements OutlineableEntityView {
         customAttacking = true;
         poseAngle = attack.baseAimAngle;
         if (attack.weapon === "knife" || attack.weapon === "bat") {
-          poseAngle += swingOffsetAt(attack.weapon, progress);
-          visualX = -Math.round(Math.cos(attack.baseAimAngle));
-          visualY = -Math.round(Math.sin(attack.baseAimAngle));
-          if (attack.weapon === "bat") visualRotation = Math.sin(progress * Math.PI) * 0.045;
+          if (attack.meleeMode === "stab") {
+            const thrust = Math.sin(progress * Math.PI) * 3;
+            visualX = Math.round(Math.cos(attack.baseAimAngle) * thrust);
+            visualY = Math.round(Math.sin(attack.baseAimAngle) * thrust);
+          } else {
+            poseAngle += swingOffsetAt(attack.weapon, progress) * (attack.meleeMode === "heavy" ? 1.15 : 1);
+            visualX = -Math.round(Math.cos(attack.baseAimAngle));
+            visualY = -Math.round(Math.sin(attack.baseAimAngle));
+            if (attack.weapon === "bat") visualRotation = Math.sin(progress * Math.PI) * (attack.meleeMode === "heavy" ? 0.075 : 0.045);
+          }
         } else {
           const recoil = progress < 0.3 ? progress / 0.3 : 1 - (progress - 0.3) / 0.7;
           aimOffsetX = -Math.cos(attack.baseAimAngle) * Math.round(recoil * 2);
@@ -223,6 +239,19 @@ export class TopDownActorView implements OutlineableEntityView {
     const ratio = Math.max(0, current / maximum);
     this.healthBarFill.setScale(ratio, 1);
     this.healthBarFill.setFillStyle(ratio > 0.45 ? 0x7aaa65 : 0xb64f45, 1);
+  }
+
+  setPosture(current: number, maximum: number, shown: boolean, broken: boolean): void {
+    if (current === this.lastPosture && maximum === this.lastPostureMaximum && shown === this.lastPostureShown && broken === this.lastPostureBroken) return;
+    this.lastPosture = current;
+    this.lastPostureMaximum = maximum;
+    this.lastPostureShown = shown;
+    this.lastPostureBroken = broken;
+    this.postureBarBackground.setVisible(shown);
+    this.postureBarFill.setVisible(shown);
+    if (!shown) return;
+    this.postureBarFill.setScale(Math.max(0, Math.min(1, current / Math.max(1, maximum))), 1);
+    this.postureBarFill.setFillStyle(broken ? 0xf0e5b0 : 0xd8a84e, 1);
   }
 
   setVisible(visible: boolean): void {

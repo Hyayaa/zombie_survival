@@ -18,6 +18,8 @@ export interface AttackEffectEvent {
   endpointY?: number;
   impacts: readonly AttackEffectImpact[];
   alwaysShowCore?: boolean;
+  meleeMode?: "stab" | "swing" | "heavy";
+  charge?: number;
 }
 
 export const ATTACK_EFFECT_DURATION_MS: Record<AttackEffectWeapon, number> = {

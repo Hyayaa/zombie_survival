@@ -2,10 +2,11 @@ import type Phaser from "phaser";
 import { DEPTH } from "../config/game-config";
 import type { AttackEffectSink } from "./attack-effect-controller";
 import { PIXEL_EFFECT_PRIORITY, type AttackEffectEvent } from "./pixel-effect-definitions";
-import { effectRandom, effectSeed, getMuzzlePosition, getTracerSegment, getTracerSegmentCount, MUZZLE_FLASH_PROFILES, sampleSwingPixel } from "./pixel-effect-math";
+import { effectRandom, effectSeed, getMuzzlePosition, getTracerSegment, getTracerSegmentCount, MUZZLE_FLASH_PROFILES } from "./pixel-effect-math";
 import { PixelSlotPool } from "./pixel-effect-pool";
 import { createBloodEffectPlan, type DamageImpactContext } from "./blood-effect-math";
 import { BloodDecalLayer } from "./blood-decal-layer";
+import { createChargePixelPlan, createMeleeTrailPlan, createPostureShatterPlan } from "./melee-pixel-effect-math";
 import { createFootstepDustPlan, type FootstepDustTerrain } from "./footstep-dust";
 
 const PARTICLE_CAPACITY = 192;
@@ -80,6 +81,17 @@ export class PixelEffectSystem implements AttackEffectSink {
   }
 
   emitDirectionalBlood(context:DamageImpactContext,now:number):void{const plan=createBloodEffectPlan(context);this.bloodDecals.add(plan.decal,now);if(!this.isVisible(context.hitX,context.hitY))return;for(let index=0;index<plan.particles.length;index++){const particle=plan.particles[index]!;const color=particle.role==="impact"&&index<2?0xce5a4e:BLOOD_COLORS[index%BLOOD_COLORS.length]!;this.spawnBlood(particle.x,particle.y,particle.velocityX,particle.velocityY,particle.role==="droplet"?25:particle.role==="impact"?16:10,particle.role==="streak"?1.15:2.1,color,particle.size,particle.tailLength,now,now+particle.lifetimeMs);}}
+
+  emitMeleeCharge(x: number, y: number, angle: number, charge: number, sequence: number, now: number): void {
+    if (!this.isVisible(x, y)) return;
+    for (const pixel of createChargePixelPlan(sequence, x, y, angle, charge)) this.spawn(this.particles, pixel.x, pixel.y, 0, 0, 0, 0, 0xd8a84e, pixel.size, pixel.size, now + pixel.delayMs, now + pixel.delayMs + pixel.lifetimeMs, 0.75, true, PIXEL_EFFECT_PRIORITY.swing, DEPTH.effectEmissive, false);
+  }
+
+  emitPostureBreak(x: number, y: number, angle: number, sequence: number, now: number): void {
+    if (!this.isVisible(x, y)) return;
+    const colors = [0xf0e5b0, 0xd8a84e, 0x8f6139] as const;
+    for (const pixel of createPostureShatterPlan(sequence, x, y, angle)) this.spawn(this.particles, pixel.x, pixel.y, Math.cos(angle + Math.PI) * 5, Math.sin(angle + Math.PI) * 5, 8, 2, colors[pixel.colorIndex]!, pixel.size, pixel.size, now + pixel.delayMs, now + pixel.delayMs + pixel.lifetimeMs, 1, true, PIXEL_EFFECT_PRIORITY.impact, DEPTH.effectEmissive, false);
+  }
 
   emitWallImpact(x: number, y: number, shotAngle: number, sequence: number, now: number): void {
     if (!this.isVisible(x, y)) return;
@@ -168,17 +180,13 @@ export class PixelEffectSystem implements AttackEffectSink {
 
   private emitSwing(event: AttackEffectEvent, seed: number): void {
     const weapon = event.weapon as "knife" | "bat";
-    const count = weapon === "knife" ? 11 : 15;
-    const trailDuration = weapon === "knife" ? 72 : 132;
-    const lifetime = weapon === "knife" ? 44 : 68;
     const colors = weapon === "knife" ? KNIFE_COLORS : BAT_COLORS;
-    for (let index = 0; index < count; index += 1) {
-      const progress = index / Math.max(1, count - 1);
-      const point = sampleSwingPixel(weapon, event.originX, event.originY, event.angle, progress, seed, index);
-      const startsAt = event.startedAt + progress * trailDuration;
-      const thickness = weapon === "bat" ? index % 3 === 0 ? 3 : 2 : index % 4 === 0 ? 2 : 1;
-      this.spawn(this.swings, point.x, point.y, 0, 0, 0, 0, colors[index % colors.length] as number,
-        thickness, weapon === "bat" ? 2 : 1, startsAt, startsAt + lifetime, 1, false,
+    const plan = createMeleeTrailPlan(event.sequence, weapon, event.meleeMode ?? "swing", event.originX, event.originY, event.angle, event.charge);
+    for (let index = 0; index < plan.length; index += 1) {
+      const pixel = plan[index]!;
+      const startsAt = event.startedAt + pixel.delayMs;
+      this.spawn(this.swings, pixel.x, pixel.y, 0, 0, 0, 0, colors[pixel.colorIndex] as number,
+        pixel.size, weapon === "bat" ? 2 : 1, startsAt, startsAt + pixel.lifetimeMs, 1, false,
         PIXEL_EFFECT_PRIORITY.swing, weapon === "knife" ? DEPTH.effectEmissive : DEPTH.effectWorld, false);
     }
     if (weapon === "bat") this.emitDust(event.originX, event.originY + 5, event.angle + Math.PI, seed, 4, event.startedAt + 30);

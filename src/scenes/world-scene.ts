@@ -11,6 +11,7 @@ import { getInventoryObjectDefinition, isWeaponItemId } from "../data/inventory-
 import { RECIPE_DEFINITIONS } from "../data/recipe-definitions";
 import { BUILDABLE_ITEM_KIND, BUILDABLE_DEFINITIONS, type BuildableKind } from "../data/buildable-definitions";
 import { isFirearmId, WEAPON_DEFINITIONS } from "../data/weapon-definitions";
+import { getChargedMeleeDefinition, isMeleeWeaponId, MELEE_ATTACK_DEFINITIONS, MELEE_INPUT_BALANCE, type MeleeAttackMode } from "../data/melee-attack-definitions";
 import type { ZombieKind } from "../data/zombie-definitions";
 import { PerformanceMonitor } from "../debug/performance-monitor";
 import { AttackEffectController, getAttackBlockReason } from "../effects/attack-effect-controller";
@@ -33,7 +34,7 @@ import { AudioSystem,playFirearmShotForEvent } from "../systems/audio-system";
 import { CameraController, configurePaddedCameraBounds } from "../systems/camera-controller";
 import { CollisionSystem } from "../systems/collision-system";
 import { pointSegmentDistanceSquared, visibilityProbeTowardPoint } from "../systems/collision-geometry";
-import { angleDifference, distance, firstTargetOnLine, getFinalZombieKnockback, targetsInMeleeArc, type ZombieKnockbackKind } from "../systems/combat-system";
+import { angleDifference, distance, firstTargetOnLine, getFinalZombieKnockback, type ZombieKnockbackKind } from "../systems/combat-system";
 import { chooseLocalSteering, findNearestWalkableGoal, getCompanionCombatMovement, getCompanionFollowSpeed, getCompanionStuckDuration, getWorldTileIndex, markCompanionBlocked, markCompanionRepath, selectCompanionCombatTarget, shouldOverrideCompanionGoalForCombat, updateCatchUpMode, updateCompanionStuckState } from "../systems/companion-navigation";
 import { createFormationState, getFormationSlot, updateFormationDirection, type FormationState } from "../systems/companion-system";
 import { CraftingSystem } from "../systems/crafting-system";
@@ -65,6 +66,9 @@ import { PauseMenu } from "../ui/pause-menu";
 import { MinimapPanel, shouldPauseSimulationForMap } from "../ui/minimap";
 import { DayAnnouncement, getInitialDayAnnouncement } from "../ui/day-announcement";
 import { getFootstepEvent } from "../systems/footstep-system";
+import { MeleeActionController } from "../systems/melee-input-state";
+import { collectMeleeTargets, MeleeHitTracker, type MeleeHit } from "../systems/melee-combat-system";
+import { HitStopSystem } from "../systems/hit-stop-system";
 
 interface WorldSceneData {
   load?: boolean;
@@ -166,6 +170,7 @@ export class WorldScene extends Phaser.Scene {
   private dayAnnouncement!: DayAnnouncement;
   private tintOverlay!: Phaser.GameObjects.Rectangle;
   private telegraphGraphics!: Phaser.GameObjects.Graphics;
+  private meleeChargeGraphics!: Phaser.GameObjects.Graphics;
   private performanceMonitor!: PerformanceMonitor;
   private fires: FireRuntime[] = [];
   private formation: FormationState = createFormationState();
@@ -199,6 +204,12 @@ export class WorldScene extends Phaser.Scene {
   private readonly worldObjects = new WorldObjectRegistry();
   private readonly autoPickup = new AutoPickupSystem();
   private readonly cameraFeedback = new CameraFeedbackSystem();
+  private readonly meleeAction = new MeleeActionController();
+  private readonly meleeHitTracker = new MeleeHitTracker();
+  private readonly meleeTargetScratch: MeleeHit[] = [];
+  private readonly hitStop = new HitStopSystem();
+  private nextChargeEffectAt = 0;
+  private readonly preventCanvasContextMenu = (event: Event) => event.preventDefault();
   private nextAutoPickupAt = 0;
   private nextInventoryFullMessageAt = 0;
   private nextZombieGrowlAt = 0;
@@ -296,6 +307,7 @@ export class WorldScene extends Phaser.Scene {
       .setScrollFactor(0)
       .setDepth(DEPTH.tint);
     this.telegraphGraphics = this.add.graphics().setDepth(DEPTH.propFront + 500);
+    this.meleeChargeGraphics = this.add.graphics().setDepth(DEPTH.effectEmissive);
 
     this.configureCamera();
     this.configureInput();
@@ -318,12 +330,15 @@ export class WorldScene extends Phaser.Scene {
     this.handlePanelKeys();
     this.capturePointerWorldSnapshot();
     if (shouldPauseSimulationForMap(this.minimap.getMode())) {
+      this.cancelMeleeAction();
       this.minimap.update(time, this.getMinimapDynamicState());
       this.recordNavigationDiagnostics();
       this.performanceMonitor.update(time, this.activeZombieCount);
       return;
     }
+    if (this.commandPanel.isOpen()) this.cancelMeleeAction();
     if (this.inventoryPanel.isOpen() || this.pauseMenu.isOpen()) {
+      this.cancelMeleeAction();
       this.player.updateView(this.simulationTime);
       this.updateCamera(rawDelta, false);
       this.recordNavigationDiagnostics();
@@ -332,7 +347,7 @@ export class WorldScene extends Phaser.Scene {
     }
 
     const timeScale = this.commandPanel.isOpen() ? 0.25 : 1;
-    const deltaMs = Math.min(rawDelta, 50) * timeScale;
+    const deltaMs = this.hitStop.consume(Math.min(rawDelta, 50) * timeScale);
     const deltaSeconds = deltaMs / 1_000;
     this.simulationTime += deltaMs;
     const clockUpdate = this.clock.update(deltaSeconds);
@@ -340,6 +355,7 @@ export class WorldScene extends Phaser.Scene {
     this.noise.updateGunshotPressure(deltaSeconds);
     this.audio.updateBgm(this.noise.getGunshotPressure().value, deltaSeconds);
     this.telegraphGraphics.clear();
+    this.meleeChargeGraphics.clear();
 
     this.updatePlayer(deltaSeconds);
     this.updateAutoPickup();
@@ -427,6 +443,9 @@ export class WorldScene extends Phaser.Scene {
     this.nextFootstepAt = 0;
     this.nextHudAt = 0;
     this.nextZombieGrowlAt = 2_500;
+    this.nextChargeEffectAt = 0;
+    this.meleeAction.cancel();
+    this.hitStop.clear();
     this.fogInvalidation.reset();
     this.visionSources.length = 0;
     this.nextNightSpawnAt = 0;
@@ -656,15 +675,27 @@ export class WorldScene extends Phaser.Scene {
     }) as unknown as WorldKeys;
     this.input.on("pointerdown", (pointer: Phaser.Input.Pointer) => {
       this.audio.unlockAndStartBgm();
-      if (pointer.button !== 0 || this.inventoryPanel?.isOpen() || this.pauseMenu?.isOpen() || this.minimap?.isFull()) return;
+      if ((pointer.button !== 0 && pointer.button !== 2) || this.inventoryPanel?.isOpen() || this.pauseMenu?.isOpen() || this.minimap?.isFull()) return;
       const world = this.cameras.main.getWorldPoint(pointer.x, pointer.y, this.pointerWorldSnapshot);
       this.player.aimAngle = Math.atan2(world.y - this.player.position.y, world.x - this.player.position.x);
-      if (this.pendingCompanionCommand) {
+      if (pointer.button === 0 && this.pendingCompanionCommand) {
         this.applyPendingCompanionCommand(world);
         return;
       }
-      if (!this.commandPanel?.isOpen()) this.tryPlayerAttack();
+      if (this.commandPanel?.isOpen() || !this.player.equippedWeapon) return;
+      if (isMeleeWeaponId(this.player.equippedWeapon)) {
+        if (pointer.button === 0) this.meleeAction.pressPrimary(this.simulationTime, this.player.aimAngle, this.player.equippedWeapon);
+        else this.tryStartMeleeSwing(this.player.equippedWeapon);
+      } else if (pointer.button === 0) this.tryPlayerAttack();
     });
+    this.input.on("pointerup", (pointer: Phaser.Input.Pointer) => {
+      if (pointer.button !== 0 || !isMeleeWeaponId(this.player.equippedWeapon)) return;
+      if (this.meleeAction.state.phase !== "charging") return;
+      const mode = this.simulationTime - this.meleeAction.state.pressedAt >= MELEE_INPUT_BALANCE.heavyThresholdMs ? "heavy" : "stab";
+      if (this.meleeAction.releasePrimary(this.simulationTime, this.player.survivalNeeds.stamina)) this.commitMeleeStamina(mode);
+      else this.showMeleeStaminaFailure(mode);
+    });
+    this.game.canvas.addEventListener("contextmenu", this.preventCanvasContextMenu);
     keyboard.on("keydown",()=>this.audio.unlockAndStartBgm());
   }
 
@@ -767,10 +798,21 @@ export class WorldScene extends Phaser.Scene {
   }
 
   private updatePlayer(deltaSeconds: number): void {
-    this.player.aimAngle = Math.atan2(
+    const pointerAim = Math.atan2(
       this.pointerWorldSnapshot.y - this.player.position.y,
       this.pointerWorldSnapshot.x - this.player.position.x,
     );
+    const meleeState = this.meleeAction.state;
+    if (meleeState.phase === "idle") this.player.aimAngle = pointerAim;
+    else if (meleeState.phase === "charging" || meleeState.phase === "windup") {
+      const turnSpeed = meleeState.phase === "charging" ? 2.5 : meleeState.weapon && meleeState.mode ? MELEE_ATTACK_DEFINITIONS[meleeState.weapon][meleeState.mode].turnSpeedRadiansPerSecond : 2.5;
+      meleeState.aimAngle = rotateAngleToward(meleeState.aimAngle, pointerAim, turnSpeed * deltaSeconds);
+      this.player.aimAngle = meleeState.aimAngle;
+    } else this.player.aimAngle = meleeState.aimAngle;
+
+    const meleeAttack = this.meleeAction.update(this.simulationTime);
+    if (meleeAttack) this.executeMeleeAttack(meleeAttack.mode, meleeAttack.weapon, meleeAttack.aimAngle, meleeAttack.charge, meleeAttack.sequence);
+    this.updateMeleeChargeFeedback();
 
     if (this.player.reloadingUntil > 0 && this.simulationTime >= this.player.reloadingUntil) this.finishReload();
     if (Phaser.Input.Keyboard.JustDown(this.keys.reload)) this.startReload();
@@ -793,7 +835,8 @@ export class WorldScene extends Phaser.Scene {
     const runningRequested = wantsToRun && canRun(this.player.survivalNeeds, this.player.survivalRuntime);
     let speed = runningRequested ? BALANCE.playerRunSpeed * getRunSpeedMultiplier(this.player.survivalNeeds) : BALANCE.playerWalkSpeed;
     speed *= this.infection.getMovementMultiplier(this.player.vitals.infection);
-    if (this.simulationTime - this.player.lastAttackAt < 170) speed *= 0.62;
+    speed *= this.meleeAction.getMovementMultiplier();
+    if (this.meleeAction.state.phase === "idle" && this.simulationTime - this.player.lastAttackAt < 170) speed *= 0.62;
     const previousX = this.player.position.x;
     const previousY = this.player.position.y;
     const next = this.collision.moveCircle(this.player.position, moveX * speed * deltaSeconds, moveY * speed * deltaSeconds, BALANCE.playerRadius);
@@ -843,9 +886,84 @@ export class WorldScene extends Phaser.Scene {
     this.wasInSafehouse = insideSafehouse;
   }
 
+  private tryStartMeleeSwing(weapon: "knife" | "bat"): void {
+    if (this.meleeAction.pressSecondary(this.simulationTime, this.player.aimAngle, weapon, this.player.survivalNeeds.stamina)) this.commitMeleeStamina("swing");
+    else if (this.meleeAction.state.phase === "idle") this.showMeleeStaminaFailure("swing");
+  }
+
+  private commitMeleeStamina(mode: MeleeAttackMode): void {
+    const weapon = this.meleeAction.state.weapon;
+    if (!weapon) return;
+    this.player.survivalNeeds.stamina = Math.max(0, this.player.survivalNeeds.stamina - MELEE_ATTACK_DEFINITIONS[weapon][mode].staminaCost);
+    this.player.lastAttackAt = this.simulationTime;
+  }
+
+  private showMeleeStaminaFailure(mode: MeleeAttackMode): void {
+    if (!isMeleeWeaponId(this.player.equippedWeapon)) return;
+    if (this.player.survivalNeeds.stamina < MELEE_ATTACK_DEFINITIONS[this.player.equippedWeapon][mode].staminaCost) this.hud.showMessage("기력이 부족합니다.", 900);
+  }
+
+  private cancelMeleeAction(): void {
+    this.meleeAction.cancel();
+    this.meleeChargeGraphics?.clear();
+  }
+
+  private updateMeleeChargeFeedback(): void {
+    const state = this.meleeAction.state;
+    if (state.phase !== "charging") return;
+    const filled = Math.floor(state.charge * 8);
+    for (let index = 0; index < 8; index += 1) {
+      const angle = state.aimAngle - 0.7 + index * 0.2;
+      const radius = 15;
+      this.meleeChargeGraphics.fillStyle(index < filled ? 0xf0d27b : 0x5b5140, index < filled ? 0.95 : 0.5)
+        .fillRect(Math.round(this.player.position.x + Math.cos(angle) * radius), Math.round(this.player.position.y + Math.sin(angle) * radius), 2, 2);
+    }
+    if (state.charge >= 0.2 && this.simulationTime >= this.nextChargeEffectAt) {
+      this.nextChargeEffectAt = this.simulationTime + 120;
+      this.effects.emitMeleeCharge(this.player.position.x, this.player.position.y, state.aimAngle, state.charge, state.sequence * 1_000 + Math.floor(this.simulationTime / 120), this.simulationTime);
+    }
+  }
+
+  private executeMeleeAttack(mode: MeleeAttackMode, weaponId: "knife" | "bat", aimAngle: number, charge: number, sequence: number): void {
+    const attack = mode === "heavy" ? getChargedMeleeDefinition(weaponId, charge) : MELEE_ATTACK_DEFINITIONS[weaponId][mode];
+    const hits = collectMeleeTargets(this.player.position, aimAngle, attack, this.zombies, (origin, target) => this.collision.hasLineOfSight(origin, target), this.meleeTargetScratch);
+    const impacts: AttackEffectImpact[] = [];
+    this.meleeHitTracker.begin(sequence);
+    let postureBroken = false;
+    for (const hit of hits) {
+      const zombie = hit.target as Zombie;
+      if (!this.meleeHitTracker.tryHit(zombie.id)) continue;
+      const direction = normalize({ x: zombie.position.x - this.player.position.x, y: zombie.position.y - this.player.position.y });
+      const alreadyBroken = zombie.posture.staggerUntil > this.simulationTime;
+      const damageBonus = mode === "heavy" && alreadyBroken ? MELEE_INPUT_BALANCE.postureBrokenDamageBonus : 1;
+      const damage = attack.damage * hit.multiplier * damageBonus;
+      impacts.push({ x: zombie.position.x, y: zombie.position.y, kind: "zombie" });
+      const killed = this.damageZombie(zombie, damage, { x: direction.x * attack.knockback, y: direction.y * attack.knockback }, { kind: `melee-${mode}`, hitX: zombie.position.x, hitY: zombie.position.y, directionX: direction.x, directionY: direction.y, weaponId, sequence: ++this.ambientEffectSequence });
+      if (!killed) {
+        const posture = zombie.damagePosture(attack.postureDamage * hit.multiplier, this.simulationTime);
+        if (posture.broken) {
+          postureBroken = true;
+          const breakDistance = zombie.kind === "runner" ? 10 : 13;
+          zombie.position = this.collision.moveCircle(zombie.position, direction.x * breakDistance, direction.y * breakDistance, BALANCE.zombieRadius);
+          this.effects.emitPostureBreak(zombie.position.x, zombie.position.y, aimAngle, ++this.ambientEffectSequence, this.simulationTime);
+          this.audio.playForEvent("posture-break", sequence, { source: zombie.position, listener: this.player.position });
+          this.cameraFeedback.request("posture-break", this.simulationTime);
+        }
+      }
+    }
+    this.noise.emit({ x: this.player.position.x, y: this.player.position.y, intensity: WEAPON_DEFINITIONS[weaponId].noise, category: "melee", createdAt: this.simulationTime });
+    this.attackEffects.play({ weapon: weaponId, originX: this.player.position.x, originY: this.player.position.y, angle: aimAngle, startedAt: this.simulationTime, impacts, alwaysShowCore: true, meleeMode: mode, charge });
+    this.player.beginAttack(this.simulationTime, mode, attack.activeMs + Math.min(attack.recoveryMs, 160));
+    this.audio.playForEvent(impacts.length > 0 ? "melee-hit" : "melee-swing", sequence, { source: this.player.position, listener: this.player.position, volumeScale: mode === "heavy" ? 1.2 : mode === "stab" ? 0.82 : 1 });
+    const feedback: CameraFeedbackEvent = mode === "stab" ? (impacts.length ? "melee-stab-hit" : "melee-stab-miss") : mode === "swing" ? (impacts.length ? "melee-swing-hit" : "melee-swing-miss") : (impacts.length ? "melee-heavy-hit" : "melee-heavy-miss");
+    this.cameraFeedback.request(feedback, this.simulationTime);
+    if (impacts.length > 0) this.hitStop.request(postureBroken ? 65 : attack.hitStopMs);
+  }
+
   private tryPlayerAttack(): void {
     if (!this.player.equippedWeapon) return;
     const weapon = WEAPON_DEFINITIONS[this.player.equippedWeapon];
+    if (weapon.kind === "melee") return;
     const blockReason = getAttackBlockReason({
       now: this.simulationTime,
       lastAttackAt: this.player.lastAttackAt,
@@ -865,22 +983,9 @@ export class WorldScene extends Phaser.Scene {
     let endpointX: number | undefined;
     let endpointY: number | undefined;
 
-    if (weapon.kind === "melee") {
-      const targets = targetsInMeleeArc(this.player.position, this.player.aimAngle, weapon, this.zombies
-        .filter((zombie) => this.collision.hasLineOfSight(this.player.position, zombie.position))
-        .map((zombie) => ({ id: zombie.id, position: zombie.position, alive: zombie.isAlive() })));
-      targets.forEach((target) => {
-        const zombie = this.zombies.find((candidate) => candidate.id === target.id);
-        if (!zombie) return;
-        impacts.push({ x: zombie.position.x, y: zombie.position.y, kind: "zombie" });
-        const direction = normalize({ x: zombie.position.x - this.player.position.x, y: zombie.position.y - this.player.position.y });
-        this.damageZombie(zombie, weapon.damage, { x: direction.x * weapon.knockback, y: direction.y * weapon.knockback },{kind:"melee",hitX:zombie.position.x,hitY:zombie.position.y,directionX:direction.x,directionY:direction.y,weaponId:weapon.id,sequence:++this.ambientEffectSequence});
-      });
-      this.audio.play(impacts.length>0?"melee-hit":"melee-swing");
-    } else {
-      const pelletAngles = createPelletAngles(this.player.aimAngle, weapon, () => this.rng.next());
-      const bloodByZombie=new Map<string,DamageImpactContext[]>();
-      for (const pelletAngle of pelletAngles) {
+    const pelletAngles = createPelletAngles(this.player.aimAngle, weapon, () => this.rng.next());
+    const bloodByZombie=new Map<string,DamageImpactContext[]>();
+    for (const pelletAngle of pelletAngles) {
         const rawEnd = { x: this.player.position.x + Math.cos(pelletAngle) * weapon.range, y: this.player.position.y + Math.sin(pelletAngle) * weapon.range };
         const wallHit = this.collision.firstProjectileCollision(this.player.position, rawEnd);
         const end = wallHit ?? rawEnd;
@@ -895,32 +1000,20 @@ export class WorldScene extends Phaser.Scene {
           const killed=this.damageZombie(zombie, weapon.damage, rawKnockback);
           const contexts=bloodByZombie.get(zombie.id)??[];contexts.push({kind:"projectile",damage:weapon.damage,hitX:zombie.position.x,hitY:zombie.position.y,directionX:direction.x,directionY:direction.y,weaponId:weapon.id,sequence:++this.ambientEffectSequence,killed});bloodByZombie.set(zombie.id,contexts);
         } else if (wallHit) { impacts.push({ x: wallHit.x, y: wallHit.y, kind: "wall" }); }
-      }
-      this.attackEffects.play({ weapon: weapon.id, originX: this.player.position.x, originY: this.player.position.y, angle: this.player.aimAngle, startedAt: this.simulationTime, endpointX, endpointY, impacts, alwaysShowCore: true });
-      for(const [zombieId,contexts] of bloodByZombie){const context=aggregateProjectileDamage(contexts);if(!context)continue;this.effects.emitDirectionalBlood(context,this.simulationTime);if(weapon.id==="shotgun"){const zombie=this.zombies.find((candidate)=>candidate.id===zombieId);if(zombie?.isAlive()){const direction=normalize({x:context.directionX,y:context.directionY});const magnitude=Math.min(weapon.knockback*1.6,weapon.knockback*Math.sqrt(contexts.length));this.applyZombieKnockback(zombie,{x:direction.x*magnitude,y:direction.y*magnitude},context.damage,"ranged");}}}
-      if(isFirearmId(weapon.id))playFirearmShotForEvent(this.audio,weapon.id,this.attackEffects.lastSequence,{source:this.player.position,listener:this.player.position});
     }
+    this.attackEffects.play({ weapon: weapon.id, originX: this.player.position.x, originY: this.player.position.y, angle: this.player.aimAngle, startedAt: this.simulationTime, endpointX, endpointY, impacts, alwaysShowCore: true });
+    for(const [zombieId,contexts] of bloodByZombie){const context=aggregateProjectileDamage(contexts);if(!context)continue;this.effects.emitDirectionalBlood(context,this.simulationTime);if(weapon.id==="shotgun"){const zombie=this.zombies.find((candidate)=>candidate.id===zombieId);if(zombie?.isAlive()){const direction=normalize({x:context.directionX,y:context.directionY});const magnitude=Math.min(weapon.knockback*1.6,weapon.knockback*Math.sqrt(contexts.length));this.applyZombieKnockback(zombie,{x:direction.x*magnitude,y:direction.y*magnitude},context.damage,"ranged");}}}
+    if(isFirearmId(weapon.id))playFirearmShotForEvent(this.audio,weapon.id,this.attackEffects.lastSequence,{source:this.player.position,listener:this.player.position});
     this.player.beginAttack(this.simulationTime);
-    const feedbackEvent:CameraFeedbackEvent=weapon.kind==="melee"?(impacts.length>0?"melee-hit":"melee-swing"):weapon.id==="smg"?"smg-shot":weapon.id==="shotgun"?"shotgun-shot":weapon.id==="hunting_rifle"?"rifle-shot":"pistol-shot";
+    const feedbackEvent:CameraFeedbackEvent=weapon.id==="smg"?"smg-shot":weapon.id==="shotgun"?"shotgun-shot":weapon.id==="hunting_rifle"?"rifle-shot":"pistol-shot";
     this.cameraFeedback.request(feedbackEvent,this.simulationTime);
-    if (weapon.kind === "melee") this.attackEffects.play({
-      weapon: weapon.id,
-      originX: this.player.position.x,
-      originY: this.player.position.y,
-      angle: this.player.aimAngle,
-      startedAt: this.simulationTime,
-      endpointX,
-      endpointY,
-      impacts,
-      alwaysShowCore: true,
-    });
   }
 
   private damageZombie(zombie: Zombie, damage: number, knockback: Point, impact?:Omit<DamageImpactContext,"damage"|"killed">): boolean {
-    const kind: ZombieKnockbackKind = impact?.kind === "melee" ? "melee" : "ranged";
+    const kind: ZombieKnockbackKind = impact?.kind.startsWith("melee") ? "melee" : "ranged";
     const killed = zombie.damage(damage, getFinalZombieKnockback(knockback, damage, kind), this.simulationTime);
     if(impact)this.effects.emitDirectionalBlood({...impact,damage,killed},this.simulationTime);
-    this.audio.play(killed?"zombie-death":"zombie-hit",{source:zombie.position,listener:this.player.position});
+    if (!impact?.kind.startsWith("melee") || killed) this.audio.play(killed?"zombie-death":"zombie-hit",{source:zombie.position,listener:this.player.position});
     if (killed && this.rng.chance(0.28)) {
       const itemId = this.rng.chance(0.45) ? "pistol_ammo" : "cloth";
       this.spawnDrop(itemId, 1, zombie.position.x, zombie.position.y);
@@ -983,6 +1076,11 @@ export class WorldScene extends Phaser.Scene {
         zombie.mind.visualLock = state.visualLock ?? false;
         zombie.mind.currentTargetId = state.currentTargetId;
         zombie.mind.lastSeenAt = state.lastSeenAt ?? 0;
+        zombie.posture.value = Math.max(0, Math.min(zombie.posture.maximum, state.postureValue ?? zombie.posture.maximum));
+        zombie.posture.recoveryStartsAt = this.simulationTime + Math.max(0, state.postureRecoveryRemainingMs ?? 0);
+        zombie.posture.staggerUntil = this.simulationTime + Math.max(0, state.postureStaggerRemainingMs ?? 0);
+        zombie.posture.breakImmunityUntil = this.simulationTime + Math.max(0, state.postureBreakImmunityRemainingMs ?? 0);
+        if ((state.postureStaggerRemainingMs ?? 0) > 0) { zombie.staggerUntil = zombie.posture.staggerUntil; zombie.mind = { ...zombie.mind, state: "Stagger" }; }
         return zombie;
       });
     } else {
@@ -999,9 +1097,10 @@ export class WorldScene extends Phaser.Scene {
     this.minimapZombieSources.length = 0;
     this.zombies.forEach((zombie, index) => {
       if (!zombie.isAlive()) {
-        zombie.updateView(time, this.fog.getStateAtWorld(zombie.position.x, zombie.position.y) === VisibilityState.Visible);
+        zombie.updateView(time, this.fog.getStateAtWorld(zombie.position.x, zombie.position.y) === VisibilityState.Visible, false, this.simulationTime);
         return;
       }
+      zombie.updatePosture(this.simulationTime, deltaSeconds);
       if (this.isZombieDormant(zombie) && !zombie.mind.visualLock) {
         zombie.view.setVisible(false);
         return;
@@ -1012,7 +1111,7 @@ export class WorldScene extends Phaser.Scene {
         zombie.mind = { ...zombie.mind, state: "Chase" };
       }
       if (zombie.mind.state === "AttackObstacle" && this.updateZombieObstacleAttack(zombie)) {
-        zombie.updateView(time, this.fog.getStateAtWorld(zombie.position.x, zombie.position.y) === VisibilityState.Visible);
+        zombie.updateView(time, this.fog.getStateAtWorld(zombie.position.x, zombie.position.y) === VisibilityState.Visible, this.isZombieMeleeTargeted(zombie), this.simulationTime);
         return;
       }
       let perceivedTarget = targets.find((target) => target.id === zombie.mind.currentTargetId);
@@ -1053,8 +1152,15 @@ export class WorldScene extends Phaser.Scene {
         this.telegraphGraphics.lineStyle(2, 0xb74f43, 0.85).strokeCircle(zombie.position.x, zombie.position.y, 11);
       }
       zombie.aimAngle = attackTarget ? Math.atan2(attackTarget.position.y - zombie.position.y, attackTarget.position.x - zombie.position.x) : zombie.aimAngle;
-      zombie.updateView(time, this.fog.getStateAtWorld(zombie.position.x, zombie.position.y) === VisibilityState.Visible);
+      zombie.updateView(time, this.fog.getStateAtWorld(zombie.position.x, zombie.position.y) === VisibilityState.Visible, this.isZombieMeleeTargeted(zombie), this.simulationTime);
     });
+  }
+
+  private isZombieMeleeTargeted(zombie: Zombie): boolean {
+    if (!isMeleeWeaponId(this.player.equippedWeapon) || !zombie.isAlive()) return false;
+    const dx = zombie.position.x - this.player.position.x, dy = zombie.position.y - this.player.position.y;
+    if (dx * dx + dy * dy > 55 * 55) return false;
+    return Math.abs(angleDelta(Math.atan2(dy, dx), this.player.aimAngle)) < 0.34;
   }
 
   private getZombieTargets(): AttackableTarget[] {
@@ -1989,7 +2095,7 @@ export class WorldScene extends Phaser.Scene {
 
   private syncEquippedWeaponFromInventory(): void {
     const next = this.inventory.getActiveWeaponId();
-    if (this.player.equippedWeapon !== next) this.player.reloadingUntil = 0;
+    if (this.player.equippedWeapon !== next) { this.player.reloadingUntil = 0; this.cancelMeleeAction(); }
     this.player.equippedWeapon = next;
     for (const item of this.inventory.getItems()) if (isWeaponItemId(item.itemId)) this.player.unlockWeapon(item.itemId, false);
   }
@@ -2371,6 +2477,10 @@ export class WorldScene extends Phaser.Scene {
         visualLock: zombie.mind.visualLock,
         currentTargetId: zombie.mind.currentTargetId,
         lastSeenAt: zombie.mind.lastSeenAt,
+        postureValue: zombie.posture.value,
+        postureRecoveryRemainingMs: Math.max(0, zombie.posture.recoveryStartsAt - this.simulationTime),
+        postureStaggerRemainingMs: Math.max(0, zombie.posture.staggerUntil - this.simulationTime),
+        postureBreakImmunityRemainingMs: Math.max(0, zombie.posture.breakImmunityUntil - this.simulationTime),
       })),
       exploredFog: this.fog.exportExplored(),
       extraction: { active: this.defenseActive, remainingSeconds: this.defenseRemaining },
@@ -2425,6 +2535,7 @@ export class WorldScene extends Phaser.Scene {
 
   private finishGame(won: boolean, reason: string): void {
     if (this.gameEnded) return;
+    this.cancelMeleeAction();
     this.gameEnded = true;
     if (won) this.saveSystem.clear();
     this.scene.start("result", {
@@ -2438,6 +2549,7 @@ export class WorldScene extends Phaser.Scene {
   }
 
   private shutdownUi(): void {
+    this.game.canvas.removeEventListener("contextmenu", this.preventCanvasContextMenu);
     this.audio?.destroy();
     this.cameraController?.destroy();
     this.performanceMonitor?.destroy();
@@ -2470,4 +2582,10 @@ function squaredDistance(first: Point, second: Point): number {
 
 function angleDelta(a: number, b: number): number {
   return Math.atan2(Math.sin(a - b), Math.cos(a - b));
+}
+
+function rotateAngleToward(current: number, target: number, maximumStep: number): number {
+  const difference = angleDelta(target, current);
+  if (Math.abs(difference) <= maximumStep) return target;
+  return current + Math.sign(difference) * Math.max(0, maximumStep);
 }
