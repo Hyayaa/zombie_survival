@@ -173,6 +173,8 @@ def load_footprints():
 def render_footprint_icon(item_id, footprint):
     source = draw_icon(item_id)
     width, height = footprint
+    if item_id in {"bat", "shotgun"} and height > width:
+        source = source.transpose(Image.Transpose.ROTATE_270)
     logical_size = (width * 32, height * 32)
     margin = 3
     artwork = source.resize((logical_size[0] - margin * 2, logical_size[1] - margin * 2), Image.Resampling.NEAREST)

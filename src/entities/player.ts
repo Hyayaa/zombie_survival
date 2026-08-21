@@ -16,7 +16,7 @@ export class Player {
   vitals: VitalState = { health: 100, maxHealth: 100, infection: 0 };
   survivalNeeds = createSurvivalNeeds();
   readonly survivalRuntime = createSurvivalRuntime();
-  equippedWeapon: WeaponId = "knife";
+  equippedWeapon: WeaponId | null = null;
   readonly unlockedWeapons = new Set<WeaponId>(["knife"]);
   magazines: WeaponMagazines = createWeaponMagazines();
   flashlightCharge = 180;
@@ -29,7 +29,7 @@ export class Player {
   constructor(scene: Phaser.Scene, position: Point) {
     this.position = { ...position };
     this.view = new TopDownActorView(scene, position.x, position.y, ACTOR_PALETTES.player, true);
-    this.view.setWeapon(this.equippedWeapon);
+    this.view.setWeapon(this.equippedWeapon ?? "knife");
   }
 
   unlockWeapon(weapon: WeaponId, equip = true): void {
@@ -41,23 +41,25 @@ export class Player {
   }
 
   get magazine(): number {
-    return isFirearmId(this.equippedWeapon) ? this.magazines[this.equippedWeapon] : 0;
+    return this.equippedWeapon && isFirearmId(this.equippedWeapon) ? this.magazines[this.equippedWeapon] : 0;
   }
 
   set magazine(rounds: number) {
-    const weapon = isFirearmId(this.equippedWeapon) ? this.equippedWeapon : "pistol";
+    const weapon = this.equippedWeapon && isFirearmId(this.equippedWeapon) ? this.equippedWeapon : "pistol";
     this.magazines[weapon] = rounds;
   }
 
   updateView(time: number): void {
     const moving = Math.hypot(this.movement.x, this.movement.y) > 0.1;
     this.view.setPosition(this.position.x, this.position.y);
-    this.view.setWeapon(this.equippedWeapon);
-    this.view.updateAnimation(time, moving, time - this.lastAttackAt < ATTACK_EFFECT_DURATION_MS[this.equippedWeapon], this.aimAngle);
+    const visualWeapon = this.equippedWeapon ?? "knife";
+    this.view.setWeapon(visualWeapon);
+    this.view.updateAnimation(time, moving, this.equippedWeapon !== null && time - this.lastAttackAt < ATTACK_EFFECT_DURATION_MS[visualWeapon], this.aimAngle);
     this.view.setHealth(this.vitals.health, this.vitals.maxHealth, true);
   }
 
   beginAttack(startedAt: number): void {
+    if (!this.equippedWeapon) return;
     this.view.beginAttack({
       weapon: this.equippedWeapon,
       startedAt,

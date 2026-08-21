@@ -1,5 +1,7 @@
 import { BALANCE } from "../config/game-config";
-import { getEffectiveFootprint, getItemDefinition, type InventoryRotation, type StorageSlot } from "../data/item-definitions";
+import { getEffectiveFootprint, type InventoryRotation, type StorageSlot } from "../data/item-definitions";
+import { getInventoryObjectDefinition, isWeaponItemId } from "../data/inventory-object-definitions";
+import type { WeaponId } from "../data/weapon-definitions";
 
 export interface InventorySlot { itemId: string; quantity: number; instanceId?: string }
 export type InventoryContainerKind = "pockets" | StorageSlot;
@@ -15,10 +17,18 @@ export interface InventoryContainerView {
 }
 
 export interface GridInventorySnapshot {
-  version: 2 | 3;
+  version: 2 | 3 | 4;
   nextInstanceId: number;
   items: Array<Omit<InventoryItemInstance, "rotation"> & { rotation?: InventoryRotation }>;
   equipment: Partial<Record<StorageSlot, string>>;
+  weaponEquipment?: WeaponEquipmentState;
+}
+
+export type WeaponEquipmentSlot = "primary" | "secondary";
+export interface WeaponEquipmentState {
+  primaryInstanceId?: string;
+  secondaryInstanceId?: string;
+  activeSlot: WeaponEquipmentSlot;
 }
 
 export type InventorySnapshot = Array<InventorySlot | null> | GridInventorySnapshot;
@@ -29,7 +39,7 @@ const EQUIPMENT_SLOTS: readonly StorageSlot[] = ["shirt", "pants", "belt", "vest
 interface MutableContainer extends InventoryContainerView {}
 
 function isGridSnapshot(value: InventorySnapshot): value is GridInventorySnapshot {
-  return !Array.isArray(value) && (value.version === 2 || value.version === 3) && Array.isArray(value.items);
+  return !Array.isArray(value) && (value.version === 2 || value.version === 3 || value.version === 4) && Array.isArray(value.items);
 }
 
 function copyItem(item: InventoryItemInstance): InventoryItemInstance { return { ...item }; }
@@ -38,6 +48,7 @@ export class InventorySystem {
   private readonly containers = new Map<string, MutableContainer>();
   private readonly items = new Map<string, InventoryItemInstance>();
   private readonly equipment: Partial<Record<StorageSlot, string>> = {};
+  private weaponEquipment: WeaponEquipmentState = { activeSlot: "primary" };
   private nextInstanceId = 1;
   private nextOccupancyId = 1;
   private readonly occupancyIds = new Map<string, number>();
@@ -65,6 +76,14 @@ export class InventorySystem {
     const item = this.items.get(instanceId); return item ? copyItem(item) : null;
   }
   getEquipment(): Readonly<Partial<Record<StorageSlot, string>>> { return { ...this.equipment }; }
+  getWeaponEquipment(): Readonly<WeaponEquipmentState> { return { ...this.weaponEquipment }; }
+  getWeaponInstance(slot: WeaponEquipmentSlot): InventoryItemInstance | null {
+    const instanceId = slot === "primary" ? this.weaponEquipment.primaryInstanceId : this.weaponEquipment.secondaryInstanceId;
+    const item = instanceId ? this.items.get(instanceId) : undefined; return item ? copyItem(item) : null;
+  }
+  getActiveWeaponId(): WeaponId | null {
+    const item = this.getWeaponInstance(this.weaponEquipment.activeSlot); return item && isWeaponItemId(item.itemId) ? item.itemId : null;
+  }
   getSlots(): ReadonlyArray<InventorySlot | null> {
     return this.getStoredItems().map((item) => ({ itemId: item.itemId, quantity: item.quantity, instanceId: item.instanceId }));
   }
@@ -83,7 +102,7 @@ export class InventorySystem {
 
   add(itemId: string, quantity: number): number {
     if (quantity <= 0) return 0;
-    const definition = getItemDefinition(itemId);
+    const definition = getInventoryObjectDefinition(itemId);
     let remaining = quantity;
     for (const item of this.items.values()) {
       if (item.containerId === null || item.itemId !== itemId || item.quantity >= definition.maxStack) continue;
@@ -142,7 +161,7 @@ export class InventorySystem {
   canPlace(instanceId: string, target: InventoryMoveTarget): boolean {
     const item = this.items.get(instanceId); const container = this.containers.get(target.containerId);
     if (!item || item.containerId === null || !container || !this.canStoreInContainer(item.itemId, container)) return false;
-    const footprint = getEffectiveFootprint(getItemDefinition(item.itemId), target.rotation ?? item.rotation);
+    const footprint = getEffectiveFootprint(getInventoryObjectDefinition(item.itemId), target.rotation ?? item.rotation);
     return this.cellsAreAvailable(container, target.x, target.y, footprint.width, footprint.height, this.occupancyIds.get(instanceId));
   }
 
@@ -155,19 +174,101 @@ export class InventorySystem {
   equip(instanceId: string): boolean {
     const item = this.items.get(instanceId);
     if (!item || item.containerId === null) return false;
-    const storage = getItemDefinition(item.itemId).storageEquipment;
+    const storage = getInventoryObjectDefinition(item.itemId).storageEquipment;
     if (!storage) return false;
     if (storage.slot === "backpack" && this.containers.get(item.containerId)?.kind === "backpack") return false;
     const before = this.snapshot();
-    const occupied = this.equipment[storage.slot];
-    if (occupied && !this.unequip(storage.slot)) return false;
-    const current = this.items.get(instanceId);
-    if (!current || current.containerId === null) { this.restore(before); return false; }
-    this.clearOccupancy(current);
-    current.containerId = null; current.x = 0; current.y = 0;
+    const occupiedId = this.equipment[storage.slot]; const occupied = occupiedId ? this.items.get(occupiedId) : undefined;
+    this.clearOccupancy(item);
+    if (occupied) {
+      const container = this.containerForSlot(storage.slot);
+      if (!container || !this.isContainerEmpty(container.id)) { this.restore(before); return false; }
+      this.containers.delete(container.id); delete this.equipment[storage.slot];
+      const location = this.findFirstFit(occupied.itemId, occupied.rotation);
+      if (!location) { this.restore(before); return false; }
+      this.applyRotation(occupied, location.rotation ?? occupied.rotation);
+      if (!this.place(occupied, location.containerId, location.x, location.y)) { this.restore(before); return false; }
+    }
+    item.containerId = null; item.x = 0; item.y = 0;
     this.equipment[storage.slot] = instanceId;
-    this.createEquipmentContainer(current);
+    this.createEquipmentContainer(item);
     this.bumpRevision(); return true;
+  }
+
+  canEquipToSlot(instanceId: string, slot: StorageSlot): boolean {
+    const item = this.items.get(instanceId);
+    if (!item || getInventoryObjectDefinition(item.itemId).storageEquipment?.slot !== slot) return false;
+    return this.clone().equipToSlot(instanceId, slot);
+  }
+
+  equipToSlot(instanceId: string, slot: StorageSlot): boolean {
+    const item = this.items.get(instanceId);
+    if (!item || item.containerId === null || getInventoryObjectDefinition(item.itemId).storageEquipment?.slot !== slot) return false;
+    return this.equip(instanceId);
+  }
+
+  canEquipWeapon(instanceId: string, slot: WeaponEquipmentSlot): boolean {
+    return this.clone().equipWeapon(instanceId, slot);
+  }
+
+  equipWeapon(instanceId: string, slot: WeaponEquipmentSlot): boolean {
+    const item = this.items.get(instanceId);
+    if (!item || !isWeaponItemId(item.itemId)) return false;
+    const slotKey = slot === "primary" ? "primaryInstanceId" : "secondaryInstanceId";
+    if (this.weaponEquipment[slotKey] === instanceId) { this.weaponEquipment.activeSlot = slot; this.bumpRevision(); return true; }
+    const before = this.snapshot();
+    const displacedId = this.weaponEquipment[slotKey];
+    if (item.containerId !== null) this.clearOccupancy(item);
+    if (this.weaponEquipment.primaryInstanceId === instanceId) delete this.weaponEquipment.primaryInstanceId;
+    if (this.weaponEquipment.secondaryInstanceId === instanceId) delete this.weaponEquipment.secondaryInstanceId;
+    item.containerId = null; item.x = 0; item.y = 0;
+    if (displacedId && displacedId !== instanceId) {
+      const displaced = this.items.get(displacedId); const location = displaced ? this.findFirstFit(displaced.itemId, displaced.rotation) : null;
+      if (!displaced || !location) { this.restore(before); return false; }
+      this.applyRotation(displaced, location.rotation ?? displaced.rotation);
+      if (!this.place(displaced, location.containerId, location.x, location.y)) { this.restore(before); return false; }
+    }
+    this.weaponEquipment[slotKey] = instanceId; this.weaponEquipment.activeSlot = slot;
+    this.bumpRevision(); return true;
+  }
+
+  unequipWeapon(slot: WeaponEquipmentSlot): boolean {
+    const slotKey = slot === "primary" ? "primaryInstanceId" : "secondaryInstanceId";
+    const instanceId = this.weaponEquipment[slotKey]; const item = instanceId ? this.items.get(instanceId) : undefined;
+    if (!item) return false;
+    const location = this.findFirstFit(item.itemId, item.rotation); if (!location) return false;
+    const before = this.snapshot(); delete this.weaponEquipment[slotKey];
+    this.applyRotation(item, location.rotation ?? item.rotation);
+    if (!this.place(item, location.containerId, location.x, location.y)) { this.restore(before); return false; }
+    if (this.weaponEquipment.activeSlot === slot) this.weaponEquipment.activeSlot = slot === "primary" && this.weaponEquipment.secondaryInstanceId ? "secondary" : "primary";
+    this.bumpRevision(); return true;
+  }
+
+  setActiveWeaponSlot(slot: WeaponEquipmentSlot): boolean {
+    const instanceId = slot === "primary" ? this.weaponEquipment.primaryInstanceId : this.weaponEquipment.secondaryInstanceId;
+    if (!instanceId) return false; this.weaponEquipment.activeSlot = slot; this.bumpRevision(); return true;
+  }
+
+  migrateLegacyWeapons(equippedWeapon: string, ownedWeapons: readonly string[]): InventorySlot[] {
+    if (this.weaponEquipment.primaryInstanceId || this.weaponEquipment.secondaryInstanceId) return [];
+    const ordered = [...new Set([equippedWeapon, ...ownedWeapons])].filter(isWeaponItemId);
+    const overflow: InventorySlot[] = [];
+    for (const weaponId of ordered) {
+      const target = !this.weaponEquipment.primaryInstanceId ? "primary" : !this.weaponEquipment.secondaryInstanceId ? "secondary" : null;
+      const existing = [...this.items.values()].find((item) => item.itemId === weaponId && item.containerId !== null);
+      const recoveredOverflow = this.legacyOverflow.find((slot) => slot.itemId === weaponId && slot.quantity > 0);
+      if (target) {
+        const instance = existing ?? this.createItem(weaponId, 1);
+        if (this.equipWeapon(instance.instanceId, target)) { if (!existing && recoveredOverflow) recoveredOverflow.quantity -= 1; }
+        else if (!existing) { this.items.delete(instance.instanceId); this.occupancyIds.delete(instance.instanceId); if (!recoveredOverflow) overflow.push({ itemId: weaponId, quantity: 1 }); }
+      } else if (!existing) {
+        if (this.add(weaponId, 1) === 1) { if (recoveredOverflow) recoveredOverflow.quantity -= 1; }
+        else if (!recoveredOverflow) overflow.push({ itemId: weaponId, quantity: 1 });
+      }
+    }
+    const active = (['primary', 'secondary'] as const).find((slot) => this.getWeaponInstance(slot)?.itemId === equippedWeapon);
+    if (active) this.setActiveWeaponSlot(active);
+    return overflow;
   }
 
   unequip(slot: StorageSlot): boolean {
@@ -199,11 +300,11 @@ export class InventorySystem {
   }
 
   takeLegacyOverflow(): InventorySlot[] {
-    const overflow = this.legacyOverflow.map((slot) => ({ ...slot })); this.legacyOverflow.length = 0; return overflow;
+    const overflow = this.legacyOverflow.filter((slot) => slot.quantity > 0).map((slot) => ({ ...slot })); this.legacyOverflow.length = 0; return overflow;
   }
 
   snapshot(): GridInventorySnapshot {
-    return { version: 3, nextInstanceId: this.nextInstanceId, items: [...this.items.values()].map(copyItem), equipment: { ...this.equipment } };
+    return { version: 4, nextInstanceId: this.nextInstanceId, items: [...this.items.values()].map(copyItem), equipment: { ...this.equipment }, weaponEquipment: { ...this.weaponEquipment } };
   }
 
   restore(snapshot: InventorySnapshot): void {
@@ -211,15 +312,26 @@ export class InventorySystem {
     this.reset(); this.nextInstanceId = Math.max(1, snapshot.nextInstanceId);
     for (const saved of snapshot.items) {
       const rotation: InventoryRotation = saved.rotation === 1 ? 1 : 0;
-      const footprint = getEffectiveFootprint(getItemDefinition(saved.itemId), rotation);
+      const footprint = getEffectiveFootprint(getInventoryObjectDefinition(saved.itemId), rotation);
       const item = { ...saved, rotation, width: footprint.width, height: footprint.height };
       this.items.set(item.instanceId, item); this.occupancyIds.set(item.instanceId, this.nextOccupancyId++);
     }
     for (const slot of EQUIPMENT_SLOTS) {
       const instanceId = snapshot.equipment[slot];
       const item = instanceId ? this.items.get(instanceId) : undefined;
-      if (!item || getItemDefinition(item.itemId).storageEquipment?.slot !== slot) continue;
+      if (!item || getInventoryObjectDefinition(item.itemId).storageEquipment?.slot !== slot) continue;
       item.containerId = null; this.equipment[slot] = instanceId; this.createEquipmentContainer(item);
+    }
+    const savedWeapons = snapshot.weaponEquipment;
+    if (savedWeapons) {
+      for (const slot of ["primary", "secondary"] as const) {
+        const key = slot === "primary" ? "primaryInstanceId" : "secondaryInstanceId";
+        const instanceId = savedWeapons[key]; const item = instanceId ? this.items.get(instanceId) : undefined;
+        if (!item || !isWeaponItemId(item.itemId)) continue;
+        item.containerId = null; this.weaponEquipment[key] = instanceId;
+      }
+      this.weaponEquipment.activeSlot = savedWeapons.activeSlot === "secondary" ? "secondary" : "primary";
+      if (!this.getWeaponInstance(this.weaponEquipment.activeSlot)) this.weaponEquipment.activeSlot = this.weaponEquipment.primaryInstanceId ? "primary" : this.weaponEquipment.secondaryInstanceId ? "secondary" : "primary";
     }
     for (const item of [...this.items.values()]) {
       if (item.containerId === null) continue;
@@ -239,7 +351,7 @@ export class InventorySystem {
   private createStartingEquipment(): void {
     for (const itemId of ["basic_tshirt", "work_pants"]) {
       const item = this.createItem(itemId, 1);
-      const storage = getItemDefinition(itemId).storageEquipment!;
+      const storage = getInventoryObjectDefinition(itemId).storageEquipment!;
       item.containerId = null; this.equipment[storage.slot] = item.instanceId; this.createEquipmentContainer(item);
     }
   }
@@ -253,16 +365,17 @@ export class InventorySystem {
   private reset(): void {
     this.containers.clear(); this.items.clear(); this.occupancyIds.clear(); this.legacyOverflow.length = 0;
     for (const slot of EQUIPMENT_SLOTS) delete this.equipment[slot];
+    this.weaponEquipment = { activeSlot: "primary" };
     this.nextOccupancyId = 1; this.createContainer("pockets", "pockets", 4, 2, null);
   }
   private createItem(itemId: string, quantity: number): InventoryItemInstance {
-    const footprint = getItemDefinition(itemId).inventoryFootprint;
+    const footprint = getInventoryObjectDefinition(itemId).inventoryFootprint;
     const instanceId = `item-${this.nextInstanceId++}`;
     const item: InventoryItemInstance = { instanceId, itemId, quantity, containerId: null, x: 0, y: 0, width: footprint.width, height: footprint.height, rotation: 0 };
     this.items.set(instanceId, item); this.occupancyIds.set(instanceId, this.nextOccupancyId++); return item;
   }
   private createEquipmentContainer(item: InventoryItemInstance): void {
-    const storage = getItemDefinition(item.itemId).storageEquipment;
+    const storage = getInventoryObjectDefinition(item.itemId).storageEquipment;
     if (storage) this.createContainer(`equipment:${storage.slot}:${item.instanceId}`, storage.slot, storage.containerWidth, storage.containerHeight, item.instanceId);
   }
   private createContainer(id: string, kind: InventoryContainerKind, width: number, height: number, sourceItemInstanceId: string | null): void {
@@ -276,7 +389,7 @@ export class InventorySystem {
   }
   private findFirstFit(itemId: string, preferredRotation: InventoryRotation = 0, preferredContainerId?: string): InventoryMoveTarget | null {
     const rotations: InventoryRotation[] = preferredRotation === 0 ? [0, 1] : [1, 0];
-    const definition = getItemDefinition(itemId);
+    const definition = getInventoryObjectDefinition(itemId);
     if (preferredContainerId) {
       const preferred = this.containers.get(preferredContainerId);
       if (preferred && this.canStoreInContainer(itemId, preferred)) for (const rotation of rotations) {
@@ -296,7 +409,7 @@ export class InventorySystem {
     return null;
   }
   private canStoreInContainer(itemId: string, container: MutableContainer): boolean {
-    return !(getItemDefinition(itemId).storageEquipment?.slot === "backpack" && container.kind === "backpack");
+    return !(getInventoryObjectDefinition(itemId).storageEquipment?.slot === "backpack" && container.kind === "backpack");
   }
   private place(item: InventoryItemInstance, containerId: string, x: number, y: number): boolean {
     const container = this.containers.get(containerId);
@@ -322,7 +435,7 @@ export class InventorySystem {
     return true;
   }
   private applyRotation(item: InventoryItemInstance, rotation: InventoryRotation): void {
-    const footprint = getEffectiveFootprint(getItemDefinition(item.itemId), rotation);
+    const footprint = getEffectiveFootprint(getInventoryObjectDefinition(item.itemId), rotation);
     item.rotation = rotation; item.width = footprint.width; item.height = footprint.height;
   }
   private clearOccupancy(item: InventoryItemInstance): void {

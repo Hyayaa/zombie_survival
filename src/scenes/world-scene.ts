@@ -7,9 +7,10 @@ import { SeededRng } from "../core/seeded-rng";
 import { createCityBlockMap, getTerrain, isRoad, TerrainType, type ContainerDefinition, type DoorDefinition, type WorldObstacle } from "../data/map-definitions";
 import { assertValidMap } from "../data/map-validation";
 import { getItemDefinition, type StorageSlot } from "../data/item-definitions";
+import { getInventoryObjectDefinition, isWeaponItemId } from "../data/inventory-object-definitions";
 import { RECIPE_DEFINITIONS } from "../data/recipe-definitions";
 import { BUILDABLE_ITEM_KIND, BUILDABLE_DEFINITIONS, type BuildableKind } from "../data/buildable-definitions";
-import { isFirearmId, WEAPON_DEFINITIONS, type WeaponId } from "../data/weapon-definitions";
+import { isFirearmId, WEAPON_DEFINITIONS } from "../data/weapon-definitions";
 import type { ZombieKind } from "../data/zombie-definitions";
 import { PerformanceMonitor } from "../debug/performance-monitor";
 import { AttackEffectController, getAttackBlockReason } from "../effects/attack-effect-controller";
@@ -39,7 +40,7 @@ import { CraftingSystem } from "../systems/crafting-system";
 import { FogInvalidationTracker, FogOfWarSystem, VisibilityState, type VisionSource } from "../systems/fog-of-war-system";
 import { InfectionSystem } from "../systems/infection-system";
 import { applyConsumable, canApplyConsumable } from "../systems/consumable-system";
-import { InventorySystem } from "../systems/inventory-system";
+import { InventorySystem, type InventorySlot, type WeaponEquipmentSlot } from "../systems/inventory-system";
 import { buildVisionSources, getCompanionVisionSignature, getVisionProfile, shouldConsumeFlashlightCharge, type ActiveFire } from "../systems/lighting-system";
 import { InteractionSystem } from "../systems/interaction-system";
 import { NoiseSystem, NOISE_LEVELS } from "../systems/noise-system";
@@ -259,7 +260,7 @@ export class WorldScene extends Phaser.Scene {
     this.rebuildPowerTopology();
 
     this.inventory = new InventorySystem(BALANCE.inventorySlots, saved?.inventory);
-    const legacyInventoryOverflow = this.inventory.takeLegacyOverflow();
+    const legacyInventoryOverflow: InventorySlot[] = [];
     this.quickslots = saved?.quickslots.slice(0, 5) ?? ["bandage", "medicine", "torch", "molotov", "barricade"];
     while (this.quickslots.length < 5) this.quickslots.push(null);
     this.collectedParts = new Set(saved?.collectedParts ?? []);
@@ -270,8 +271,13 @@ export class WorldScene extends Phaser.Scene {
 
     const playerPosition = saved?.player ?? this.map.playerSpawn;
     this.player = new Player(this, playerPosition);
-    if (saved) this.restorePlayer(saved);
-    else initializeNewGameLoadout(this.inventory, this.player);
+    if (saved) {
+      this.restorePlayer(saved);
+      const inventoryVersion = Array.isArray(saved.inventory) ? 0 : saved.inventory.version;
+      if (inventoryVersion < 4) legacyInventoryOverflow.push(...this.inventory.migrateLegacyWeapons(saved.player.equippedWeapon, saved.player.unlockedWeapons));
+    } else initializeNewGameLoadout(this.inventory);
+    legacyInventoryOverflow.push(...this.inventory.takeLegacyOverflow());
+    this.syncEquippedWeaponFromInventory();
     this.createCompanions(saved);
 
     this.createZombies(saved);
@@ -682,7 +688,12 @@ export class WorldScene extends Phaser.Scene {
       canPlaceItem: (instanceId, target) => this.inventory.canPlace(instanceId, target),
       onEquipItem: (instanceId) => this.equipInventoryItem(instanceId),
       onUnequipItem: (slot) => this.unequipInventoryItem(slot),
-      onEquipWeapon: (weaponId) => this.equipWeapon(weaponId),
+      canEquipItemToSlot: (instanceId, slot) => this.inventory.canEquipToSlot(instanceId, slot),
+      onEquipItemToSlot: (instanceId, slot) => { const success = this.inventory.equipToSlot(instanceId, slot); if (success) this.audio.play(slot === "backpack" ? "equip-backpack" : "equip-clothing"); this.refreshInventoryPanel(); return success; },
+      canEquipWeapon: (instanceId, slot) => this.inventory.canEquipWeapon(instanceId, slot),
+      onEquipWeapon: (instanceId, slot) => this.equipWeapon(instanceId, slot),
+      onUnequipWeapon: (slot) => this.unequipWeapon(slot),
+      onActivateWeapon: (slot) => this.activateWeapon(slot),
       onAudio: (cue) => { this.audio.play(cue); },
     });
     this.commandPanel = new CompanionCommandPanel(this.uiRoot, (command) => this.chooseCompanionCommand(command));
@@ -695,7 +706,7 @@ export class WorldScene extends Phaser.Scene {
       },
       onDeveloperModeChange: (enabled) => this.setDeveloperMode(enabled),
       onGrantCompendiumEntry: (entry) => this.grantCompendium(entry),
-      getCompendiumState: () => ({ developerMode: this.settings.developerMode, count: (entry) => entry.kind === "weapon" ? Number(this.player.unlockedWeapons.has(entry.sourceId as WeaponId)) : this.inventory.count(entry.sourceId) }),
+      getCompendiumState: () => ({ developerMode: this.settings.developerMode, count: (entry) => this.inventory.count(entry.sourceId) }),
       onUiSound:()=>this.audio.play("ui"),
     });
     this.pauseMenu.setDeveloperMode(this.settings.developerMode);
@@ -749,7 +760,7 @@ export class WorldScene extends Phaser.Scene {
 
     if (this.player.reloadingUntil > 0 && this.simulationTime >= this.player.reloadingUntil) this.finishReload();
     if (Phaser.Input.Keyboard.JustDown(this.keys.reload)) this.startReload();
-    if (this.input.activePointer.isDown && this.pointerInsideGame && WEAPON_DEFINITIONS[this.player.equippedWeapon].fireMode === "auto") this.tryPlayerAttack();
+    if (this.player.equippedWeapon && this.input.activePointer.isDown && this.pointerInsideGame && WEAPON_DEFINITIONS[this.player.equippedWeapon].fireMode === "auto") this.tryPlayerAttack();
     if (Phaser.Input.Keyboard.JustDown(this.keys.flashlight)) this.toggleFlashlight();
     if (Phaser.Input.Keyboard.JustDown(this.keys.interact)) {
       const target = this.interactionSystem.refreshNow(this.getInteractionContext());
@@ -819,6 +830,7 @@ export class WorldScene extends Phaser.Scene {
   }
 
   private tryPlayerAttack(): void {
+    if (!this.player.equippedWeapon) return;
     const weapon = WEAPON_DEFINITIONS[this.player.equippedWeapon];
     const blockReason = getAttackBlockReason({
       now: this.simulationTime,
@@ -916,7 +928,7 @@ export class WorldScene extends Phaser.Scene {
   }
 
   private startReload(): void {
-    if (!isFirearmId(this.player.equippedWeapon) || this.player.reloadingUntil > 0) return;
+    if (!this.player.equippedWeapon || !isFirearmId(this.player.equippedWeapon) || this.player.reloadingUntil > 0) return;
     const weapon = WEAPON_DEFINITIONS[this.player.equippedWeapon];
     const ammoItemId = weapon.ammoItemId!;
     if (this.player.magazine >= (weapon.magazineSize ?? 0) || this.inventory.count(ammoItemId) <= 0) {
@@ -929,7 +941,7 @@ export class WorldScene extends Phaser.Scene {
   }
 
   private finishReload(): void {
-    if (!isFirearmId(this.player.equippedWeapon)) { this.player.reloadingUntil = 0; return; }
+    if (!this.player.equippedWeapon || !isFirearmId(this.player.equippedWeapon)) { this.player.reloadingUntil = 0; return; }
     const weapon = WEAPON_DEFINITIONS[this.player.equippedWeapon];
     const ammoItemId = weapon.ammoItemId!;
     const capacity = (weapon.magazineSize ?? 0) - this.player.magazine;
@@ -1655,8 +1667,9 @@ export class WorldScene extends Phaser.Scene {
     });
     this.syncCollectedParts();
     if (container.equipment) {
-      this.player.unlockWeapon(container.equipment);
-      acquired.push(WEAPON_DEFINITIONS[container.equipment].name);
+      const added = this.inventory.add(container.equipment, 1);
+      if (added > 0) { this.player.unlockWeapon(container.equipment, false); acquired.push(WEAPON_DEFINITIONS[container.equipment].name); }
+      else this.spawnDrop(container.equipment, 1, tileCenter(container.tileX), tileCenter(container.tileY));
     }
     if (container.part) {
       if (this.collectedParts.has(container.part)) this.saveGame(false);
@@ -1680,7 +1693,7 @@ export class WorldScene extends Phaser.Scene {
     }
     if (result.acquired.size > 0) {
       this.syncCollectedParts(); this.audio.play("pickup");
-      const items=[...result.acquired].map(([id,amount])=>`${getItemDefinition(id).name} ${amount}`);
+      const items=[...result.acquired].map(([id,amount])=>`${getInventoryObjectDefinition(id).name} ${amount}`);
       this.hud.showMessage(`획득: ${items.slice(0,3).join(", ")}${items.length>3?` 외 ${items.length-3}종`:""}`); this.refreshInventoryPanel();
     } else if (result.blockedByCapacity && this.simulationTime >= this.nextInventoryFullMessageAt) {
       this.nextInventoryFullMessageAt=this.simulationTime+1_800; this.audio.play("ui"); this.hud.showMessage("인벤토리가 가득 찼습니다.");
@@ -1716,10 +1729,9 @@ export class WorldScene extends Phaser.Scene {
   }
 
   private grantCompendium(entry: CompendiumEntry): void {
-    const equipped=this.player.equippedWeapon;
-    const result=grantCompendiumEntry(entry,{developerMode:this.settings.developerMode,canAdd:(id,amount)=>this.inventory.canAdd(id,amount),add:(id,amount)=>this.inventory.add(id,amount),hasWeapon:(id)=>this.player.unlockedWeapons.has(id),unlockWeapon:(id)=>{this.player.unlockWeapon(id,false);this.player.equippedWeapon=equipped;},syncObjectives:()=>this.syncCollectedParts()});
+    const result=grantCompendiumEntry(entry,{developerMode:this.settings.developerMode,canAdd:(id,amount)=>this.inventory.canAdd(id,amount),add:(id,amount)=>this.inventory.add(id,amount),hasWeapon:(id)=>this.inventory.count(id)>0,unlockWeapon:(id)=>this.player.unlockWeapon(id,false),syncObjectives:()=>this.syncCollectedParts()});
     this.pauseMenu.setDeveloperMode(this.settings.developerMode);
-    if(result.success)this.hud.showMessage(`${entry.name} ${entry.kind==="weapon"?"해금":`${result.amount} 지급`}`);else this.hud.showMessage(result.reason==="developer-mode-off"?"개발자 모드에서만 지급할 수 있습니다.":result.reason==="already-unlocked"?"이미 해금된 무기입니다.":"인벤토리가 가득 찼습니다.");
+    if(result.success)this.hud.showMessage(`${entry.name} ${result.amount} 지급`);else this.hud.showMessage(result.reason==="developer-mode-off"?"개발자 모드에서만 지급할 수 있습니다.":result.reason==="already-unlocked"?"이미 보유한 무기입니다.":"인벤토리가 가득 찼습니다.");
     this.refreshInventoryPanel();
   }
 
@@ -1942,12 +1954,30 @@ export class WorldScene extends Phaser.Scene {
     this.refreshInventoryPanel();
   }
 
-  private equipWeapon(weaponId: WeaponId): void {
-    if (!this.player.unlockedWeapons.has(weaponId)) return;
-    this.player.equippedWeapon = weaponId;
-    this.player.reloadingUntil = 0;
-    this.hud.showMessage(`${WEAPON_DEFINITIONS[weaponId].name} 장착`);
+  private equipWeapon(instanceId: string, slot: WeaponEquipmentSlot): boolean {
+    const success = this.inventory.equipWeapon(instanceId, slot);
+    if (success) this.syncEquippedWeaponFromInventory();
+    const item = this.inventory.getItem(instanceId);
+    this.hud.showMessage(success && item ? `${getInventoryObjectDefinition(item.itemId).name} ${slot === "primary" ? "주무기" : "보조무기"} 장착` : "교체할 무기를 넣을 공간이 없습니다.");
     this.refreshInventoryPanel();
+    return success;
+  }
+
+  private unequipWeapon(slot: WeaponEquipmentSlot): boolean {
+    const success = this.inventory.unequipWeapon(slot); if (success) this.syncEquippedWeaponFromInventory();
+    this.hud.showMessage(success ? "무기를 인벤토리로 옮겼습니다." : "무기를 넣을 공간이 없습니다."); this.refreshInventoryPanel(); return success;
+  }
+
+  private activateWeapon(slot: WeaponEquipmentSlot): boolean {
+    const success = this.inventory.setActiveWeaponSlot(slot); if (success) this.syncEquippedWeaponFromInventory();
+    this.refreshInventoryPanel(); return success;
+  }
+
+  private syncEquippedWeaponFromInventory(): void {
+    const next = this.inventory.getActiveWeaponId();
+    if (this.player.equippedWeapon !== next) this.player.reloadingUntil = 0;
+    this.player.equippedWeapon = next;
+    for (const item of this.inventory.getItems()) if (isWeaponItemId(item.itemId)) this.player.unlockWeapon(item.itemId, false);
   }
 
   private getInventoryPanelState(): InventoryPanelState {
@@ -1961,16 +1991,7 @@ export class WorldScene extends Phaser.Scene {
       recipes,
       craftAvailability: Object.fromEntries(recipes.map((recipe) => [recipe.id, this.crafting.getAvailability(recipe.id, this.inventory, { ignoreIngredients: this.settings.developerMode })])),
       itemCounts: Object.fromEntries([...itemIds].map((itemId) => [itemId, this.inventory.count(itemId)])),
-      unlockedWeapons: [...this.player.unlockedWeapons],
-      equippedWeapon: this.player.equippedWeapon,
-      weaponNames: {
-        knife: WEAPON_DEFINITIONS.knife.name,
-        bat: WEAPON_DEFINITIONS.bat.name,
-        pistol: WEAPON_DEFINITIONS.pistol.name,
-        smg: WEAPON_DEFINITIONS.smg.name,
-        shotgun: WEAPON_DEFINITIONS.shotgun.name,
-        hunting_rifle: WEAPON_DEFINITIONS.hunting_rifle.name,
-      },
+      weaponEquipment: this.inventory.getWeaponEquipment(),
       developerMode: this.settings.developerMode,
       inventoryRevision: this.inventory.revision,
     };
@@ -2247,7 +2268,7 @@ export class WorldScene extends Phaser.Scene {
   }
 
   private updateHud(): void {
-    const weapon = WEAPON_DEFINITIONS[this.player.equippedWeapon];
+    const weapon = this.player.equippedWeapon ? WEAPON_DEFINITIONS[this.player.equippedWeapon] : null;
     const objective = this.defenseActive
       ? "탈출 지점 안에서 버티기"
       : this.collectedParts.size < 3
@@ -2264,11 +2285,11 @@ export class WorldScene extends Phaser.Scene {
       dayNumber: this.clock.getDayNumber(),
       time: this.clock.getClockLabel(),
       phase: this.clock.getPhase(),
-      weaponId: weapon.id,
-      weapon: weapon.name,
+      weaponId: weapon?.id ?? "knife",
+      weapon: weapon?.name ?? "비무장",
       magazine: this.player.magazine,
-      reserveAmmo: weapon.ammoItemId ? this.inventory.count(weapon.ammoItemId) : 0,
-      showAmmo: weapon.kind === "ranged",
+      reserveAmmo: weapon?.ammoItemId ? this.inventory.count(weapon.ammoItemId) : 0,
+      showAmmo: weapon?.kind === "ranged",
       reloading: this.player.reloadingUntil > 0,
       flashlightCharge: this.player.flashlightCharge,
       flashlightOn: this.player.flashlightOn,
@@ -2295,7 +2316,7 @@ export class WorldScene extends Phaser.Scene {
         y: this.player.position.y,
         health: this.player.vitals.health,
         infection: this.player.vitals.infection,
-        equippedWeapon: this.player.equippedWeapon,
+        equippedWeapon: this.player.equippedWeapon ?? "",
         unlockedWeapons: [...this.player.unlockedWeapons],
         magazines: { ...this.player.magazines },
         flashlightCharge: this.player.flashlightCharge,
@@ -2350,7 +2371,6 @@ export class WorldScene extends Phaser.Scene {
     saved.player.unlockedWeapons.forEach((weapon) => {
       if (weapon === "knife" || weapon === "bat" || isFirearmId(weapon)) this.player.unlockedWeapons.add(weapon);
     });
-    if (saved.player.equippedWeapon === "knife" || saved.player.equippedWeapon === "bat" || isFirearmId(saved.player.equippedWeapon)) this.player.equippedWeapon = saved.player.equippedWeapon;
     this.player.magazines = { ...saved.player.magazines };
     this.player.flashlightCharge = saved.player.flashlightCharge;
     this.player.flashlightOn = saved.player.flashlightOn;

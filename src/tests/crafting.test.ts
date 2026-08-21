@@ -10,7 +10,7 @@ describe("CraftingSystem", () => {
   function fragmentedInventory(): InventorySystem {
     const inventory = new InventorySystem();
     inventory.add("cloth", 3);
-    inventory.add("engine_part", 4);
+    inventory.add("engine_part", 5);
     return inventory;
   }
 

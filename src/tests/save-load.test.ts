@@ -192,6 +192,9 @@ describe("SaveSystem", () => {
     const storage = new MemoryStorage(); const saves = new SaveSystem(storage, "test");
     const fixture = saveFixture(); const inventory = new InventorySystem();
     inventory.add("water", 2); inventory.add("utility_belt", 1);
+    inventory.add("knife", 1); inventory.add("pistol", 1);
+    const knife = inventory.getStoredItems().find((item) => item.itemId === "knife")!; const pistol = inventory.getStoredItems().find((item) => item.itemId === "pistol")!;
+    inventory.equipWeapon(knife.instanceId, "primary"); inventory.equipWeapon(pistol.instanceId, "secondary"); inventory.setActiveWeaponSlot("secondary");
     fixture.inventory = inventory.snapshot();
     expect(saves.save(fixture)).toBe(true);
     expect(saves.load()?.inventory).toEqual(fixture.inventory);

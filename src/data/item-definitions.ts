@@ -71,7 +71,7 @@ const ITEM_SOURCES: ItemSource[] = [
   { id: "generator_fuel", name: "발전기 연료", category: "material", maxStack: 8, iconColor: 0xb37a3e, description: "연료 발전기 전용 연료. 탈출 연료와 별개다." },
   { id: "molotov", name: "화염병", category: "tool", maxStack: 2, iconColor: 0xcf5d42, description: "조준 지점에 짧은 범위 화염을 만든다." },
   { id: "scrap_cache", name: "잡동사니", category: "material", maxStack: 8, iconColor: 0x736d61, description: "분해해 쓸 수 있는 잡다한 생존 물자." },
-  { id: "basic_tshirt", name: "기본 티셔츠", category: "equipment", maxStack: 1, iconColor: 0xa9aaa2, description: "작은 수납공간이 달린 기본 상의.", storageEquipment:{slot:"shirt",containerWidth:2,containerHeight:2} },
+  { id: "basic_tshirt", name: "기본 티셔츠", category: "equipment", maxStack: 1, iconColor: 0xa9aaa2, description: "작은 수납공간이 달린 기본 상의.", storageEquipment:{slot:"shirt",containerWidth:2,containerHeight:4} },
   { id: "work_pants", name: "작업 바지", category: "equipment", maxStack: 1, iconColor: 0x59685f, description: "튼튼한 주머니가 달린 작업 바지.", storageEquipment:{slot:"pants",containerWidth:4,containerHeight:2} },
   { id: "utility_belt", name: "공구 벨트", category: "equipment", maxStack: 1, iconColor: 0x8d6a43, description: "작은 도구를 빠르게 꺼내는 벨트.", storageEquipment:{slot:"belt",containerWidth:4,containerHeight:1} },
   { id: "utility_vest", name: "다용도 조끼", category: "equipment", maxStack: 1, iconColor: 0x687557, description: "여러 칸의 파우치가 달린 조끼.", storageEquipment:{slot:"vest",containerWidth:4,containerHeight:3} },
@@ -98,5 +98,11 @@ export function getItemDefinition(id: string): ItemDefinition {
   const definition = ITEM_DEFINITIONS[id];
   if (!definition) throw new Error(`Unknown item: ${id}`);
   return definition;
+}
+
+export function getEquipmentStorageDescription(item: Pick<ItemDefinition, "inventoryFootprint" | "storageEquipment">): string | null {
+  const storage = item.storageEquipment; if (!storage) return null;
+  const slotLabel: Record<StorageSlot, string> = { shirt: "상의", pants: "바지", belt: "벨트", vest: "조끼", backpack: "가방" };
+  return `아이템 크기 ${item.inventoryFootprint.width}×${item.inventoryFootprint.height} · 수납공간 ${storage.containerWidth}×${storage.containerHeight} · 총 ${storage.containerWidth * storage.containerHeight}칸 · 장착 위치 ${slotLabel[storage.slot]}`;
 }
 

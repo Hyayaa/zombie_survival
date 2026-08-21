@@ -1,4 +1,4 @@
-import { getItemDevGrantAmount, ITEM_DEFINITIONS, type ItemCategory } from "../data/item-definitions";
+import { getEquipmentStorageDescription, getItemDevGrantAmount, ITEM_DEFINITIONS, type ItemCategory } from "../data/item-definitions";
 import { WEAPON_DEFINITIONS, type WeaponId } from "../data/weapon-definitions";
 import { getItemIconPath } from "../data/item-icons";
 
@@ -7,7 +7,7 @@ export interface CompendiumEntry { id: string; sourceId: string; kind: "item" | 
 
 export function createCompendiumEntries(): CompendiumEntry[] {
   const entries: CompendiumEntry[] = [];
-  for (const item of Object.values(ITEM_DEFINITIONS)) entries.push({ id: `item:${item.id}`, sourceId: item.id, kind: "item", name: item.name, description: item.description, category: item.category, maxStack: item.maxStack, devGrantAmount: getItemDevGrantAmount(item), color: item.iconColor,iconPath:getItemIconPath(item.id) });
+  for (const item of Object.values(ITEM_DEFINITIONS)) { const storage = getEquipmentStorageDescription(item); entries.push({ id: `item:${item.id}`, sourceId: item.id, kind: "item", name: item.name, description: storage ? `${item.description} ${storage}` : item.description, category: item.category, maxStack: item.maxStack, devGrantAmount: getItemDevGrantAmount(item), color: item.iconColor,iconPath:getItemIconPath(item.id) }); }
   for (const weapon of Object.values(WEAPON_DEFINITIONS)) entries.push({ id: `weapon:${weapon.id}`, sourceId: weapon.id, kind: "weapon", name: weapon.name, description: weapon.kind === "ranged" ? `사거리 ${weapon.range} · 피해 ${weapon.damage}` : `근접 사거리 ${weapon.range} · 피해 ${weapon.damage}`, category: "weapon", devGrantAmount: 1, color: weapon.kind === "ranged" ? 0x8d9693 : 0xa4815b,iconPath:getItemIconPath(weapon.id) });
   return entries.sort((a, b) => a.name.localeCompare(b.name, "ko") || a.id.localeCompare(b.id));
 }
@@ -25,7 +25,9 @@ export function grantCompendiumEntry(entry: CompendiumEntry, access: CompendiumG
   if (entry.kind === "weapon") {
     const weaponId = entry.sourceId as WeaponId;
     if (access.hasWeapon(weaponId)) return { success: false, reason: "already-unlocked", amount: 0, entry };
-    access.unlockWeapon(weaponId); return { success: true, amount: 1, entry };
+    if (!access.canAdd(weaponId, 1)) return { success: false, reason: "inventory-full", amount: 0, entry };
+    const amount = access.add(weaponId, 1); if (amount > 0) access.unlockWeapon(weaponId);
+    return { success: amount === 1, amount, entry, reason: amount ? undefined : "inventory-full" };
   }
   if (!access.canAdd(entry.sourceId, entry.devGrantAmount)) return { success: false, reason: "inventory-full", amount: 0, entry };
   const amount = access.add(entry.sourceId, entry.devGrantAmount);

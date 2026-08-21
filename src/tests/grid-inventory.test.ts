@@ -2,13 +2,13 @@ import { describe, expect, it } from "vitest";
 import { InventorySystem } from "../systems/inventory-system";
 
 describe("grid inventory", () => {
-  it("starts with pockets, shirt, and pants providing twenty cells", () => {
+  it("starts with pockets, shirt, and pants providing twenty-four cells", () => {
     const inventory = new InventorySystem();
     const containers = inventory.getContainers();
     expect(containers.map(({ kind, width, height }) => [kind, width, height])).toEqual([
-      ["pockets", 4, 2], ["shirt", 2, 2], ["pants", 4, 2],
+      ["pockets", 4, 2], ["shirt", 2, 4], ["pants", 4, 2],
     ]);
-    expect(containers.reduce((sum, container) => sum + container.occupancy.length, 0)).toBe(20);
+    expect(containers.reduce((sum, container) => sum + container.occupancy.length, 0)).toBe(24);
   });
 
   it("uses one footprint for a whole stack and preserves stable instance ids", () => {

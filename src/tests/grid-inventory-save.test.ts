@@ -27,6 +27,6 @@ describe("grid inventory save migration", () => {
     const legacy = { ...current, version: 2 as const, items: current.items.map(({ rotation: _rotation, ...item }) => item) };
     const restored = new InventorySystem(20, legacy as unknown as Parameters<InventorySystem["restore"]>[0]);
     expect(restored.getItems().every((item) => item.rotation === 0)).toBe(true);
-    expect(restored.snapshot().version).toBe(3);
+    expect(restored.snapshot().version).toBe(4);
   });
 });

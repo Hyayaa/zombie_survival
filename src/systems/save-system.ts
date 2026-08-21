@@ -1,6 +1,7 @@
 import { MAP_ID, MAP_VERSION, SAVE_VERSION, TILE_SIZE } from "../config/game-config";
 import type { SaveGame } from "../core/save-state";
 import { ITEM_DEFINITIONS } from "../data/item-definitions";
+import { getInventoryObjectDefinition } from "../data/inventory-object-definitions";
 import { createCityBlockMap } from "../data/map-definitions";
 import { emptyFogExploration, isValidExploredFog } from "./fog-save-codec";
 import { createWeaponMagazines } from "./weapon-system";
@@ -203,13 +204,21 @@ export class SaveSystem {
       || (typeof slot?.itemId === "string" && ITEM_DEFINITIONS[slot.itemId] !== undefined && typeof slot.quantity === "number" && slot.quantity > 0));
     if (version < 8 || !value || typeof value !== "object") return false;
     const snapshot = value as Partial<GridInventorySnapshot>;
-    return (snapshot.version === 2 || snapshot.version === 3) && typeof snapshot.nextInstanceId === "number" && Array.isArray(snapshot.items)
+    return (snapshot.version === 2 || snapshot.version === 3 || snapshot.version === 4) && typeof snapshot.nextInstanceId === "number" && Array.isArray(snapshot.items)
       && snapshot.items.every((item) => item && typeof item.instanceId === "string" && typeof item.itemId === "string"
-        && ITEM_DEFINITIONS[item.itemId] !== undefined && typeof item.quantity === "number" && item.quantity > 0
+        && this.isKnownInventoryObject(item.itemId) && typeof item.quantity === "number" && item.quantity > 0
         && (typeof item.containerId === "string" || item.containerId === null)
         && [item.x, item.y, item.width, item.height].every((coordinate) => typeof coordinate === "number")
         && (item.rotation === undefined || item.rotation === 0 || item.rotation === 1))
-      && !!snapshot.equipment && typeof snapshot.equipment === "object";
+      && !!snapshot.equipment && typeof snapshot.equipment === "object"
+      && (snapshot.weaponEquipment === undefined || (typeof snapshot.weaponEquipment === "object"
+        && (snapshot.weaponEquipment.activeSlot === "primary" || snapshot.weaponEquipment.activeSlot === "secondary")
+        && (snapshot.weaponEquipment.primaryInstanceId === undefined || typeof snapshot.weaponEquipment.primaryInstanceId === "string")
+        && (snapshot.weaponEquipment.secondaryInstanceId === undefined || typeof snapshot.weaponEquipment.secondaryInstanceId === "string")));
+  }
+
+  private isKnownInventoryObject(itemId: string): boolean {
+    try { getInventoryObjectDefinition(itemId); return true; } catch { return false; }
   }
 
   private hasValidObstacleState(value: SaveCandidate): boolean {

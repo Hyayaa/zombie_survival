@@ -12,7 +12,7 @@ describe("crafting tab model", () => {
   });
   it("reports no-space state after simulating ingredient consumption", () => {
     const crafting = new CraftingSystem([...RECIPE_DEFINITIONS, { id: "bulky", name: "bulky", resultItemId: "barricade", resultQuantity: 1, ingredients: { cloth: 2 }, craftTimeMs: 1, noiseIntensity: 0 }]);
-    const inventory = new InventorySystem(); inventory.add("cloth", 3); inventory.add("engine_part", 4);
+    const inventory = new InventorySystem(); inventory.add("cloth", 3); inventory.add("engine_part", 5);
     expect(crafting.getAvailability("bulky", inventory)).toBe("inventory-full");
   });
 });
