@@ -21,6 +21,7 @@ export class Companion {
   nextAttackAt = 0;
   path: Point[] = [];
   pathIndex = 0;
+  pathNavigationRevision = -1;
   nextPathAt = 0;
   readonly navigation: CompanionNavigationState;
   readonly goalScratch: Point = { x: 0, y: 0 };

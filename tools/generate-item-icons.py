@@ -1,4 +1,6 @@
 from pathlib import Path
+import argparse
+import re
 from PIL import Image, ImageDraw
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -114,6 +116,20 @@ def draw_icon(item_id):
         p(d, [(12, 8), (19, 8), (21, 14), (24, 26), (8, 26), (11, 14)], "#6b7b67"); r(d, (12, 5, 19, 10), "#80674d"); p(d, [(14, 7), (11, 3), (17, 5), (20, 2), (21, 8)], RED); d.polygon([(10, 17), (21, 14), (22, 22), (9, 24)], fill="#b65b36")
     elif item_id == "scrap_cache":
         r(d, (5, 12, 27, 27), WOOD); d.rectangle((4, 9, 28, 14), fill=WOOD_LIGHT); r(d, (7, 6, 13, 13), METAL); p(d, [(17, 11), (21, 5), (25, 8), (22, 14)], GOLD); l(d, [(9, 20), (23, 17)], METAL_LIGHT, 2); d.rectangle((17, 21, 22, 25), fill=SHADOW)
+    elif item_id == "basic_tshirt":
+        p(d, [(8, 7), (13, 4), (19, 4), (24, 7), (29, 12), (24, 16), (22, 12), (22, 28), (10, 28), (10, 12), (8, 16), (3, 12)], "#a9aaa2"); d.rectangle((13, 5, 19, 8), fill=SHADOW); d.rectangle((12, 22, 20, 24), fill=LIGHT)
+    elif item_id == "work_pants":
+        p(d, [(9, 4), (23, 4), (24, 13), (21, 29), (15, 29), (15, 15), (13, 29), (7, 29), (8, 13)], "#59685f"); r(d, (9, 8, 14, 14), "#78877c"); r(d, (18, 8, 23, 14), "#78877c"); d.rectangle((9, 5, 22, 7), fill=SHADOW)
+    elif item_id == "utility_belt":
+        p(d, [(3, 12), (29, 12), (27, 20), (5, 20)], WOOD); r(d, (13, 11, 19, 20), GOLD); r(d, (5, 18, 11, 27), "#715137"); r(d, (21, 17, 27, 26), "#715137")
+    elif item_id == "utility_vest":
+        p(d, [(9, 5), (14, 3), (18, 3), (23, 5), (27, 13), (23, 16), (22, 29), (10, 29), (9, 16), (5, 13)], GREEN); r(d, (11, 12, 15, 19), GREEN_LIGHT); r(d, (17, 12, 21, 19), GREEN_LIGHT); r(d, (11, 21, 21, 27), "#4d5f47"); d.line((16, 6, 16, 27), fill=OUTLINE)
+    elif item_id == "school_backpack":
+        p(d, [(9, 8), (13, 4), (20, 4), (24, 8), (27, 27), (5, 27)], BLUE); r(d, (9, 17, 23, 27), "#365d70"); l(d, [(10, 10), (5, 16), (5, 24)], SHADOW, 2); l(d, [(23, 10), (28, 16), (28, 24)], SHADOW, 2); r(d, (14, 3, 19, 7), SHADOW)
+    elif item_id == "hiking_backpack":
+        p(d, [(8, 7), (13, 3), (21, 5), (25, 10), (27, 28), (5, 28)], GREEN); r(d, (8, 17, 24, 28), "#4c6045"); r(d, (4, 12, 9, 24), GREEN_LIGHT); r(d, (23, 12, 28, 24), GREEN_LIGHT); l(d, [(12, 7), (11, 27)], GOLD, 1); l(d, [(21, 8), (22, 27)], GOLD, 1)
+    elif item_id == "military_backpack":
+        p(d, [(7, 6), (12, 3), (22, 4), (26, 8), (28, 29), (4, 29)], "#4d5945"); r(d, (7, 10, 25, 16), "#69755d"); r(d, (7, 19, 14, 27), "#384234"); r(d, (18, 19, 25, 27), "#384234"); l(d, [(10, 8), (23, 8)], "#859173", 1); l(d, [(6, 17), (26, 17)], GOLD, 1)
     elif item_id == "knife":
         p(d, [(5, 25), (10, 19), (20, 5), (27, 4), (22, 12), (12, 22)], METAL_LIGHT); l(d, [(7, 26), (14, 19)], WOOD, 4); d.rectangle((11, 18, 15, 22), fill=GOLD)
     elif item_id == "bat":
@@ -128,7 +144,7 @@ def draw_icon(item_id):
         l(d, [(3, 10), (29, 7)], METAL_LIGHT, 2); p(d, [(6, 13), (17, 12), (21, 17), (14, 20), (9, 27), (3, 27), (8, 18), (3, 16)], WOOD); r(d, (14, 8, 21, 11), SHADOW); d.rectangle((20, 9, 29, 10), fill=OUTLINE)
     else:
         raise KeyError(item_id)
-    return image.resize((64, 64), Image.Resampling.NEAREST)
+    return image
 
 
 ITEM_IDS = (
@@ -137,18 +153,50 @@ ITEM_IDS = (
     "pistol_ammo", "smg_ammo", "shotgun_shell", "rifle_ammo", "battery", "engine_part",
     "bandage", "torch", "barricade", "turret_kit", "solar_generator_kit",
     "fuel_generator_kit", "battery_bank_kit", "generator_fuel", "molotov", "scrap_cache",
+    "basic_tshirt", "work_pants", "utility_belt", "utility_vest", "school_backpack", "hiking_backpack", "military_backpack",
 )
 WEAPON_IDS = ("knife", "bat", "pistol", "smg", "shotgun", "hunting_rifle")
 
 
+def load_footprints():
+    item_source = (ROOT / "src" / "data" / "item-definitions.ts").read_text(encoding="utf-8")
+    weapon_source = (ROOT / "src" / "data" / "weapon-definitions.ts").read_text(encoding="utf-8")
+    footprints = {
+        item_id: (int(width), int(height))
+        for item_id, width, height in re.findall(r"([a-z_]+):\{width:(\d+),height:(\d+)\}", item_source)
+    }
+    for item_id, width, height in re.findall(r'id:\s*"([a-z_]+)".*?inventoryFootprint:\{width:(\d+),height:(\d+)\}', weapon_source):
+        footprints[item_id] = (int(width), int(height))
+    return footprints
+
+
+def render_footprint_icon(item_id, footprint):
+    source = draw_icon(item_id)
+    width, height = footprint
+    if item_id in {"bat", "shotgun"} and height > width:
+        source = source.transpose(Image.Transpose.ROTATE_270)
+    logical_size = (width * 32, height * 32)
+    margin = 3
+    artwork = source.resize((logical_size[0] - margin * 2, logical_size[1] - margin * 2), Image.Resampling.NEAREST)
+    canvas = Image.new("RGBA", logical_size, (0, 0, 0, 0))
+    canvas.alpha_composite(artwork, (margin, margin))
+    return canvas.resize((width * 64, height * 64), Image.Resampling.NEAREST)
+
+
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--ids", nargs="*", choices=ITEM_IDS + WEAPON_IDS)
+    args = parser.parse_args()
+    selected = tuple(args.ids) if args.ids else ITEM_IDS + WEAPON_IDS
+    footprints = load_footprints()
     OUTPUT.mkdir(parents=True, exist_ok=True)
-    for item_id in ITEM_IDS + WEAPON_IDS:
-        image = draw_icon(item_id)
-        assert image.size == (64, 64)
+    for item_id in selected:
+        footprint = footprints[item_id]
+        image = render_footprint_icon(item_id, footprint)
+        assert image.size == (footprint[0] * 64, footprint[1] * 64)
         assert set(image.getchannel("A").get_flattened_data()).issubset({0, 255})
         image.save(OUTPUT / f"{item_id}.png", optimize=True)
-    print(f"generated {len(ITEM_IDS) + len(WEAPON_IDS)} icons in {OUTPUT}")
+    print(f"generated {len(selected)} icons in {OUTPUT}")
 
 
 if __name__ == "__main__":

@@ -3,18 +3,18 @@ import { describe,expect,it } from "vitest";
 import { readFileSync,readdirSync,statSync } from "node:fs";
 import { ITEM_DEFINITIONS } from "../data/item-definitions";
 import { WEAPON_DEFINITIONS } from "../data/weapon-definitions";
-import { getItemIconPath,hasDedicatedItemIcon,ITEM_ICON_SOURCE_SIZE } from "../data/item-icons";
+import { getItemIconPath,getItemIconSourceDimensions,hasDedicatedItemIcon } from "../data/item-icons";
 import { createCompendiumEntries,filterCompendiumEntries } from "../systems/compendium-system";
 import { createItemIconMarkup } from "../ui/item-icon";
 import { createInventorySlotIconMarkup } from "../ui/inventory-panel";
 
 describe("item icon assets",()=>{
-  it("provides a unique dedicated 64x64 PNG for every item and weapon",()=>{
+  it("provides a unique dedicated footprint-sized PNG for every item and weapon",()=>{
     const ids=[...Object.keys(ITEM_DEFINITIONS),...Object.keys(WEAPON_DEFINITIONS)];
     const paths=ids.map((id)=>`public/assets/items/${id}.png`);
     expect(new Set(paths).size).toBe(ids.length);expect(ids.filter((id)=>!hasDedicatedItemIcon(id))).toEqual([]);
     let total=0;
-    for(const path of paths){const bytes=readFileSync(path);total+=statSync(path).size;expect([...bytes.subarray(0,8)]).toEqual([137,80,78,71,13,10,26,10]);expect(bytes.readUInt32BE(16)).toBe(ITEM_ICON_SOURCE_SIZE);expect(bytes.readUInt32BE(20)).toBe(ITEM_ICON_SOURCE_SIZE);expect(bytes.length).toBeLessThan(64*1024);}
+    for(let index=0;index<paths.length;index++){const bytes=readFileSync(paths[index]!);const dimensions=getItemIconSourceDimensions(ids[index]!);total+=statSync(paths[index]!).size;expect([...bytes.subarray(0,8)]).toEqual([137,80,78,71,13,10,26,10]);expect(bytes.readUInt32BE(16)).toBe(dimensions.width);expect(bytes.readUInt32BE(20)).toBe(dimensions.height);expect(bytes.length).toBeLessThan(64*1024);}
     expect(total).toBeLessThan(1024*1024);
     expect(readdirSync("public/assets/items").filter((name:string)=>/\.(zip|bmp|psd)$/i.test(name))).toEqual([]);
   });

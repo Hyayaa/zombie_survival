@@ -36,6 +36,6 @@ describe("item compendium", () => {
     access.hasWeapon.mockReturnValue(true);
     expect(grantCompendiumEntry(entries.find((entry) => entry.id === "weapon:pistol")!, access).reason).toBe("already-unlocked");
     expect(unlockWeapon).not.toHaveBeenCalled();
-    access.hasWeapon.mockReturnValue(false); expect(grantCompendiumEntry(entries.find((entry) => entry.id === "weapon:pistol")!, access).success).toBe(true); expect(unlockWeapon).toHaveBeenCalledWith("pistol");
+    access.hasWeapon.mockReturnValue(false); access.canAdd.mockReturnValue(true); add.mockReturnValue(1); expect(grantCompendiumEntry(entries.find((entry) => entry.id === "weapon:pistol")!, access).success).toBe(true); expect(add).toHaveBeenCalledWith("pistol", 1); expect(unlockWeapon).toHaveBeenCalledWith("pistol");
   });
 });

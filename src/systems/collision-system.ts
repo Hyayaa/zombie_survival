@@ -41,6 +41,7 @@ export class CollisionSystem implements VisionGrid {
   private readonly doorSegmentIndices: Int32Array;
   private readonly doorSegmentActive: Uint8Array;
   private visionRevisionValue = 0;
+  private navigationRevisionValue = 0;
 
   constructor(
     obstacles: WorldObstacle[],
@@ -92,6 +93,7 @@ export class CollisionSystem implements VisionGrid {
     this.dynamicObstacles.push(obstacle);
     this.adjustDynamicTraversal(obstacle, 1);
     this.rebuildObstacleTiles(obstacle);
+    if (obstacle.blocksMovement) this.navigationRevisionValue += 1;
   }
 
   removeDynamicObstacle(id: string): boolean {
@@ -101,6 +103,7 @@ export class CollisionSystem implements VisionGrid {
     if (removed) {
       this.adjustDynamicTraversal(removed, -1);
       this.rebuildObstacleTiles(removed);
+      if (removed.blocksMovement) this.navigationRevisionValue += 1;
     }
     return true;
   }
@@ -113,14 +116,18 @@ export class CollisionSystem implements VisionGrid {
     return this.visionRevisionValue;
   }
 
+  get navigationRevision(): number { return this.navigationRevisionValue; }
+
   setDoorOpen(id: string, open: boolean): void {
     const doorIndex = this.doors.findIndex((candidate) => candidate.id === id);
     if (doorIndex < 0) return;
     const door = this.doors[doorIndex]!;
+    const wasOpen = door.open;
     door.open = door.destroyed ? true : open;
     const isClosed = !door.open && !door.destroyed;
     this.updateDoorSegmentState(doorIndex, isClosed);
     this.rebuildTile(door.tileX, door.tileY);
+    if (door.open !== wasOpen) this.navigationRevisionValue += 1;
   }
 
   setDoorDestroyed(id: string): boolean {
@@ -133,6 +140,7 @@ export class CollisionSystem implements VisionGrid {
     door.open = true;
     this.updateDoorSegmentState(doorIndex, false);
     this.rebuildTile(door.tileX, door.tileY);
+    if (destroyedNow) this.navigationRevisionValue += 1;
     return destroyedNow;
   }
 

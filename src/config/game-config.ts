@@ -13,7 +13,7 @@ export const FOG_CELL_SIZE = TILE_SIZE / FOG_CELLS_PER_TILE;
 if (!Number.isInteger(FOG_CELL_SIZE)) throw new Error("TILE_SIZE must divide evenly into FOG_CELLS_PER_TILE");
 export const FLASHLIGHT_AIM_BUCKETS = 32;
 export const SAVE_KEY = "last-block-save-v1";
-export const SAVE_VERSION = 7;
+export const SAVE_VERSION = 8;
 export const MAP_ID = "expanded-city-v2";
 export const MAP_VERSION = 2;
 

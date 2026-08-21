@@ -4,6 +4,7 @@ import type { SaveGame } from "../core/save-state";
 import { createCityBlockMap } from "../data/map-definitions";
 import { decodeExploredFog, encodeExploredFog, FOG_TOTAL_CELLS, isValidExploredFog } from "../systems/fog-save-codec";
 import { SaveSystem, type StorageLike } from "../systems/save-system";
+import { InventorySystem } from "../systems/inventory-system";
 
 class MemoryStorage implements StorageLike {
   private data = new Map<string, string>();
@@ -46,7 +47,7 @@ describe("SaveSystem", () => {
     expect(saves.save(saveFixture())).toBe(true);
     const loaded = saves.load();
     expect(loaded?.player).toMatchObject({ x: 12, health: 81, infection: 13 });
-    expect(loaded?.inventory[0]).toEqual({ itemId: "cloth", quantity: 2 });
+    expect(Array.isArray(loaded?.inventory) ? loaded.inventory[0] : null).toEqual({ itemId: "cloth", quantity: 2 });
     expect(loaded?.exploredFog).toEqual({ cellSize: 3, encoding: "rle-v1", runs: [1, 2, 50, 1] });
   });
 
@@ -159,7 +160,7 @@ describe("SaveSystem", () => {
     storage.setItem("test", JSON.stringify(legacy)); const loaded = saves.load();
     expect(loaded?.version).toBe(SAVE_VERSION);
     expect(loaded?.player.magazines).toEqual({ pistol: 6, smg: 0, shotgun: 0, hunting_rifle: 0 });
-    expect(loaded?.inventory[0]).toEqual({ itemId: "pistol_ammo", quantity: 9 });
+    expect(Array.isArray(loaded?.inventory) ? loaded.inventory[0] : null).toEqual({ itemId: "pistol_ammo", quantity: 9 });
     expect(loaded?.quickslots[0]).toBe("pistol_ammo"); expect(loaded?.structures).toEqual([]);
   });
 
@@ -185,6 +186,18 @@ describe("SaveSystem", () => {
     fixture.player.survivalNeeds = { hunger: 41, thirst: 32, stamina: 18 };
     expect(saves.save(fixture)).toBe(true);
     expect(saves.load()).toMatchObject({ clock: { elapsedSeconds: 2_100, dayNumber: 3 }, player: { survivalNeeds: { hunger: 41, thirst: 32, stamina: 18 } } });
+  });
+
+  it("round-trips the versioned grid inventory snapshot", () => {
+    const storage = new MemoryStorage(); const saves = new SaveSystem(storage, "test");
+    const fixture = saveFixture(); const inventory = new InventorySystem();
+    inventory.add("water", 2); inventory.add("utility_belt", 1);
+    inventory.add("knife", 1); inventory.add("pistol", 1);
+    const knife = inventory.getStoredItems().find((item) => item.itemId === "knife")!; const pistol = inventory.getStoredItems().find((item) => item.itemId === "pistol")!;
+    inventory.equipWeapon(knife.instanceId, "primary"); inventory.equipWeapon(pistol.instanceId, "secondary"); inventory.setActiveWeaponSlot("secondary");
+    fixture.inventory = inventory.snapshot();
+    expect(saves.save(fixture)).toBe(true);
+    expect(saves.load()?.inventory).toEqual(fixture.inventory);
   });
 
   it("migrates v6 survival needs and day number without changing existing player state", () => {

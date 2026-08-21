@@ -35,4 +35,4 @@ export class CompendiumPanel {
   private applyFilter(query:string,category:CompendiumCategory|"all"):void{const normalized=query.trim().toLocaleLowerCase("ko");let shown=0;for(const entry of this.entries){const card=this.cards.get(entry.id)!;const visible=(category==="all"||entry.category===category)&&(!normalized||card.dataset.search!.includes(normalized));card.hidden=!visible;if(visible)shown++;}this.shownCount=shown;this.updateSummary();}
   private updateSummary():void{this.resultCount.textContent=`${this.shownCount}/${this.entries.length}개 · 개발자 ${this.state?.developerMode?"켜짐":"꺼짐"}`;}
 }
-function categoryLabel(category:CompendiumCategory):string{return ({food:"음식",medical:"치료",material:"재료",ammo:"탄약",tool:"제작·설치",quest:"목표 부품",weapon:"무기"} as Record<CompendiumCategory,string>)[category];}
+function categoryLabel(category:CompendiumCategory):string{return ({food:"음식",medical:"치료",material:"재료",ammo:"탄약",tool:"제작·설치",quest:"목표 부품",equipment:"수납 장비",weapon:"무기"} as Record<CompendiumCategory,string>)[category];}

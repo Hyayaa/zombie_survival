@@ -109,6 +109,15 @@ describe("expanded road-first city map", () => {
     expect(createCityBlockMap(0x3344).containers).toEqual(map.containers);
   });
 
+  it("places every wearable storage item at least once deterministically", () => {
+    const map = createCityBlockMap(0x7788);
+    const loot = map.containers.flatMap((container) => container.loot.map((stack) => stack.itemId));
+    for (const itemId of ["basic_tshirt", "work_pants", "utility_belt", "utility_vest", "school_backpack", "hiking_backpack", "military_backpack"]) {
+      expect(loot.filter((candidate) => candidate === itemId).length).toBeGreaterThanOrEqual(1);
+    }
+    expect(createCityBlockMap(0x7788).containers).toEqual(map.containers);
+  });
+
   it("opens doors deterministically at an aggregate rate near 80 percent", () => {
     const first = createCityBlockMap(77).doors.map((door) => door.open);
     const second = createCityBlockMap(77).doors.map((door) => door.open);
