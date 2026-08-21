@@ -20,6 +20,9 @@ export interface AttackEffectEvent {
   alwaysShowCore?: boolean;
   meleeMode?: "stab" | "swing" | "heavy";
   charge?: number;
+  meleeRange?: number;
+  meleeArcRadians?: number;
+  sweepDirection?: -1 | 1;
 }
 
 export const ATTACK_EFFECT_DURATION_MS: Record<AttackEffectWeapon, number> = {

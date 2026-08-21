@@ -27,6 +27,7 @@ export interface ActorAttackAnimation {
   durationMs: number;
   baseAimAngle: number;
   meleeMode?: MeleeAttackMode;
+  sweepDirection?: -1 | 1;
 }
 
 export class TopDownActorView implements OutlineableEntityView {
@@ -178,7 +179,7 @@ export class TopDownActorView implements OutlineableEntityView {
             visualX = Math.round(Math.cos(attack.baseAimAngle) * thrust);
             visualY = Math.round(Math.sin(attack.baseAimAngle) * thrust);
           } else {
-            poseAngle += swingOffsetAt(attack.weapon, progress) * (attack.meleeMode === "heavy" ? 1.15 : 1);
+            poseAngle += swingOffsetAt(attack.weapon, progress) * (attack.meleeMode === "heavy" ? 1.15 : 1) * (attack.sweepDirection ?? 1);
             visualX = -Math.round(Math.cos(attack.baseAimAngle));
             visualY = -Math.round(Math.sin(attack.baseAimAngle));
             if (attack.weapon === "bat") visualRotation = Math.sin(progress * Math.PI) * (attack.meleeMode === "heavy" ? 0.075 : 0.045);

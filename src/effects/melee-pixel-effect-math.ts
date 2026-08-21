@@ -7,7 +7,7 @@ export const CHARGE_PIXEL_CAP = 8;
 export interface MeleePixelPlan { x: number; y: number; delayMs: number; lifetimeMs: number; size: 1 | 2 | 3; colorIndex: number }
 
 export function createMeleeTrailPlan(sequence: number, weapon: MeleeWeaponId, mode: MeleeAttackMode, originX: number, originY: number, angle: number, charge = 0): MeleePixelPlan[] {
-  const count = mode === "stab" ? 10 : mode === "heavy" ? (weapon === "bat" ? 32 : 25) : (weapon === "bat" ? 24 : 18);
+  const count = mode === "stab" ? 4 : mode === "heavy" ? (weapon === "bat" ? 10 : 8) : (weapon === "bat" ? 8 : 6);
   const plan: MeleePixelPlan[] = [];
   const chargeAmount = Math.max(0, Math.min(1, charge));
   const reach = (weapon === "bat" ? 43 : 32) * (mode === "heavy" ? 0.9 + chargeAmount * 0.1 : 1);

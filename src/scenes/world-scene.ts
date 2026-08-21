@@ -926,6 +926,7 @@ export class WorldScene extends Phaser.Scene {
 
   private executeMeleeAttack(mode: MeleeAttackMode, weaponId: "knife" | "bat", aimAngle: number, charge: number, sequence: number): void {
     const attack = mode === "heavy" ? getChargedMeleeDefinition(weaponId, charge) : MELEE_ATTACK_DEFINITIONS[weaponId][mode];
+    const sweepDirection: -1 | 1 = sequence % 2 === 0 ? -1 : 1;
     const hits = collectMeleeTargets(this.player.position, aimAngle, attack, this.zombies, (origin, target) => this.collision.hasLineOfSight(origin, target), this.meleeTargetScratch);
     const impacts: AttackEffectImpact[] = [];
     this.meleeHitTracker.begin(sequence);
@@ -952,8 +953,8 @@ export class WorldScene extends Phaser.Scene {
       }
     }
     this.noise.emit({ x: this.player.position.x, y: this.player.position.y, intensity: WEAPON_DEFINITIONS[weaponId].noise, category: "melee", createdAt: this.simulationTime });
-    this.attackEffects.play({ weapon: weaponId, originX: this.player.position.x, originY: this.player.position.y, angle: aimAngle, startedAt: this.simulationTime, impacts, alwaysShowCore: true, meleeMode: mode, charge });
-    this.player.beginAttack(this.simulationTime, mode, attack.activeMs + Math.min(attack.recoveryMs, 160));
+    this.attackEffects.play({ weapon: weaponId, originX: this.player.position.x, originY: this.player.position.y, angle: aimAngle, startedAt: this.simulationTime, impacts, alwaysShowCore: true, meleeMode: mode, charge, meleeRange: attack.range, meleeArcRadians: attack.arcRadians, sweepDirection });
+    this.player.beginAttack(this.simulationTime, mode, attack.activeMs + Math.min(attack.recoveryMs, 160), sweepDirection);
     this.audio.playForEvent(impacts.length > 0 ? "melee-hit" : "melee-swing", sequence, { source: this.player.position, listener: this.player.position, volumeScale: mode === "heavy" ? 1.2 : mode === "stab" ? 0.82 : 1 });
     const feedback: CameraFeedbackEvent = mode === "stab" ? (impacts.length ? "melee-stab-hit" : "melee-stab-miss") : mode === "swing" ? (impacts.length ? "melee-swing-hit" : "melee-swing-miss") : (impacts.length ? "melee-heavy-hit" : "melee-heavy-miss");
     this.cameraFeedback.request(feedback, this.simulationTime);

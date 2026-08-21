@@ -70,7 +70,7 @@ class FakeRectangle {
 
 class FakeGraphics {
   destroyed=false;
-  setDepth():this{return this;} fillStyle():this{return this;} fillRect():this{return this;} clear():this{return this;}
+  setDepth():this{return this;} fillStyle():this{return this;} fillRect():this{return this;} fillPoints():this{return this;} clear():this{return this;}
   destroy():void{this.destroyed=true;}
 }
 
@@ -90,7 +90,7 @@ describe("PixelEffectSystem pooling", () => {
     } as unknown as Phaser.Scene;
     const effects = new PixelEffectSystem(scene, () => true);
     expect(views).toHaveLength(408);
-    expect(graphics).toHaveLength(2);
+    expect(graphics).toHaveLength(3);
     for (let attack = 0; attack < 100; attack += 1) {
       effects.playAttack({
         sequence: attack + 1,
@@ -108,7 +108,7 @@ describe("PixelEffectSystem pooling", () => {
       effects.update(attack * 300 + 100, 0.016);
     }
     expect(views).toHaveLength(408);
-    expect(graphics).toHaveLength(2);
+    expect(graphics).toHaveLength(3);
     expect(effects.getStats().capacity).toBe(632);
     expect(effects.getStats().blood).toBeLessThanOrEqual(224);
     effects.clear();

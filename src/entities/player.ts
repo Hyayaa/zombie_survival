@@ -59,7 +59,7 @@ export class Player {
     this.view.setHealth(this.vitals.health, this.vitals.maxHealth, true);
   }
 
-  beginAttack(startedAt: number, meleeMode?: MeleeAttackMode, durationMs?: number): void {
+  beginAttack(startedAt: number, meleeMode?: MeleeAttackMode, durationMs?: number, sweepDirection?: -1 | 1): void {
     if (!this.equippedWeapon) return;
     this.view.beginAttack({
       weapon: this.equippedWeapon,
@@ -67,6 +67,7 @@ export class Player {
       durationMs: durationMs ?? ATTACK_EFFECT_DURATION_MS[this.equippedWeapon],
       baseAimAngle: this.aimAngle,
       meleeMode,
+      sweepDirection,
     });
   }
 }

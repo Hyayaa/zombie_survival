@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { CHARGE_PIXEL_CAP, createChargePixelPlan, createMeleeTrailPlan, createPostureShatterPlan, MELEE_TRAIL_PIXEL_CAP, POSTURE_SHATTER_PIXEL_CAP } from "../effects/melee-pixel-effect-math";
+import { createActiveMeleeTrail, getMeleeTrailLifecycle } from "../effects/melee-trail-system";
 
 describe("melee pixel effects", () => {
   it("is deterministic and keeps every effect within its fixed cap", () => {
@@ -17,5 +18,13 @@ describe("melee pixel effects", () => {
     expect(stab.length).toBeLessThan(swing.length);
     expect(heavy.length).toBeGreaterThan(swing.length);
     expect(new Set(stab.map((pixel) => Math.round(pixel.y))).size).toBeLessThan(new Set(swing.map((pixel) => Math.round(pixel.y))).size);
+  });
+
+  it("uses polygon/raster geometry with distinct bright and secondary colors", () => {
+    const trail = createActiveMeleeTrail({ sequence: 8, weapon: "bat", meleeMode: "swing", originX: 0, originY: 0, angle: 0, startedAt: 10, impacts: [], meleeRange: 47, meleeArcRadians: 2.1 })!;
+    expect(trail.geometry.kind).toBe("crescent");
+    expect(trail.colors.main).not.toBe(trail.colors.secondary);
+    expect(getMeleeTrailLifecycle(trail, trail.revealEndsAt + 1).alpha).toBe(1);
+    expect("radius" in trail.geometry).toBe(false);
   });
 });
