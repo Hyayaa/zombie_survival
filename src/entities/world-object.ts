@@ -11,6 +11,7 @@ export type WorldObjectKind =
   | "door"
   | "barricade"
   | "power-structure"
+  | "crafting-station"
   | "container"
   | "item-drop"
   | "extraction";

@@ -8,7 +8,7 @@ import { createCityBlockMap, getTerrain, isRoad, TerrainType, type ContainerDefi
 import { assertValidMap } from "../data/map-validation";
 import { getItemDefinition, type StorageSlot } from "../data/item-definitions";
 import { getInventoryObjectDefinition, isWeaponItemId } from "../data/inventory-object-definitions";
-import { RECIPE_DEFINITIONS } from "../data/recipe-definitions";
+import { CRAFTING_STATION_LABEL, RECIPE_DEFINITIONS, type CraftingStationKind } from "../data/recipe-definitions";
 import { BUILDABLE_ITEM_KIND, BUILDABLE_DEFINITIONS, type BuildableKind } from "../data/buildable-definitions";
 import { isFirearmId, WEAPON_DEFINITIONS } from "../data/weapon-definitions";
 import { getChargedMeleeDefinition, isMeleeWeaponId, MELEE_ATTACK_DEFINITIONS, MELEE_INPUT_BALANCE, type MeleeAttackMode } from "../data/melee-attack-definitions";
@@ -23,7 +23,7 @@ import { Companion, type CompanionCommand } from "../entities/companion";
 import { DestructibleObstacleSystem, getZombieStructureDamage } from "../entities/destructible-obstacle";
 import { ItemDrop } from "../entities/item-drop";
 import { Player } from "../entities/player";
-import { createPlacedStructure, type PlacedStructureState } from "../entities/placed-structure";
+import { createPlacedStructure, getPlacedStructureCenter, type PlacedStructureState } from "../entities/placed-structure";
 import type { InteractionContext, WorldObject, WorldObjectKind } from "../entities/world-object";
 import { Zombie } from "../entities/zombie";
 import { FogRenderer } from "../rendering/fog-renderer";
@@ -39,6 +39,7 @@ import { angleDifference, distance, getFinalZombieKnockback, type ZombieKnockbac
 import { chooseLocalSteering, findNearestWalkableGoal, getCompanionCombatMovement, getCompanionFollowSpeed, getCompanionStuckDuration, getWorldTileIndex, markCompanionBlocked, markCompanionRepath, selectCompanionCombatTarget, shouldOverrideCompanionGoalForCombat, updateCatchUpMode, updateCompanionStuckState } from "../systems/companion-navigation";
 import { createFormationState, getFormationSlot, updateFormationDirection, type FormationState } from "../systems/companion-system";
 import { CraftingSystem } from "../systems/crafting-system";
+import { CraftingStationSystem, type CraftingStationRegistration } from "../systems/crafting-station-system";
 import { FogInvalidationTracker, FogOfWarSystem, VisibilityState, type VisionSource } from "../systems/fog-of-war-system";
 import { InfectionSystem } from "../systems/infection-system";
 import { applyConsumable, canApplyConsumable } from "../systems/consumable-system";
@@ -133,6 +134,8 @@ export class WorldScene extends Phaser.Scene {
   private readonly turretRuntime = new Map<string, { target?: Zombie; nextScanAt: number; nextFireAt: number }>();
   private readonly turretTargetScratch: TurretTarget[] = [];
   private readonly powerGrid = new PowerGridSystem();
+  private readonly craftingStations = new CraftingStationSystem();
+  private activeCraftingStationId?: string;
   private powerWireGraphics?: Phaser.GameObjects.Graphics;
   private indoorTiles = new Uint8Array(0);
   private structureCounter = 0;
@@ -482,6 +485,8 @@ export class WorldScene extends Phaser.Scene {
     this.structureViews.clear();
     this.turretRuntime.clear();
     this.turretTargetScratch.length = 0;
+    this.craftingStations.clear();
+    this.activeCraftingStationId = undefined;
     this.indoorTiles = new Uint8Array(0);
     this.structureCounter = 0;
     this.nextPowerTickAt = 0;
@@ -635,11 +640,13 @@ export class WorldScene extends Phaser.Scene {
   }
 
   private restoreStructure(state: PlacedStructureState): void {
-    if (state.tileX < 0 || state.tileY < 0 || state.tileX >= this.map.widthTiles || state.tileY >= this.map.heightTiles) return;
+    const definition = BUILDABLE_DEFINITIONS[state.kind];
+    if (state.tileX < 0 || state.tileY < 0 || state.tileX + definition.footprint.width > this.map.widthTiles || state.tileY + definition.footprint.height > this.map.heightTiles) return;
     state.powered = false;
     this.structures.push(state);
     this.structureViews.set(state.id, new StructureView(this, state));
-    this.collision.addDynamicObstacle({ id: state.id, tileX: state.tileX, tileY: state.tileY, widthTiles: 1, heightTiles: 1, blocksMovement: true, blocksVision: false, blocksProjectiles: true, coverHeight: "low", kind: "furniture" });
+    this.collision.addDynamicObstacle({ id: state.id, tileX: state.tileX, tileY: state.tileY, widthTiles: definition.footprint.width, heightTiles: definition.footprint.height, blocksMovement: definition.blocksMovement, blocksVision: definition.blocksVision, blocksProjectiles: definition.blocksProjectiles, coverHeight: "low", kind: "furniture" });
+    if (definition.craftingStationKind) { const position = getPlacedStructureCenter(state); this.craftingStations.register({ id: state.id, kind: definition.craftingStationKind, ...position }); }
     if (state.kind === "turret") this.turretRuntime.set(state.id, { nextScanAt: 0, nextFireAt: 0 });
     this.structureCounter += 1;
   }
@@ -647,10 +654,11 @@ export class WorldScene extends Phaser.Scene {
   private registerStructureObject(state: PlacedStructureState): void {
     const view = this.structureViews.get(state.id);
     if (!view || this.worldObjects.get(state.id)) return;
-    const position = { x: tileCenter(state.tileX), y: tileCenter(state.tileY) };
-    this.worldObjects.register(this.makeWorldObject(state.id, "power-structure", view, () => position, () => true, {
-      range: 34, requiresLineOfSight: true, selectionPriority: 10, isEnabled: () => true,
-      getPrompt: () => `[E] ${BUILDABLE_DEFINITIONS[state.kind].name} 상태 확인`, execute: () => this.interactWithStructure(state),
+    const definition = BUILDABLE_DEFINITIONS[state.kind]; const position = getPlacedStructureCenter(state);
+    const isCraftingStation = Boolean(definition.craftingStationKind);
+    this.worldObjects.register(this.makeWorldObject(state.id, isCraftingStation ? "crafting-station" : "power-structure", view, () => position, () => true, {
+      range: isCraftingStation ? 72 : 34, requiresLineOfSight: true, selectionPriority: isCraftingStation ? 16 : 10, isEnabled: () => true,
+      getPrompt: () => isCraftingStation ? `[E] ${definition.name}에서 제작` : `[E] ${definition.name} 상태 확인`, execute: () => isCraftingStation ? this.openCraftingAtStation(state.id) : this.interactWithStructure(state),
     }));
   }
 
@@ -665,7 +673,13 @@ export class WorldScene extends Phaser.Scene {
     if (state.kind === "turret") this.hud.showMessage(`터렛 · ${state.powered ? "전력 공급 중" : this.powerGrid.getEdges().some((edge) => edge.fromId === state.id || edge.toId === state.id) ? "전력 부족" : "발전기와 연결되지 않음"}`);
     else if (state.kind === "solar-generator") this.hud.showMessage(`태양광 발전기 · ${this.clock.getPhase() === "day" ? "출력 8/s" : "야간 발전 정지"} · 저장 ${Math.floor(state.storedEnergy)}/40`);
     else if (state.kind === "fuel-generator") this.hud.showMessage(`연료 발전기 · 저장 ${Math.floor(state.storedEnergy)}/60 · 연료 ${Math.ceil((state.fuelSeconds ?? 0) / GENERATOR_FUEL_SECONDS)}/4`);
-    else this.hud.showMessage(`축전지 · 저장 ${Math.floor(state.storedEnergy)}/240`);
+    else if (state.kind === "battery-bank") this.hud.showMessage(`축전지 · 저장 ${Math.floor(state.storedEnergy)}/240`);
+  }
+
+  private openCraftingAtStation(stationId: string): void {
+    this.activeCraftingStationId = stationId;
+    this.minimap.hide(); this.commandPanel.hide(); this.pendingCompanionCommand = undefined;
+    this.inventoryPanel.showCrafting(this.getInventoryPanelState(stationId));
   }
 
   private configureCamera(): void {
@@ -725,7 +739,7 @@ export class WorldScene extends Phaser.Scene {
     this.dayAnnouncement = new DayAnnouncement(this.uiRoot);
     this.minimap = new MinimapPanel(this.uiRoot, this.map, this.fog);
     this.inventoryPanel = new InventoryPanel(this.uiRoot, {
-      onClose: () => this.inventoryPanel.hide(),
+      onClose: () => { this.activeCraftingStationId = undefined; this.inventoryPanel.hide(); },
       onCraft: (recipeId) => this.craft(recipeId),
       onUseItem: (instanceId) => this.useInventoryItem(instanceId),
       onDropItem: (instanceId) => this.dropInventoryItem(instanceId),
@@ -791,6 +805,7 @@ export class WorldScene extends Phaser.Scene {
         this.minimap.hide();
         this.commandPanel.hide();
         this.pendingCompanionCommand = undefined;
+        this.activeCraftingStationId = undefined;
         this.inventoryPanel.show(this.getInventoryPanelState());
       }
     }
@@ -1922,9 +1937,11 @@ export class WorldScene extends Phaser.Scene {
   }
 
   private craft(recipeId: string): void {
-    const result = this.crafting.craft(recipeId, this.inventory, { ignoreIngredients: this.settings.developerMode });
+    const station = this.getCraftingStationContext(this.activeCraftingStationId);
+    const result = this.crafting.craft(recipeId, this.inventory, { ignoreIngredients: this.settings.developerMode, stationKind: station.kind });
     if (!result.success) {
-      this.hud.showMessage(result.reason === "inventory-full" ? "제작품을 넣을 공간이 없습니다." : "재료가 부족합니다.");
+      this.hud.showMessage(result.reason === "station-missing" ? "필요한 등급의 제작대가 가까이 없습니다." : result.reason === "inventory-full" ? "제작품을 넣을 공간이 없습니다." : "재료가 부족합니다.");
+      this.refreshInventoryPanel();
       return;
     }
     const recipe = result.recipe;
@@ -2041,20 +2058,21 @@ export class WorldScene extends Phaser.Scene {
   private placeStructure(kind: BuildableKind): boolean {
     const worldX = this.player.position.x + Math.cos(this.player.aimAngle) * 34;
     const worldY = this.player.position.y + Math.sin(this.player.aimAngle) * 34;
-    const tileX = Math.floor(worldX / TILE_SIZE); const tileY = Math.floor(worldY / TILE_SIZE);
-    const tileIndex = tileY * this.map.widthTiles + tileX;
-    const actorOccupied = squaredDistance({ x: tileCenter(tileX), y: tileCenter(tileY) }, this.player.position) < 18 * 18
-      || this.companions.some((companion) => companion.alive && squaredDistance({ x: tileCenter(tileX), y: tileCenter(tileY) }, companion.position) < 18 * 18);
+    const tileX = Math.floor(worldX / TILE_SIZE); const tileY = Math.floor(worldY / TILE_SIZE); const definition = BUILDABLE_DEFINITIONS[kind]; const footprint = definition.footprint;
+    const coveredTiles: Array<{ x: number; y: number }> = [];
+    for (let y = tileY; y < tileY + footprint.height; y += 1) for (let x = tileX; x < tileX + footprint.width; x += 1) coveredTiles.push({ x, y });
+    const actorOccupied = coveredTiles.some((tile) => squaredDistance({ x: tileCenter(tile.x), y: tileCenter(tile.y) }, this.player.position) < 18 * 18
+      || this.companions.some((companion) => companion.alive && squaredDistance({ x: tileCenter(tile.x), y: tileCenter(tile.y) }, companion.position) < 18 * 18));
     const failure = getBuildablePlacementFailure(kind, {
-      inBounds: tileX >= 0 && tileY >= 0 && tileX < this.map.widthTiles && tileY < this.map.heightTiles,
-      blocked: this.collision.isTileBlocked(tileX, tileY),
-      occupiedByStructure: this.structures.some((state) => state.tileX === tileX && state.tileY === tileY),
-      doorway: this.map.doors.some((door) => door.tileX === tileX && door.tileY === tileY),
-      objective: this.map.containers.some((container) => Boolean(container.part) && container.tileX === tileX && container.tileY === tileY),
-      extraction: squaredDistance({ x: tileCenter(tileX), y: tileCenter(tileY) }, this.map.extractionZone) <= this.map.extractionZone.radius ** 2,
+      inBounds: tileX >= 0 && tileY >= 0 && tileX + footprint.width <= this.map.widthTiles && tileY + footprint.height <= this.map.heightTiles,
+      blocked: coveredTiles.some((tile) => this.collision.isTileBlocked(tile.x, tile.y)),
+      occupiedByStructure: this.structures.some((state) => structureFootprintsOverlap(tileX, tileY, footprint.width, footprint.height, state)),
+      doorway: coveredTiles.some((tile) => this.map.doors.some((door) => door.tileX === tile.x && door.tileY === tile.y)),
+      objective: coveredTiles.some((tile) => this.map.containers.some((container) => Boolean(container.part) && container.tileX === tile.x && container.tileY === tile.y)),
+      extraction: coveredTiles.some((tile) => squaredDistance({ x: tileCenter(tile.x), y: tileCenter(tile.y) }, this.map.extractionZone) <= this.map.extractionZone.radius ** 2),
       actorOccupied,
-      indoor: this.indoorTiles[tileIndex] === 1,
-      roadLane: isRoad(this.map, tileX, tileY),
+      indoor: coveredTiles.some((tile) => this.indoorTiles[tile.y * this.map.widthTiles + tile.x] === 1),
+      roadLane: coveredTiles.some((tile) => isRoad(this.map, tile.x, tile.y)),
     });
     if (failure) { this.hud.showMessage(failure === "solar-indoors" ? "태양광 발전기는 실외에만 설치할 수 있습니다." : "이 위치에는 설치할 수 없습니다."); return false; }
     let id: string;
@@ -2166,8 +2184,9 @@ export class WorldScene extends Phaser.Scene {
     for (const item of this.inventory.getItems()) if (isWeaponItemId(item.itemId)) this.player.unlockWeapon(item.itemId, false);
   }
 
-  private getInventoryPanelState(): InventoryPanelState {
+  private getInventoryPanelState(preferredStationId?: string): InventoryPanelState {
     const recipes = this.crafting.getRecipes();
+    const station = this.getCraftingStationContext(preferredStationId);
     const itemIds = new Set(recipes.flatMap((recipe) => [...Object.keys(recipe.ingredients), recipe.resultItemId]));
     return {
       containers: this.inventory.getContainers(),
@@ -2175,12 +2194,25 @@ export class WorldScene extends Phaser.Scene {
       equipment: this.inventory.getEquipment(),
       quickslots: [...this.quickslots],
       recipes,
-      craftAvailability: Object.fromEntries(recipes.map((recipe) => [recipe.id, this.crafting.getAvailability(recipe.id, this.inventory, { ignoreIngredients: this.settings.developerMode })])),
+      craftAvailability: Object.fromEntries(recipes.map((recipe) => [recipe.id, this.crafting.getAvailability(recipe.id, this.inventory, { ignoreIngredients: this.settings.developerMode, stationKind: station.kind })])),
       itemCounts: Object.fromEntries([...itemIds].map((itemId) => [itemId, this.inventory.count(itemId)])),
       weaponEquipment: this.inventory.getWeaponEquipment(),
       developerMode: this.settings.developerMode,
       inventoryRevision: this.inventory.revision,
+      craftingStationKind: station.kind,
+      craftingStationName: station.name,
     };
+  }
+
+  private getCraftingStationContext(preferredStationId?: string): { kind: CraftingStationKind; name: string } {
+    const query = { hasLineOfSight: (from: Point, to: Point) => this.collision.hasLineOfSight(from, to) };
+    let station: CraftingStationRegistration | undefined;
+    if (preferredStationId) {
+      const preferred = this.craftingStations.get(preferredStationId);
+      if (preferred && squaredDistance(this.player.position, preferred) <= 72 ** 2 && query.hasLineOfSight(this.player.position, preferred)) station = preferred;
+    }
+    station ??= this.craftingStations.findBest(this.player.position, query);
+    return station ? { kind: station.kind, name: `${CRAFTING_STATION_LABEL[station.kind]} · ${station.id}` } : { kind: "hand", name: CRAFTING_STATION_LABEL.hand };
   }
 
   private setDeveloperMode(enabled: boolean): void {
@@ -2327,7 +2359,7 @@ export class WorldScene extends Phaser.Scene {
   }
 
   private rebuildPowerTopology(): void {
-    this.powerGrid.rebuild(this.structures, (state) => ({ x: tileCenter(state.tileX), y: tileCenter(state.tileY) }));
+    this.powerGrid.rebuild(this.structures, getPlacedStructureCenter);
     const graphics = this.powerWireGraphics;
     if (!graphics) return;
     graphics.clear().lineStyle(1, 0x777d7a, 0.82);
@@ -2335,8 +2367,8 @@ export class WorldScene extends Phaser.Scene {
     for (const edge of this.powerGrid.getEdges()) {
       const first = byId.get(edge.fromId); const second = byId.get(edge.toId);
       if (!first || !second) continue;
-      const fromCenter = { x: tileCenter(first.tileX), y: tileCenter(first.tileY) };
-      const toCenter = { x: tileCenter(second.tileX), y: tileCenter(second.tileY) };
+      const fromCenter = getPlacedStructureCenter(first);
+      const toCenter = getPlacedStructureCenter(second);
       const length = Math.hypot(toCenter.x - fromCenter.x, toCenter.y - fromCenter.y) || 1;
       const insetX = (toCenter.x - fromCenter.x) / length * 8; const insetY = (toCenter.y - fromCenter.y) / length * 8;
       const points = createPowerWirePolyline({ x: fromCenter.x + insetX, y: fromCenter.y + insetY }, { x: toCenter.x - insetX, y: toCenter.y - insetY }, first.id, second.id);
@@ -2646,6 +2678,11 @@ function squaredDistance(first: Point, second: Point): number {
 
 function angleDelta(a: number, b: number): number {
   return Math.atan2(Math.sin(a - b), Math.cos(a - b));
+}
+
+function structureFootprintsOverlap(tileX: number, tileY: number, width: number, height: number, state: PlacedStructureState): boolean {
+  const footprint = BUILDABLE_DEFINITIONS[state.kind].footprint;
+  return tileX < state.tileX + footprint.width && tileX + width > state.tileX && tileY < state.tileY + footprint.height && tileY + height > state.tileY;
 }
 
 function rotateAngleToward(current: number, target: number, maximumStep: number): number {

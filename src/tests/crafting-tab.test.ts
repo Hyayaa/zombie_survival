@@ -11,8 +11,12 @@ describe("crafting tab model", () => {
     expect(crafting.getAvailability("bandage", inventory)).toBe("ready");
   });
   it("reports no-space state after simulating ingredient consumption", () => {
-    const crafting = new CraftingSystem([...RECIPE_DEFINITIONS, { id: "bulky", name: "bulky", resultItemId: "barricade", resultQuantity: 1, ingredients: { cloth: 2 }, craftTimeMs: 1, noiseIntensity: 0 }]);
+    const crafting = new CraftingSystem([...RECIPE_DEFINITIONS, { id: "bulky", name: "bulky", resultItemId: "barricade", resultQuantity: 1, ingredients: { cloth: 2 }, craftTimeMs: 1, noiseIntensity: 0, requiredStation: "hand" as const }]);
     const inventory = new InventorySystem(); inventory.add("cloth", 3); inventory.add("engine_part", 5);
     expect(crafting.getAvailability("bulky", inventory)).toBe("inventory-full");
+  });
+  it("prioritizes a missing station over materials and space", () => {
+    const crafting = new CraftingSystem(RECIPE_DEFINITIONS); const inventory = new InventorySystem();
+    expect(crafting.getAvailability("turret_kit", inventory, { stationKind: "hand" })).toBe("station-missing");
   });
 });

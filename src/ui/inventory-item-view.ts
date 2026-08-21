@@ -3,7 +3,7 @@ import { getInventoryObjectDefinition } from "../data/inventory-object-definitio
 import type { InventoryRotation } from "../data/item-definitions";
 import { getInventoryItemRenderGeometry, getInventoryRenderStyle, INVENTORY_GRID_METRICS, type InventoryGridMetrics, type InventoryItemRenderGeometry } from "./inventory-item-render-geometry";
 
-export type InventoryItemSurface = "inventory-grid" | "equipment-slot" | "weapon-slot" | "drag-ghost";
+export type InventoryItemSurface = "inventory-grid" | "equipment-slot" | "weapon-slot" | "drag-ghost" | "readonly-grid";
 export interface InventoryItemViewOptions {
   instanceId: string; itemId: string; quantity: number; rotation: InventoryRotation;
   surface: InventoryItemSurface; metrics?: InventoryGridMetrics; quickLabel?: string; className?: string;

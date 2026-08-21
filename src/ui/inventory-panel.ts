@@ -1,12 +1,13 @@
 import { getEquipmentStorageDescription, getItemDefinition, type InventoryRotation, type StorageSlot } from "../data/item-definitions";
 import { getInventoryObjectDefinition, isWeaponItemId } from "../data/inventory-object-definitions";
 import type { AudioCue } from "../data/audio-definitions";
-import type { RecipeDefinition } from "../data/recipe-definitions";
+import { CRAFTING_STATION_LABEL, type CraftingStationKind, type RecipeDefinition } from "../data/recipe-definitions";
 import type { CraftAvailability } from "../systems/crafting-system";
 import type { InventoryContainerKind, InventoryContainerView, InventoryDropTarget, InventoryItemInstance, InventoryItemLocation, InventoryMoveTarget, InventorySlot, WeaponEquipmentSlot, WeaponEquipmentState } from "../systems/inventory-system";
 import { bindItemIconFallbacks, createItemIconMarkup } from "./item-icon";
 import { getInventoryItemRenderGeometry, getInventoryRenderStyle, INVENTORY_GRID_METRICS, type InventoryItemRenderGeometry } from "./inventory-item-render-geometry";
 import { createInventoryItemView, getInventoryItemViewGeometry } from "./inventory-item-view";
+import { createItemGridRowMarkup, packReadonlyGrid } from "./item-grid-row";
 
 export interface InventoryPanelState {
   containers: ReadonlyArray<InventoryContainerView>; items: ReadonlyArray<InventoryItemInstance>;
@@ -14,6 +15,7 @@ export interface InventoryPanelState {
   recipes: readonly RecipeDefinition[]; craftAvailability: Readonly<Record<string, CraftAvailability>>;
   itemCounts: Readonly<Record<string, number>>; weaponEquipment: Readonly<WeaponEquipmentState>;
   developerMode: boolean; inventoryRevision: number;
+  craftingStationKind?: CraftingStationKind; craftingStationName?: string;
 }
 
 export interface InventoryPanelCallbacks {
@@ -59,6 +61,7 @@ export class InventoryPanel {
   private readonly dragGhost: HTMLDivElement; private readonly placementPreview: HTMLDivElement; private readonly popover: HTMLDivElement;
   private state?: InventoryPanelState; private drag?: DragState; private popoverInstanceId?: string;
   private activeTab: "inventory" | "crafting" = "inventory"; private previewKey = ""; private highlightedDropTarget?: HTMLElement;
+  private craftingRenderKey = "";
 
   constructor(parent: HTMLElement, private readonly callbacks: InventoryPanelCallbacks) {
     this.root = document.createElement("div"); this.root.className = "modal-layer"; this.root.hidden = true;
@@ -73,6 +76,7 @@ export class InventoryPanel {
     window.addEventListener("pointermove", this.handlePointerMove); window.addEventListener("pointerup", this.handlePointerUp); document.addEventListener("keydown", this.handleKeyDown); parent.append(this.root);
   }
   show(state: InventoryPanelState): void { this.state = state; this.root.hidden = false; this.render(); this.switchTab(this.activeTab, false); }
+  showCrafting(state: InventoryPanelState): void { this.activeTab = "crafting"; this.show(state); }
   hide(): void { this.closePopover(); this.cancelDrag(); this.root.hidden = true; }
   isOpen(): boolean { return !this.root.hidden; }
   update(state: InventoryPanelState): void { this.state = state; if (this.popoverInstanceId && !state.items.some((item) => item.instanceId === this.popoverInstanceId)) this.closePopover(); if (!this.root.hidden) this.render(); }
@@ -90,23 +94,36 @@ export class InventoryPanel {
         const geometry = getInventoryItemViewGeometry({ itemId: item.itemId, rotation: item.rotation, metrics: INVENTORY_GRID_METRICS });
         return `<button class="grid-inventory__item" data-instance-id="${item.instanceId}" style="${getItemGridStyle(item)};${getInventoryRenderStyle(geometry)}" title="${definition.name}">${this.itemView(item, "inventory-grid", quick ? `Q${quick}` : undefined)}</button>`;
       }).join("");
-      return `<section class="storage-row" data-kind="${kind}"><h3>${CONTAINER_LABELS[kind]} <small>${container.width}×${container.height}</small></h3><div class="storage-row__body">${equipment}<div class="grid-inventory__surface" data-container-id="${container.id}" style="--grid-w:${container.width};--grid-h:${container.height}">${stored}</div></div></section>`;
+      return createItemGridRowMarkup({ className: "storage-row", attributes: `data-kind="${kind}"`, header: `<h3>${CONTAINER_LABELS[kind]} <small>${container.width}×${container.height}</small></h3>`, left: equipment, right: `<div class="grid-inventory__surface" data-container-id="${container.id}" style="--grid-w:${container.width};--grid-h:${container.height}">${stored}</div>` });
     }).join("");
     const weaponSlots = (["primary", "secondary"] as const).map((slot) => this.renderWeaponSlot(slot, itemsById)).join("");
     this.inventoryView.innerHTML = `<div class="inventory-panel__content"><div class="grid-inventory">${rows}</div><aside><h3>무기 슬롯</h3><div class="weapon-equipment">${weaponSlots}</div><p class="panel-note">인벤토리 무기를 슬롯으로 드래그 · 드래그 중 R: 회전</p></aside></div>`;
   }
   private renderCrafting(): void {
-    if (!this.state) return; const recipes = this.state.recipes.map((recipe) => {
+    if (!this.state) return;
+    const renderKey = JSON.stringify([this.state.inventoryRevision, this.state.craftingStationKind ?? "hand", this.state.craftingStationName ?? "", this.state.developerMode, this.state.craftAvailability, this.state.itemCounts]);
+    if (renderKey === this.craftingRenderKey) return;
+    this.craftingRenderKey = renderKey;
+    const stationKind = this.state.craftingStationKind ?? "hand";
+    const recipes = this.state.recipes.map((recipe) => {
       const availability = this.state!.craftAvailability[recipe.id] ?? "missing-materials";
-      const ingredients = Object.entries(recipe.ingredients).map(([id, required]) => { const definition = getItemDefinition(id); const owned = this.state!.itemCounts[id] ?? 0; return `<span class="craft-ingredient ${owned < required ? "is-missing" : ""}">${createItemIconMarkup({ id, name: definition.name, color: definition.iconColor, className: "craft-icon" })}<b>${definition.name}</b><small>${owned}/${required}</small></span>`; }).join("");
-      const result = getItemDefinition(recipe.resultItemId); const footprint = result.inventoryFootprint; const reason = availability === "missing-materials" ? "재료 부족" : availability === "inventory-full" ? "수납 공간 부족" : "제작";
-      return `<article class="craft-card ${availability !== "ready" ? "is-disabled" : ""}"><div class="craft-card__ingredients">${ingredients}</div><span class="craft-card__arrow">→</span><div class="craft-card__result">${createItemIconMarkup({ id: result.id, name: result.name, color: result.iconColor, className: "craft-result-icon" })}<b>${recipe.name} ×${recipe.resultQuantity}</b><small>${footprint.width}×${footprint.height}</small></div><button data-action="craft" data-recipe="${recipe.id}" ${availability !== "ready" ? "disabled" : ""}>${reason}</button></article>`;
-    }).join(""); this.craftingView.innerHTML = `${this.state.developerMode ? '<p class="developer-mode-note">개발자 모드 · 제작 재료 무시</p>' : ""}<div class="crafting-list">${recipes}</div>`;
+      const materialItems = Object.entries(recipe.ingredients).map(([itemId, quantity]) => ({ key: itemId, itemId, quantity }));
+      const layout = packReadonlyGrid(materialItems, 8);
+      const ingredients = layout.placements.map((item) => { const owned = this.state!.itemCounts[item.itemId] ?? 0; const geometry = getInventoryItemViewGeometry({ itemId: item.itemId, rotation: 0, metrics: INVENTORY_GRID_METRICS }); return `<button class="grid-inventory__item recipe-grid__item ${owned < item.quantity ? "is-missing" : ""}" data-readonly-item-id="${item.itemId}" style="${getItemGridStyle(item)};${getInventoryRenderStyle(geometry)}" title="${getItemDefinition(item.itemId).name} ${owned}/${item.quantity}">${this.itemView({ instanceId: `recipe:${recipe.id}:material:${item.itemId}`, itemId: item.itemId, quantity: item.quantity, rotation: 0 }, "readonly-grid")}<span class="recipe-grid__quantity">${owned}/${item.quantity}</span></button>`; }).join("");
+      const result = getItemDefinition(recipe.resultItemId); const resultGeometry = getInventoryItemViewGeometry({ itemId: result.id, rotation: 0, metrics: INVENTORY_GRID_METRICS });
+      const resultGrid = `<div class="grid-inventory__surface recipe-grid__surface recipe-grid__result" style="--grid-w:${result.inventoryFootprint.width};--grid-h:${result.inventoryFootprint.height}"><button class="grid-inventory__item recipe-grid__item" data-readonly-item-id="${result.id}" style="--item-x:0;--item-y:0;--item-w:${result.inventoryFootprint.width};--item-h:${result.inventoryFootprint.height};${getInventoryRenderStyle(resultGeometry)}">${this.itemView({ instanceId: `recipe:${recipe.id}:result`, itemId: result.id, quantity: recipe.resultQuantity, rotation: 0 }, "readonly-grid")}</button></div>`;
+      const materialGrid = `<div class="grid-inventory__surface recipe-grid__surface" style="--grid-w:${layout.columns};--grid-h:${layout.rows}">${ingredients}</div>`;
+      const reason = availability === "station-missing" ? "제작대 필요" : availability === "missing-materials" ? "재료 부족" : availability === "inventory-full" ? "수납 공간 부족" : "제작";
+      const header = `<div class="craft-recipe__title"><b>${recipe.name} ×${recipe.resultQuantity}</b><small>필요: ${CRAFTING_STATION_LABEL[recipe.requiredStation]}</small><span class="craft-status craft-status--${availability}">${reason}</span></div><button data-action="craft" data-recipe="${recipe.id}" ${availability !== "ready" ? "disabled" : ""}>${reason}</button>`;
+      return createItemGridRowMarkup({ className: `craft-recipe ${availability !== "ready" ? "is-disabled" : ""}`, attributes: `data-recipe-id="${recipe.id}" data-availability="${availability}"`, header, left: `<small class="craft-grid-label">제작 결과</small>${resultGrid}`, right: `<small class="craft-grid-label">필요 재료 · 보유/필요</small>${materialGrid}` });
+    }).join(""); this.craftingView.innerHTML = `${this.state.developerMode ? '<p class="developer-mode-note">개발자 모드 · 제작 재료 무시</p>' : ""}<p class="crafting-station-context">현재 제작 환경: <b>${this.state.craftingStationName ?? CRAFTING_STATION_LABEL[stationKind]}</b> · 상위 제작대는 하위 조리법을 지원합니다.</p><div class="crafting-list">${recipes}</div>`;
   }
-  private itemView(item: Pick<InventoryItemInstance, "instanceId" | "itemId" | "quantity" | "rotation">, surface: "inventory-grid" | "equipment-slot" | "weapon-slot" | "drag-ghost", quickLabel?: string): string { return createInventoryItemView({ ...item, surface, quickLabel, metrics: INVENTORY_GRID_METRICS }); }
+  private itemView(item: Pick<InventoryItemInstance, "instanceId" | "itemId" | "quantity" | "rotation">, surface: "inventory-grid" | "equipment-slot" | "weapon-slot" | "drag-ghost" | "readonly-grid", quickLabel?: string): string { return createInventoryItemView({ ...item, surface, quickLabel, metrics: INVENTORY_GRID_METRICS }); }
   private renderWeaponSlot(slot: WeaponEquipmentSlot, itemsById: ReadonlyMap<string, InventoryItemInstance>): string { if (!this.state) return ""; const instanceId = slot === "primary" ? this.state.weaponEquipment.primaryInstanceId : this.state.weaponEquipment.secondaryInstanceId; const item = instanceId ? itemsById.get(instanceId) : undefined; const active = this.state.weaponEquipment.activeSlot === slot && !!item; const label = slot === "primary" ? "주무기" : "보조무기"; if (!item) return `<div class="weapon-equipment__slot equipment-drop-target is-empty" data-weapon-drop-slot="${slot}"><b>${label}</b><small>무기를 여기에 드래그</small></div>`; const definition = getInventoryObjectDefinition(item.itemId); return `<div class="weapon-equipment__slot equipment-drop-target ${active ? "is-active" : ""}" data-weapon-drop-slot="${slot}" data-weapon-equipped-slot="${slot}">${this.itemView(item, "weapon-slot")}<div><b>${label} · ${definition.name}</b><small>${item.width}×${item.height}</small><button data-action="activate-weapon" data-slot="${slot}" ${active ? "disabled" : ""}>${active ? "사용 중" : "사용"}</button><button data-action="unequip-weapon" data-slot="${slot}">해제</button></div></div>`; }
 
   private handleClick(event: Event): void {
+    const readonlyItem = (event.target as HTMLElement).closest<HTMLElement>("[data-readonly-item-id]");
+    if (readonlyItem?.dataset.readonlyItemId) { this.openReadonlyPopover(readonlyItem, readonlyItem.dataset.readonlyItemId); return; }
     const target = (event.target as HTMLElement).closest<HTMLButtonElement>("button[data-action]"); if (!target) { if (!(event.target as HTMLElement).closest(".item-context-popover,.grid-inventory__item")) this.closePopover(); return; }
     const action = target.dataset.action; if (action === "tab" && target.dataset.tab) { this.switchTab(target.dataset.tab as "inventory" | "crafting", true); return; }
     if (action === "close") { this.callbacks.onAudio("ui-click"); this.callbacks.onClose(); return; }
@@ -142,6 +159,7 @@ export class InventoryPanel {
   private positionGhost(clientX: number, clientY: number): void { if (!this.drag) return; this.dragGhost.hidden = false; this.dragGhost.style.left = `${clientX - this.drag.grabX * this.drag.cell - this.drag.cell / 2}px`; this.dragGhost.style.top = `${clientY - this.drag.grabY * this.drag.cell - this.drag.cell / 2}px`; }
   private rotateDrag(): void { if (!this.drag || !this.drag.dragging) return; const item = this.state?.items.find((candidate) => candidate.instanceId === this.drag!.instanceId); if (!item || item.width === item.height) return; const grab = rotateGrabOffset(this.drag.grabX, this.drag.grabY, this.drag.width, this.drag.height); [this.drag.width, this.drag.height] = [this.drag.height, this.drag.width]; this.drag.rotation = this.drag.rotation === 0 ? 1 : 0; this.drag.grabX = grab.grabX; this.drag.grabY = grab.grabY; this.previewKey = ""; this.renderGhost(item); this.positionGhost(this.drag.currentX, this.drag.currentY); this.updatePlacementPreview(this.drag.currentX, this.drag.currentY); this.callbacks.onAudio("item-rotate"); }
   private openPopover(anchor: HTMLElement, instanceId: string): void { const item = this.state?.items.find((candidate) => candidate.instanceId === instanceId); if (!item) return; const definition = getInventoryObjectDefinition(item.itemId); const storage = !isWeaponItemId(item.itemId) ? getEquipmentStorageDescription(getItemDefinition(item.itemId)) : null; const actions = getItemContextActions(item.itemId); this.popoverInstanceId = instanceId; this.popover.innerHTML = `<b>${definition.name}</b><small>${definition.description}${storage ? `<br>${storage}` : ""}</small><div>${actions.includes("use") ? `<button data-action="use-item" data-instance-id="${instanceId}">사용</button>` : ""}${actions.includes("equip") ? `<button data-action="equip-item" data-instance-id="${instanceId}">장착</button>` : ""}${actions.includes("weapon-primary") ? `<button data-action="equip-primary" data-instance-id="${instanceId}">주무기에 장착</button>` : ""}${actions.includes("weapon-secondary") ? `<button data-action="equip-secondary" data-instance-id="${instanceId}">보조무기에 장착</button>` : ""}${actions.includes("rotate") ? `<button data-action="rotate-item" data-instance-id="${instanceId}">회전 [R]</button>` : ""}<button data-action="drop-item" data-instance-id="${instanceId}">버리기</button>${actions.includes("quick") ? [0, 1, 2, 3, 4].map((quickslot) => `<button data-action="assign-item" data-instance-id="${instanceId}" data-quickslot="${quickslot}">${quickslot + 1}</button>`).join("") : ""}</div>`; this.popover.hidden = false; const position = getPopoverPosition(anchor.getBoundingClientRect(), this.popover.getBoundingClientRect(), window.innerWidth, window.innerHeight); this.popover.style.left = `${position.left}px`; this.popover.style.top = `${position.top}px`; }
+  private openReadonlyPopover(anchor: HTMLElement, itemId: string): void { const definition = getInventoryObjectDefinition(itemId); this.popoverInstanceId = undefined; this.popover.innerHTML = `<b>${definition.name}</b><small>${definition.description}</small>`; this.popover.hidden = false; const position = getPopoverPosition(anchor.getBoundingClientRect(), this.popover.getBoundingClientRect(), window.innerWidth, window.innerHeight); this.popover.style.left = `${position.left}px`; this.popover.style.top = `${position.top}px`; }
   private closePopover(): void { this.popover.hidden = true; this.popoverInstanceId = undefined; }
   private showTemporaryEquipmentDropTarget(): void { this.removeTemporaryEquipmentDropTarget(); if (!this.drag || !this.state || this.drag.origin.kind !== "container") return; const item = this.state.items.find((candidate) => candidate.instanceId === this.drag!.instanceId); if (!item) return; const slot = getTemporaryEquipmentDropSlot(item.itemId, this.state.equipment); if (!slot) return; const aside = this.inventoryView.querySelector("aside"); if (!aside) return; const target = document.createElement("div"); target.className = "temporary-equipment-drop-target equipment-drop-target is-empty"; target.dataset.equipmentDropSlot = slot; target.innerHTML = `<b>${CONTAINER_LABELS[slot]}에 장착</b><small>드래그하는 동안만 표시</small>`; aside.append(target); }
   private removeTemporaryEquipmentDropTarget(): void { this.inventoryView.querySelector(".temporary-equipment-drop-target")?.remove(); }

@@ -30,7 +30,7 @@ type ItemSource = Omit<ItemDefinition, "inventoryFootprint">;
 const ITEM_FOOTPRINTS: Readonly<Record<string, InventoryFootprint>> = Object.freeze({
   canned_food:{width:1,height:1},water:{width:1,height:2},cabbage:{width:1,height:1},carrot:{width:1,height:1},potato:{width:1,height:1},apple:{width:1,height:1},beef:{width:1,height:2},pork:{width:1,height:2},
   cloth:{width:1,height:1},wood:{width:2,height:1},metal:{width:1,height:1},screws:{width:1,height:1},steel_plate:{width:2,height:2},solar_panel:{width:2,height:2},duct_tape:{width:1,height:1},circuit_board:{width:1,height:1},electric_motor:{width:1,height:2},
-  fuel:{width:1,height:2},medicine:{width:1,height:1},ammo:{width:1,height:1},pistol_ammo:{width:1,height:1},smg_ammo:{width:1,height:1},shotgun_shell:{width:1,height:1},rifle_ammo:{width:1,height:1},battery:{width:2,height:1},engine_part:{width:2,height:2},bandage:{width:1,height:1},torch:{width:1,height:2},barricade:{width:2,height:2},turret_kit:{width:3,height:2},solar_generator_kit:{width:2,height:2},fuel_generator_kit:{width:3,height:2},battery_bank_kit:{width:2,height:2},generator_fuel:{width:1,height:1},molotov:{width:1,height:2},scrap_cache:{width:2,height:2},
+  fuel:{width:1,height:2},medicine:{width:1,height:1},ammo:{width:1,height:1},pistol_ammo:{width:1,height:1},smg_ammo:{width:1,height:1},shotgun_shell:{width:1,height:1},rifle_ammo:{width:1,height:1},battery:{width:2,height:1},engine_part:{width:2,height:2},bandage:{width:1,height:1},torch:{width:1,height:2},barricade:{width:2,height:2},turret_kit:{width:3,height:2},solar_generator_kit:{width:2,height:2},fuel_generator_kit:{width:3,height:2},battery_bank_kit:{width:2,height:2},makeshift_workbench_kit:{width:2,height:2},plank_workbench_kit:{width:2,height:2},technical_workbench_kit:{width:3,height:2},generator_fuel:{width:1,height:1},molotov:{width:1,height:2},scrap_cache:{width:2,height:2},
   basic_tshirt:{width:2,height:2},work_pants:{width:2,height:2},utility_belt:{width:2,height:1},utility_vest:{width:2,height:3},school_backpack:{width:2,height:3},hiking_backpack:{width:3,height:3},military_backpack:{width:3,height:4},
 });
 
@@ -68,6 +68,9 @@ const ITEM_SOURCES: ItemSource[] = [
   { id: "solar_generator_kit", name: "태양광 발전기 키트", category: "tool", maxStack: 3, iconColor: 0x456c8a, description: "실외에서 낮 동안 발전한다." },
   { id: "fuel_generator_kit", name: "연료 발전기 키트", category: "tool", maxStack: 3, iconColor: 0x68745c, description: "발전기 연료로 안정적인 전력을 만든다." },
   { id: "battery_bank_kit", name: "축전지 키트", category: "tool", maxStack: 3, iconColor: 0x59656b, description: "전력망의 남는 전력을 저장한다." },
+  { id: "makeshift_workbench_kit", name: "간이 제작대 키트", category: "tool", maxStack: 1, iconColor: 0x8d6f4a, description: "기초 탄약과 판자 제작대를 만들 수 있는 2×2 제작대." },
+  { id: "plank_workbench_kit", name: "판자 제작대 키트", category: "tool", maxStack: 1, iconColor: 0xa07b4f, description: "정교한 탄약과 전력 설비를 만들 수 있는 2×2 제작대." },
+  { id: "technical_workbench_kit", name: "기술 제작대 키트", category: "tool", maxStack: 1, iconColor: 0x557b78, description: "고급 기계 장비를 조립할 수 있는 3×2 제작대." },
   { id: "generator_fuel", name: "발전기 연료", category: "material", maxStack: 8, iconColor: 0xb37a3e, description: "연료 발전기 전용 연료. 탈출 연료와 별개다." },
   { id: "molotov", name: "화염병", category: "tool", maxStack: 2, iconColor: 0xcf5d42, description: "조준 지점에 짧은 범위 화염을 만든다." },
   { id: "scrap_cache", name: "잡동사니", category: "material", maxStack: 8, iconColor: 0x736d61, description: "분해해 쓸 수 있는 잡다한 생존 물자." },
