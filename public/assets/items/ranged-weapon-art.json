@@ -1,0 +1,119 @@
+{
+  "weapons": [
+    {
+      "id": "pistol",
+      "direction": "east",
+      "source": "WEAPON_DEFINITIONS",
+      "footprint": {
+        "width": 2,
+        "height": 2
+      },
+      "canvas": {
+        "width": 128,
+        "height": 128
+      },
+      "keypoints": {
+        "stockX": 6,
+        "muzzleX": 121
+      },
+      "parts": [
+        "slide",
+        "barrel",
+        "front_sight",
+        "rear_sight",
+        "trigger_guard",
+        "trigger",
+        "grip",
+        "magazine",
+        "ejection_port",
+        "slide_groove",
+        "muzzle"
+      ]
+    },
+    {
+      "id": "smg",
+      "direction": "east",
+      "source": "WEAPON_DEFINITIONS",
+      "footprint": {
+        "width": 3,
+        "height": 1
+      },
+      "canvas": {
+        "width": 192,
+        "height": 64
+      },
+      "keypoints": {
+        "stockX": 6,
+        "muzzleX": 185
+      },
+      "parts": [
+        "short_stock",
+        "rear_body",
+        "receiver",
+        "grip",
+        "magazine",
+        "short_barrel",
+        "muzzle",
+        "top_sight",
+        "metal_body",
+        "polymer_body"
+      ]
+    },
+    {
+      "id": "shotgun",
+      "direction": "east",
+      "source": "WEAPON_DEFINITIONS",
+      "footprint": {
+        "width": 2,
+        "height": 4
+      },
+      "canvas": {
+        "width": 128,
+        "height": 256
+      },
+      "keypoints": {
+        "stockX": 6,
+        "muzzleX": 121
+      },
+      "parts": [
+        "stock",
+        "receiver",
+        "trigger_guard",
+        "trigger",
+        "pump",
+        "long_barrel",
+        "tubular_magazine",
+        "front_sight",
+        "muzzle"
+      ]
+    },
+    {
+      "id": "hunting_rifle",
+      "direction": "east",
+      "source": "WEAPON_DEFINITIONS",
+      "footprint": {
+        "width": 4,
+        "height": 2
+      },
+      "canvas": {
+        "width": 256,
+        "height": 128
+      },
+      "keypoints": {
+        "stockX": 6,
+        "muzzleX": 249
+      },
+      "parts": [
+        "wood_stock",
+        "receiver",
+        "trigger_guard",
+        "trigger",
+        "bolt",
+        "long_barrel",
+        "scope",
+        "scope_mount",
+        "muzzle"
+      ]
+    }
+  ]
+}

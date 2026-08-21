@@ -1,10 +1,12 @@
 from pathlib import Path
 import argparse
+import json
 import re
 from PIL import Image, ImageDraw
 
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / "public" / "assets" / "items"
+RANGED_METADATA_OUTPUT = OUTPUT / "ranged-weapon-art.json"
 SCALE = 2
 OUTLINE = "#171b1a"
 SHADOW = "#303735"
@@ -110,6 +112,12 @@ def draw_icon(item_id):
         r(d, (5, 11, 26, 26), GREEN); r(d, (9, 14, 19, 23), SHADOW); r(d, (21, 5, 25, 13), METAL); d.rectangle((7, 8, 13, 12), fill=GREEN_LIGHT); d.rectangle((11, 17, 17, 20), fill=METAL_LIGHT); d.rectangle((23, 7, 28, 9), fill=OUTLINE)
     elif item_id == "battery_bank_kit":
         r(d, (5, 8, 27, 27), SHADOW); [r(d, (7 + column * 6, 11, 11 + column * 6, 24), BLUE if column % 2 == 0 else GREEN) for column in range(3)]; d.rectangle((8, 8, 10, 11), fill=METAL_LIGHT); d.rectangle((20, 8, 22, 11), fill=METAL_LIGHT)
+    elif item_id == "makeshift_workbench_kit":
+        r(d, (4, 10, 27, 24), WOOD); d.rectangle((5, 11, 26, 15), fill=WOOD_LIGHT); l(d, [(8, 22), (6, 29)], SHADOW, 3); l(d, [(23, 22), (26, 29)], SHADOW, 3); r(d, (8, 6, 18, 11), "#807568"); d.rectangle((10, 7, 16, 8), fill=METAL_LIGHT); l(d, [(21, 8), (25, 18)], GOLD, 2)
+    elif item_id == "plank_workbench_kit":
+        r(d, (3, 9, 28, 24), "#765337"); d.rectangle((4, 10, 27, 14), fill=WOOD_LIGHT); d.line((11, 10, 11, 23), fill="#5d402c"); d.line((20, 10, 20, 23), fill="#5d402c"); l(d, [(7, 22), (5, 29)], SHADOW, 3); l(d, [(24, 22), (27, 29)], SHADOW, 3); r(d, (7, 6, 15, 11), METAL); r(d, (19, 5, 24, 12), "#65785a"); d.rectangle((20, 6, 22, 10), fill=GREEN_LIGHT)
+    elif item_id == "technical_workbench_kit":
+        r(d, (3, 9, 29, 24), "#425554"); d.rectangle((4, 10, 28, 14), fill="#718481"); r(d, (6, 16, 14, 22), "#3f7656"); d.rectangle((8, 17, 12, 18), fill=GOLD); r(d, (18, 15, 26, 22), METAL); d.rectangle((20, 16, 24, 18), fill=METAL_LIGHT); l(d, [(7, 23), (5, 29)], SHADOW, 3); l(d, [(25, 23), (28, 29)], SHADOW, 3); d.rectangle((15, 5, 18, 13), fill="#b96f42")
     elif item_id == "generator_fuel":
         p(d, [(8, 7), (22, 7), (26, 11), (24, 27), (6, 27), (6, 11)], "#73512e"); r(d, (11, 4, 20, 9), SHADOW); p(d, [(14, 13), (18, 18), (16, 23), (12, 20)], GOLD)
     elif item_id == "molotov":
@@ -135,13 +143,13 @@ def draw_icon(item_id):
     elif item_id == "bat":
         p(d, [(3, 14), (10, 13), (23, 10), (29, 12), (29, 18), (23, 20), (10, 17), (3, 17)], WOOD); d.rectangle((5, 14, 21, 15), fill=WOOD_LIGHT); d.rectangle((3, 13, 9, 18), fill="#5c4230"); d.rectangle((10, 14, 12, 17), fill=GOLD)
     elif item_id == "pistol":
-        p(d, [(3, 9), (26, 9), (30, 13), (20, 17), (17, 29), (9, 29), (9, 17), (3, 15)], METAL); d.rectangle((5, 10, 25, 12), fill=METAL_LIGHT); p(d, [(10, 17), (19, 17), (16, 28), (9, 28)], SHADOW); d.rectangle((25, 12, 30, 15), fill=OUTLINE)
+        p(d, [(3, 8), (26, 8), (30, 11), (30, 15), (20, 16), (18, 19), (8, 18), (8, 15), (3, 14)], METAL); d.rectangle((5, 9, 26, 11), fill=METAL_LIGHT); d.rectangle((8, 12, 23, 14), fill="#596361"); d.rectangle((12, 9, 18, 10), fill="#d6ddda"); d.rectangle((21, 9, 23, 10), fill=OUTLINE); d.rectangle((25, 7, 27, 9), fill=OUTLINE); d.rectangle((29, 11, 31, 14), fill="#0f1211"); p(d, [(9, 17), (18, 17), (16, 29), (9, 29)], SHADOW); d.rectangle((11, 19, 16, 26), fill="#48504e"); p(d, [(17, 16), (21, 17), (19, 22), (16, 22)], OUTLINE); d.rectangle((18, 18, 19, 20), fill=GOLD); d.rectangle((11, 28, 16, 30), fill=METAL)
     elif item_id == "smg":
-        p(d, [(4, 11), (22, 9), (28, 12), (27, 16), (16, 17), (12, 22), (7, 21), (9, 17), (4, 16)], SHADOW); l(d, [(21, 12), (30, 11)], METAL_LIGHT, 2); p(d, [(13, 16), (19, 17), (18, 29), (12, 27)], METAL); d.rectangle((5, 12, 15, 14), fill=METAL_LIGHT)
+        p(d, [(2, 11), (7, 8), (11, 10), (11, 16), (6, 18), (2, 16)], "#303735"); r(d, (8, 9, 24, 17), "#596361"); d.rectangle((10, 10, 21, 12), fill=METAL_LIGHT); d.rectangle((13, 13, 23, 16), fill="#3e4745"); l(d, [(23, 12), (30, 12)], METAL, 3); d.rectangle((29, 10, 31, 14), fill=OUTLINE); d.rectangle((11, 7, 14, 9), fill=OUTLINE); d.rectangle((21, 7, 23, 10), fill=OUTLINE); p(d, [(11, 17), (17, 17), (15, 28), (10, 27)], "#242a29"); p(d, [(17, 17), (22, 17), (23, 29), (18, 29)], METAL); d.rectangle((19, 19, 21, 27), fill="#758184"); p(d, [(7, 17), (12, 18), (10, 23), (6, 22)], OUTLINE); d.rectangle((9, 18, 10, 20), fill=GOLD)
     elif item_id == "shotgun":
-        l(d, [(3, 12), (27, 9)], METAL, 4); l(d, [(6, 17), (28, 12)], SHADOW, 3); p(d, [(6, 15), (15, 17), (11, 23), (4, 24), (2, 20)], WOOD); d.rectangle((15, 13, 22, 18), fill=WOOD_LIGHT)
+        p(d, [(2, 14), (8, 10), (14, 12), (17, 16), (12, 20), (5, 21), (2, 18)], WOOD); d.rectangle((5, 14, 13, 16), fill=WOOD_LIGHT); r(d, (13, 11, 20, 18), "#424b49"); d.rectangle((14, 12, 19, 14), fill=METAL_LIGHT); p(d, [(14, 18), (18, 18), (17, 23), (13, 23)], OUTLINE); d.rectangle((15, 19, 16, 21), fill=GOLD); l(d, [(19, 11), (30, 9)], METAL_LIGHT, 2); l(d, [(19, 15), (30, 13)], "#596361", 2); d.rectangle((29, 8, 31, 14), fill=OUTLINE); r(d, (20, 15, 26, 19), WOOD); d.rectangle((21, 16, 25, 17), fill=WOOD_LIGHT); d.rectangle((18, 9, 20, 11), fill=OUTLINE)
     elif item_id == "hunting_rifle":
-        l(d, [(3, 10), (29, 7)], METAL_LIGHT, 2); p(d, [(6, 13), (17, 12), (21, 17), (14, 20), (9, 27), (3, 27), (8, 18), (3, 16)], WOOD); r(d, (14, 8, 21, 11), SHADOW); d.rectangle((20, 9, 29, 10), fill=OUTLINE)
+        p(d, [(2, 15), (8, 11), (16, 12), (20, 16), (15, 19), (11, 26), (4, 27), (7, 19), (2, 18)], WOOD); d.rectangle((5, 14, 15, 16), fill=WOOD_LIGHT); r(d, (14, 10, 21, 18), "#4c5553"); d.rectangle((16, 11, 20, 13), fill=METAL_LIGHT); p(d, [(15, 18), (19, 18), (18, 23), (14, 23)], OUTLINE); d.rectangle((16, 19, 17, 21), fill=GOLD); d.rectangle((20, 9, 23, 12), fill="#242928"); l(d, [(21, 12), (30, 10)], METAL_LIGHT, 2); d.rectangle((29, 9, 31, 12), fill=OUTLINE); r(d, (12, 6, 23, 9), SHADOW); d.rectangle((14, 5, 16, 7), fill=METAL); d.rectangle((21, 5, 23, 7), fill=METAL); d.rectangle((23, 13, 25, 16), fill=GOLD)
     else:
         raise KeyError(item_id)
     return image
@@ -152,7 +160,7 @@ ITEM_IDS = (
     "cloth", "wood", "metal", "screws", "steel_plate", "solar_panel", "duct_tape", "circuit_board", "electric_motor", "fuel", "medicine", "ammo",
     "pistol_ammo", "smg_ammo", "shotgun_shell", "rifle_ammo", "battery", "engine_part",
     "bandage", "torch", "barricade", "turret_kit", "solar_generator_kit",
-    "fuel_generator_kit", "battery_bank_kit", "generator_fuel", "molotov", "scrap_cache",
+    "fuel_generator_kit", "battery_bank_kit", "makeshift_workbench_kit", "plank_workbench_kit", "technical_workbench_kit", "generator_fuel", "molotov", "scrap_cache",
     "basic_tshirt", "work_pants", "utility_belt", "utility_vest", "school_backpack", "hiking_backpack", "military_backpack",
 )
 
@@ -163,6 +171,20 @@ def load_weapon_ids():
 
 
 WEAPON_IDS = load_weapon_ids()
+
+
+def load_ranged_weapon_ids():
+    source = (ROOT / "src" / "data" / "weapon-definitions.ts").read_text(encoding="utf-8")
+    return tuple(match.group(1) for match in re.finditer(r'^  ([a-z_]+): \{[^\n]*kind: "ranged"', source, re.MULTILINE))
+
+
+RANGED_WEAPON_IDS = load_ranged_weapon_ids()
+RANGED_WEAPON_PARTS = {
+    "pistol": ("slide", "barrel", "front_sight", "rear_sight", "trigger_guard", "trigger", "grip", "magazine", "ejection_port", "slide_groove", "muzzle"),
+    "smg": ("short_stock", "rear_body", "receiver", "grip", "magazine", "short_barrel", "muzzle", "top_sight", "metal_body", "polymer_body"),
+    "shotgun": ("stock", "receiver", "trigger_guard", "trigger", "pump", "long_barrel", "tubular_magazine", "front_sight", "muzzle"),
+    "hunting_rifle": ("wood_stock", "receiver", "trigger_guard", "trigger", "bolt", "long_barrel", "scope", "scope_mount", "muzzle"),
+}
 
 
 def load_footprints():
@@ -180,7 +202,7 @@ def load_footprints():
 def render_footprint_icon(item_id, footprint):
     source = draw_icon(item_id)
     width, height = footprint
-    if item_id in {"bat", "shotgun"} and height > width:
+    if item_id == "bat" and height > width:
         source = source.transpose(Image.Transpose.ROTATE_270)
     logical_size = (width * 32, height * 32)
     margin = 3
@@ -203,6 +225,22 @@ def validate_icon(item_id, image, footprint):
         assert max(used_width / image.width, used_height / image.height) >= 0.75, (item_id, bounds)
     if item_id in {"knife", "bat"}:
         assert used_width > used_height * 2, (item_id, bounds)
+    if item_id in RANGED_WEAPON_IDS:
+        colors = {pixel for pixel in image.get_flattened_data() if pixel[3]}
+        assert 7 <= len(colors) <= 14, (item_id, len(colors))
+
+
+def ranged_weapon_metadata(item_id, image, footprint):
+    margin = 6
+    return {
+        "id": item_id,
+        "direction": "east",
+        "source": "WEAPON_DEFINITIONS",
+        "footprint": {"width": footprint[0], "height": footprint[1]},
+        "canvas": {"width": image.width, "height": image.height},
+        "keypoints": {"stockX": margin, "muzzleX": image.width - margin - 1},
+        "parts": list(RANGED_WEAPON_PARTS[item_id]),
+    }
 
 
 def main():
@@ -218,6 +256,8 @@ def main():
         validate_icon(item_id, image, footprint)
         assert image.tobytes() == render_footprint_icon(item_id, footprint).tobytes(), item_id
         image.save(OUTPUT / f"{item_id}.png", optimize=True)
+    ranged_metadata = [ranged_weapon_metadata(item_id, render_footprint_icon(item_id, footprints[item_id]), footprints[item_id]) for item_id in RANGED_WEAPON_IDS]
+    RANGED_METADATA_OUTPUT.write_text(json.dumps({"weapons": ranged_metadata}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(f"generated {len(selected)} icons in {OUTPUT}")
 
 
