@@ -131,11 +131,11 @@ def draw_icon(item_id):
     elif item_id == "military_backpack":
         p(d, [(7, 6), (12, 3), (22, 4), (26, 8), (28, 29), (4, 29)], "#4d5945"); r(d, (7, 10, 25, 16), "#69755d"); r(d, (7, 19, 14, 27), "#384234"); r(d, (18, 19, 25, 27), "#384234"); l(d, [(10, 8), (23, 8)], "#859173", 1); l(d, [(6, 17), (26, 17)], GOLD, 1)
     elif item_id == "knife":
-        p(d, [(5, 25), (10, 19), (20, 5), (27, 4), (22, 12), (12, 22)], METAL_LIGHT); l(d, [(7, 26), (14, 19)], WOOD, 4); d.rectangle((11, 18, 15, 22), fill=GOLD)
+        p(d, [(10, 12), (25, 12), (29, 15), (25, 18), (10, 18)], METAL_LIGHT); d.rectangle((12, 13, 25, 14), fill="#dce4df"); r(d, (3, 13, 11, 18), WOOD); d.rectangle((9, 12, 12, 19), fill=GOLD); d.rectangle((4, 14, 9, 15), fill=WOOD_LIGHT)
     elif item_id == "bat":
-        p(d, [(7, 28), (5, 25), (18, 7), (24, 4), (27, 7), (24, 12), (11, 28)], WOOD); l(d, [(8, 26), (22, 7)], WOOD_LIGHT, 2); d.rectangle((7, 23, 11, 27), fill="#5c4230")
+        p(d, [(3, 14), (10, 13), (23, 10), (29, 12), (29, 18), (23, 20), (10, 17), (3, 17)], WOOD); d.rectangle((5, 14, 21, 15), fill=WOOD_LIGHT); d.rectangle((3, 13, 9, 18), fill="#5c4230"); d.rectangle((10, 14, 12, 17), fill=GOLD)
     elif item_id == "pistol":
-        p(d, [(5, 10), (24, 10), (27, 14), (18, 17), (16, 27), (10, 27), (10, 17), (5, 15)], METAL); d.rectangle((7, 11, 23, 13), fill=METAL_LIGHT); p(d, [(11, 17), (18, 17), (15, 26), (10, 26)], SHADOW); d.rectangle((23, 13, 28, 15), fill=OUTLINE)
+        p(d, [(3, 9), (26, 9), (30, 13), (20, 17), (17, 29), (9, 29), (9, 17), (3, 15)], METAL); d.rectangle((5, 10, 25, 12), fill=METAL_LIGHT); p(d, [(10, 17), (19, 17), (16, 28), (9, 28)], SHADOW); d.rectangle((25, 12, 30, 15), fill=OUTLINE)
     elif item_id == "smg":
         p(d, [(4, 11), (22, 9), (28, 12), (27, 16), (16, 17), (12, 22), (7, 21), (9, 17), (4, 16)], SHADOW); l(d, [(21, 12), (30, 11)], METAL_LIGHT, 2); p(d, [(13, 16), (19, 17), (18, 29), (12, 27)], METAL); d.rectangle((5, 12, 15, 14), fill=METAL_LIGHT)
     elif item_id == "shotgun":
@@ -155,7 +155,14 @@ ITEM_IDS = (
     "fuel_generator_kit", "battery_bank_kit", "generator_fuel", "molotov", "scrap_cache",
     "basic_tshirt", "work_pants", "utility_belt", "utility_vest", "school_backpack", "hiking_backpack", "military_backpack",
 )
-WEAPON_IDS = ("knife", "bat", "pistol", "smg", "shotgun", "hunting_rifle")
+
+
+def load_weapon_ids():
+    source = (ROOT / "src" / "data" / "weapon-definitions.ts").read_text(encoding="utf-8")
+    return tuple(re.findall(r'^  ([a-z_]+): \{ id: "\1"', source, re.MULTILINE))
+
+
+WEAPON_IDS = load_weapon_ids()
 
 
 def load_footprints():
@@ -183,6 +190,21 @@ def render_footprint_icon(item_id, footprint):
     return canvas.resize((width * 64, height * 64), Image.Resampling.NEAREST)
 
 
+def validate_icon(item_id, image, footprint):
+    expected_size = (footprint[0] * 64, footprint[1] * 64)
+    assert image.size == expected_size, (item_id, image.size, expected_size)
+    assert set(image.getchannel("A").get_flattened_data()).issubset({0, 255}), item_id
+    bounds = image.getchannel("A").getbbox()
+    assert bounds is not None, item_id
+    left, top, right, bottom = bounds
+    assert left > 0 and top > 0 and right < image.width and bottom < image.height, (item_id, bounds)
+    used_width, used_height = right - left, bottom - top
+    if item_id in WEAPON_IDS:
+        assert max(used_width / image.width, used_height / image.height) >= 0.75, (item_id, bounds)
+    if item_id in {"knife", "bat"}:
+        assert used_width > used_height * 2, (item_id, bounds)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--ids", nargs="*", choices=ITEM_IDS + WEAPON_IDS)
@@ -193,8 +215,8 @@ def main():
     for item_id in selected:
         footprint = footprints[item_id]
         image = render_footprint_icon(item_id, footprint)
-        assert image.size == (footprint[0] * 64, footprint[1] * 64)
-        assert set(image.getchannel("A").get_flattened_data()).issubset({0, 255})
+        validate_icon(item_id, image, footprint)
+        assert image.tobytes() == render_footprint_icon(item_id, footprint).tobytes(), item_id
         image.save(OUTPUT / f"{item_id}.png", optimize=True)
     print(f"generated {len(selected)} icons in {OUTPUT}")
 

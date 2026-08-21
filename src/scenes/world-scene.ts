@@ -2393,10 +2393,9 @@ export class WorldScene extends Phaser.Scene {
     const flashlightActive = this.player.flashlightOn && this.player.flashlightCharge > 0 && vision.flashlightFactor > 0;
     const input = {
       playerCell,
-      ambientAimBucket: Math.round(this.player.aimAngle / (Math.PI * 2 / FLASHLIGHT_AIM_BUCKETS)),
+      flashlightAimBucket: flashlightActive ? Math.round(this.player.aimAngle / (Math.PI * 2 / FLASHLIGHT_AIM_BUCKETS)) : -1,
       visionRevision: this.collision.visionRevision,
       ambientRadiusBucket: Math.round(vision.ambientRadius / FOG_CELL_SIZE),
-      ambientAngleBucket: Math.round(vision.ambientConeAngle / (Math.PI / 64)),
       flashlightActive,
       flashlightRadiusBucket: flashlightActive ? Math.round(vision.effectiveFlashlightRadius / FOG_CELL_SIZE) : -1,
       torchActive: this.player.torchRemaining > 0,

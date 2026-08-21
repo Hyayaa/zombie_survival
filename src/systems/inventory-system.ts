@@ -387,7 +387,7 @@ export class InventorySystem {
         const fallback = this.findFirstFit(item.itemId, item.rotation, item.containerId);
         if (fallback) this.applyRotation(item, fallback.rotation ?? item.rotation);
         if (!fallback || !this.place(item, fallback.containerId, fallback.x, fallback.y)) {
-          this.items.delete(item.instanceId); this.legacyOverflow.push({ itemId: item.itemId, quantity: item.quantity });
+          this.items.delete(item.instanceId); this.legacyOverflow.push({ itemId: item.itemId, quantity: item.quantity, instanceId: item.instanceId });
         }
       }
     }

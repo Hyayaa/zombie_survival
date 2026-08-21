@@ -32,7 +32,8 @@ describe("pixel crescent melee trail geometry", () => {
   it("keeps the knife mask smaller than the bat mask and matches profile range", () => {
     const knife = geometry("knife"), bat = geometry("bat");
     expect(knife.outerRadius).toBe(MELEE_ATTACK_DEFINITIONS.knife.swing.range);
-    expect(bat.outerRadius).toBe(MELEE_ATTACK_DEFINITIONS.bat.swing.range);
+    expect(bat.outerRadius).toBe(Math.round(MELEE_ATTACK_DEFINITIONS.bat.swing.range));
+    expect(Math.abs(bat.outerRadius - MELEE_ATTACK_DEFINITIONS.bat.swing.range)).toBeLessThanOrEqual(0.5);
     expect(knife.outerRadius).toBeLessThan(bat.outerRadius);
     expect(knife.arcRadians).toBeLessThan(bat.arcRadians);
   });

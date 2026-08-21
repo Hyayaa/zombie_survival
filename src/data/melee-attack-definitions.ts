@@ -38,9 +38,9 @@ export const MELEE_ATTACK_DEFINITIONS: Record<MeleeWeaponId, Record<MeleeAttackM
     heavy: { mode: "heavy", geometry: "capsule", damage: 39, postureDamage: 52, staminaCost: 25, range: 15, width: 8, arcRadians: 0, maxTargets: 1, knockback: 6, windupMs: 145, activeMs: 90, recoveryMs: 380, movementMultiplier: 0.35, turnSpeedRadiansPerSecond: 1.7, hitStopMs: 49 },
   },
   bat: {
-    stab: { mode: "stab", geometry: "capsule", damage: 13, postureDamage: 28, staminaCost: 10, range: 40, width: 7, arcRadians: 0, maxTargets: 1, knockback: 2, windupMs: 80, activeMs: 75, recoveryMs: 240, movementMultiplier: 0.8, turnSpeedRadiansPerSecond: 4, hitStopMs: 25 },
-    swing: { mode: "swing", geometry: "arc", damage: 24, postureDamage: 42, staminaCost: 18, range: 47, width: 0, arcRadians: Math.PI * 0.67, maxTargets: 3, knockback: 5, windupMs: 145, activeMs: 125, recoveryMs: 340, movementMultiplier: 0.55, turnSpeedRadiansPerSecond: 2.4, hitStopMs: 36 },
-    heavy: { mode: "heavy", geometry: "arc", damage: 40, postureDamage: 78, staminaCost: 31, range: 50, width: 0, arcRadians: Math.PI * 0.46, maxTargets: 2, knockback: 7, windupMs: 215, activeMs: 125, recoveryMs: 520, movementMultiplier: 0.35, turnSpeedRadiansPerSecond: 1.45, hitStopMs: 56 },
+    stab: { mode: "stab", geometry: "capsule", damage: 13, postureDamage: 28, staminaCost: 10, range: 20, width: 7, arcRadians: 0, maxTargets: 1, knockback: 2, windupMs: 80, activeMs: 75, recoveryMs: 240, movementMultiplier: 0.8, turnSpeedRadiansPerSecond: 4, hitStopMs: 25 },
+    swing: { mode: "swing", geometry: "arc", damage: 24, postureDamage: 42, staminaCost: 18, range: 23.5, width: 0, arcRadians: Math.PI * 0.67, maxTargets: 3, knockback: 5, windupMs: 145, activeMs: 125, recoveryMs: 340, movementMultiplier: 0.55, turnSpeedRadiansPerSecond: 2.4, hitStopMs: 36 },
+    heavy: { mode: "heavy", geometry: "arc", damage: 40, postureDamage: 78, staminaCost: 31, range: 25, width: 0, arcRadians: Math.PI * 0.46, maxTargets: 2, knockback: 7, windupMs: 215, activeMs: 125, recoveryMs: 520, movementMultiplier: 0.35, turnSpeedRadiansPerSecond: 1.45, hitStopMs: 56 },
   },
 };
 

@@ -41,4 +41,14 @@ describe("grid inventory save migration", () => {
     expect(restored.getItem(water.instanceId)).not.toBeNull(); expect(restored.getItem(cloth.instanceId)).not.toBeNull();
     expect(restored.count("water")).toBe(1); expect(restored.count("cloth")).toBe(3); expect(restored.takeLegacyOverflow()).toEqual([]);
   });
+
+  it("preserves the original instance id when an impossible restored item becomes overflow", () => {
+    const source = new InventorySystem(); source.add("solar_panel", 1); source.add("steel_plate", 1); source.add("hunting_rifle", 1);
+    const saved = source.snapshot(); const solar = saved.items.find((item) => item.itemId === "solar_panel")!; const steel = saved.items.find((item) => item.itemId === "steel_plate")!; const rifle = saved.items.find((item) => item.itemId === "hunting_rifle")!;
+    saved.equipment = {}; saved.items = [solar, steel, rifle];
+    Object.assign(solar, { containerId: "pockets", x: 0, y: 0 }); Object.assign(steel, { containerId: "pockets", x: 2, y: 0 }); rifle.containerId = "missing-container";
+    const restored = new InventorySystem(20, saved);
+    expect(restored.getItem(rifle.instanceId)).toBeNull();
+    expect(restored.takeLegacyOverflow()).toEqual([{ itemId: "hunting_rifle", quantity: 1, instanceId: rifle.instanceId }]);
+  });
 });

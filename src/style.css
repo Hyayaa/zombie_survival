@@ -352,6 +352,7 @@ button:focus-visible {
   gap: 4px;
 }
 .weapon-equipment{display:grid;gap:7px}.weapon-equipment__slot{min-height:82px;display:grid;grid-template-columns:max-content minmax(90px,1fr);gap:4px 8px;align-items:center;padding:6px;background:#18201d;border:1px solid #485650}.weapon-equipment__slot.is-empty{grid-template-columns:1fr;opacity:.72}.weapon-equipment__slot.is-active{border-color:#d6c27c;background:#29342c}.weapon-equipment__slot button{padding:2px 5px}.equipment-drop-target.is-drop-valid{border-color:#70c184;box-shadow:inset 0 0 0 2px rgb(112 193 132 / 35%)}.equipment-drop-target.is-drop-invalid{border-color:#db655b;box-shadow:inset 0 0 0 2px rgb(219 101 91 / 35%)}
+.temporary-equipment-drop-target{display:grid;gap:3px;margin-top:12px;padding:10px;background:#18201d;border:1px dashed #71847b}.temporary-equipment-drop-target small{color:#87938d}
 
 .crafting-list { display:grid;gap:7px; }
 .craft-card { display:grid;grid-template-columns:minmax(180px,1fr) 24px minmax(120px,.7fr) 110px;gap:8px;align-items:center;padding:7px;background:#101614;border:1px solid #34413c; }

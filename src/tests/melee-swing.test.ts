@@ -7,7 +7,7 @@ describe("melee swing", () => {
     const hits = collectMeleeTargets({ x: 0, y: 0 }, 0, MELEE_ATTACK_DEFINITIONS.bat.swing, [
       { id: "b", position: { x: 28, y: 10 }, alive: true },
       { id: "a", position: { x: 15, y: -4 }, alive: true },
-      { id: "c", position: { x: 38, y: -12 }, alive: true },
+      { id: "c", position: { x: 28, y: -12 }, alive: true },
       { id: "behind", position: { x: -10, y: 0 }, alive: true },
     ], () => true, []);
     expect(hits.map((hit) => hit.target.id)).toEqual(["a", "b", "c"]);
