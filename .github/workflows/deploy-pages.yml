@@ -2,9 +2,15 @@ name: Test, build, and deploy Pages
 
 on:
   push:
-    branches: [main, feature/vertical-slice]
+    branches:
+      - main
+      - 'feature/**'
+
   pull_request:
-    branches: [main]
+    branches:
+      - main
+      - 'feature/**'
+
   workflow_dispatch:
 
 permissions:
@@ -29,15 +35,15 @@ jobs:
       - run: npm run typecheck
       - run: npm run test
       - run: npm run build
-      - if: github.event_name != 'pull_request'
+      - if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
         uses: actions/configure-pages@v5
-      - if: github.event_name != 'pull_request'
+      - if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
         uses: actions/upload-pages-artifact@v3
         with:
           path: dist
 
   deploy:
-    if: github.event_name != 'pull_request'
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     needs: validate
     runs-on: ubuntu-latest
     environment:
