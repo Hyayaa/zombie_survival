@@ -70,7 +70,7 @@ class FakeRectangle {
 
 class FakeGraphics {
   destroyed=false;
-  setDepth():this{return this;} fillStyle():this{return this;} fillRect():this{return this;} fillPoints():this{return this;} clear():this{return this;}
+  setDepth():this{return this;} fillStyle():this{return this;} fillRect():this{return this;} clear():this{return this;}
   destroy():void{this.destroyed=true;}
 }
 
@@ -89,7 +89,7 @@ describe("PixelEffectSystem pooling", () => {
       },
     } as unknown as Phaser.Scene;
     const effects = new PixelEffectSystem(scene, () => true);
-    expect(views).toHaveLength(408);
+    expect(views).toHaveLength(344);
     expect(graphics).toHaveLength(3);
     for (let attack = 0; attack < 100; attack += 1) {
       effects.playAttack({
@@ -107,12 +107,12 @@ describe("PixelEffectSystem pooling", () => {
       effects.emitDirectionalBlood({kind:"projectile",damage:34,hitX:180,hitY:100,directionX:1,directionY:0,weaponId:"pistol",sequence:attack+1},attack*300);
       effects.update(attack * 300 + 100, 0.016);
     }
-    expect(views).toHaveLength(408);
+    expect(views).toHaveLength(344);
     expect(graphics).toHaveLength(3);
-    expect(effects.getStats().capacity).toBe(632);
+    expect(effects.getStats().capacity).toBe(568);
     expect(effects.getStats().blood).toBeLessThanOrEqual(224);
     effects.clear();
-    expect(effects.getStats()).toMatchObject({ particles: 0, swings: 0, muzzle: 0, tracers: 0,blood:0 });
+    expect(effects.getStats()).toMatchObject({ particles: 0, muzzle: 0, tracers: 0,blood:0 });
     effects.destroy();
     expect(views.every((view) => view.destroyed)).toBe(true);
     expect(graphics.every((view)=>view.destroyed)).toBe(true);

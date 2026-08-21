@@ -19,7 +19,6 @@ export interface AttackEffectEvent {
   impacts: readonly AttackEffectImpact[];
   alwaysShowCore?: boolean;
   meleeMode?: "stab" | "swing" | "heavy";
-  charge?: number;
   meleeRange?: number;
   meleeArcRadians?: number;
   sweepDirection?: -1 | 1;
@@ -42,5 +41,4 @@ export const PIXEL_EFFECT_PRIORITY = {
   impact: 4,
   tracer: 5,
   muzzle: 6,
-  swing: 7,
 } as const;

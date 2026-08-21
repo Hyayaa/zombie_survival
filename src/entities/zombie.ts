@@ -2,7 +2,7 @@ import type Phaser from "phaser";
 import { ZOMBIE_DEFINITIONS, type ZombieKind, type ZombieStateName } from "../data/zombie-definitions";
 import { ACTOR_PALETTES, TopDownActorView } from "../rendering/generated-sprites";
 import { createZombieMind, type Point, type ZombieMind } from "../systems/zombie-ai-system";
-import { cancelZombieAttackWindups, createZombiePosture, damageZombiePosture, isZombiePostureBroken, shouldShowZombiePosture, updateZombiePosture, type ZombiePostureDamageResult, type ZombiePostureState } from "../systems/zombie-posture-system";
+import { cancelZombieAttackWindups, createZombiePosture, damageZombiePosture, updateZombiePosture, type ZombiePostureDamageResult, type ZombiePostureState } from "../systems/zombie-posture-system";
 
 export class Zombie {
   readonly view: TopDownActorView;
@@ -32,7 +32,7 @@ export class Zombie {
     this.health = this.definition.health;
     this.posture = createZombiePosture(this.definition);
     this.mind = { ...createZombieMind(), state };
-    this.view = new TopDownActorView(scene, position.x, position.y, kind === "runner" ? ACTOR_PALETTES.runner : ACTOR_PALETTES.walker, false);
+    this.view = new TopDownActorView(scene, position.x, position.y, kind === "runner" ? ACTOR_PALETTES.runner : ACTOR_PALETTES.walker, false, false);
   }
 
   isAlive(): boolean {
@@ -77,13 +77,11 @@ export class Zombie {
     this.position.y += Number.isFinite(knockback.y) ? knockback.y : 0;
   }
 
-  updateView(time: number, visible: boolean, targeted = false, postureNow = time): void {
+  updateView(time: number, visible: boolean): void {
     this.view.setVisible(visible);
     if (!visible) return;
     this.view.setPosition(this.position.x, this.position.y);
     this.view.updateAnimation(time, this.isAlive() && this.mind.state !== "Idle", this.mind.state === "Attack", this.aimAngle);
     if (!this.isAlive()) this.view.setDead(true);
-    this.view.setHealth(this.health, this.definition.health);
-    this.view.setPosture(this.posture.value, this.posture.maximum, shouldShowZombiePosture(this.posture, postureNow, targeted), isZombiePostureBroken(this.posture, postureNow));
   }
 }

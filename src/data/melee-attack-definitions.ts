@@ -33,9 +33,9 @@ export const MELEE_INPUT_BALANCE = {
 
 export const MELEE_ATTACK_DEFINITIONS: Record<MeleeWeaponId, Record<MeleeAttackMode, MeleeAttackDefinition>> = {
   knife: {
-    stab: { mode: "stab", geometry: "capsule", damage: 25, postureDamage: 18, staminaCost: 8, range: 34, width: 5, arcRadians: 0, maxTargets: 1, knockback: 1, windupMs: 55, activeMs: 70, recoveryMs: 180, movementMultiplier: 0.8, turnSpeedRadiansPerSecond: 4.8, hitStopMs: 22 },
-    swing: { mode: "swing", geometry: "arc", damage: 19, postureDamage: 24, staminaCost: 13, range: 35, width: 0, arcRadians: Math.PI * 0.52, maxTargets: 2, knockback: 4, windupMs: 95, activeMs: 105, recoveryMs: 230, movementMultiplier: 0.55, turnSpeedRadiansPerSecond: 2.8, hitStopMs: 31 },
-    heavy: { mode: "heavy", geometry: "capsule", damage: 39, postureDamage: 52, staminaCost: 25, range: 41, width: 7, arcRadians: 0, maxTargets: 1, knockback: 6, windupMs: 145, activeMs: 90, recoveryMs: 380, movementMultiplier: 0.35, turnSpeedRadiansPerSecond: 1.7, hitStopMs: 49 },
+    stab: { mode: "stab", geometry: "capsule", damage: 25, postureDamage: 18, staminaCost: 8, range: 26, width: 6, arcRadians: 0, maxTargets: 1, knockback: 1, windupMs: 55, activeMs: 70, recoveryMs: 180, movementMultiplier: 0.8, turnSpeedRadiansPerSecond: 4.8, hitStopMs: 22 },
+    swing: { mode: "swing", geometry: "arc", damage: 19, postureDamage: 24, staminaCost: 13, range: 28, width: 0, arcRadians: Math.PI * 0.5, maxTargets: 2, knockback: 4, windupMs: 95, activeMs: 105, recoveryMs: 230, movementMultiplier: 0.55, turnSpeedRadiansPerSecond: 2.8, hitStopMs: 31 },
+    heavy: { mode: "heavy", geometry: "capsule", damage: 39, postureDamage: 52, staminaCost: 25, range: 30, width: 8, arcRadians: 0, maxTargets: 1, knockback: 6, windupMs: 145, activeMs: 90, recoveryMs: 380, movementMultiplier: 0.35, turnSpeedRadiansPerSecond: 1.7, hitStopMs: 49 },
   },
   bat: {
     stab: { mode: "stab", geometry: "capsule", damage: 13, postureDamage: 28, staminaCost: 10, range: 40, width: 7, arcRadians: 0, maxTargets: 1, knockback: 2, windupMs: 80, activeMs: 75, recoveryMs: 240, movementMultiplier: 0.8, turnSpeedRadiansPerSecond: 4, hitStopMs: 25 },

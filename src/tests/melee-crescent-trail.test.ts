@@ -1,44 +1,56 @@
 import { describe, expect, it } from "vitest";
 import { MELEE_ATTACK_DEFINITIONS } from "../data/melee-attack-definitions";
-import { createCrescentTrailGeometry } from "../effects/melee-trail-geometry";
+import { createCrescentTrailGeometry, crescentThicknessAt } from "../effects/melee-trail-geometry";
 
-function geometry(weapon: "knife" | "bat", aimAngle = 0, sweepDirection: -1 | 1 = 1, sequence = 7) {
+function geometry(weapon: "knife" | "bat", aimAngle = 0, sweepDirection: -1 | 1 = 1) {
   const attack = MELEE_ATTACK_DEFINITIONS[weapon].swing;
-  return createCrescentTrailGeometry({ originX: 0, originY: 0, aimAngle, sweepDirection, innerRadius: weapon === "knife" ? 17 : 23, outerRadius: attack.range, arcRadians: attack.arcRadians, segmentCount: 16, maximumThickness: weapon === "knife" ? 7 : 10, sequence });
+  return createCrescentTrailGeometry({
+    originX: 0,
+    originY: 0,
+    aimAngle,
+    sweepDirection,
+    innerRadius: weapon === "knife" ? 13 : 23,
+    outerRadius: attack.range,
+    arcRadians: attack.arcRadians,
+    maximumThickness: weapon === "knife" ? 6 : 10,
+  });
 }
 
-describe("crescent melee trail geometry", () => {
-  it("forms a tapered partial arc with a thicker center", () => {
+describe("pixel crescent melee trail geometry", () => {
+  it("rasterizes one tapered partial silhouette into integer cells", () => {
     const trail = geometry("knife");
-    const thicknesses = trail.outerSamples.map((outer, index) => Math.hypot(outer.x, outer.y) - Math.hypot(trail.innerSamples[index]!.x, trail.innerSamples[index]!.y));
-    expect(trail.mainPolygon.length).toBeGreaterThan(8);
-    expect(thicknesses[Math.floor(thicknesses.length / 2)]!).toBeGreaterThan(thicknesses[0]!);
-    expect(thicknesses[Math.floor(thicknesses.length / 2)]!).toBeGreaterThan(thicknesses.at(-1)!);
-    expect(Math.max(...trail.outerSamples.map((point) => Math.hypot(point.x, point.y)))).toBeGreaterThan(Math.max(...trail.innerSamples.map((point) => Math.hypot(point.x, point.y))));
-    expect(MELEE_ATTACK_DEFINITIONS.knife.swing.arcRadians).toBeLessThan(Math.PI);
-  });
-
-  it("keeps knife smaller and narrower than the bat", () => {
-    const knife = geometry("knife"), bat = geometry("bat");
-    expect(MELEE_ATTACK_DEFINITIONS.knife.swing.arcRadians).toBeLessThan(MELEE_ATTACK_DEFINITIONS.bat.swing.arcRadians);
-    expect(Math.max(...knife.outerSamples.map((point) => Math.hypot(point.x, point.y)))).toBeLessThan(Math.max(...bat.outerSamples.map((point) => Math.hypot(point.x, point.y))));
-  });
-
-  it("rotates with aim and mirrors the ordered sweep", () => {
-    const base = geometry("knife", 0, 1), rotated = geometry("knife", Math.PI / 2, 1), mirrored = geometry("knife", 0, -1);
-    expect(rotated.outerSamples[0]).toEqual({ x: -base.outerSamples[0]!.y, y: base.outerSamples[0]!.x });
-    expect(mirrored.outerSamples[0]).toEqual({ x: base.outerSamples.at(-1)!.x, y: -base.outerSamples[0]!.y });
-  });
-
-  it("uses finite integer pixels, preserves input, and deterministically places fragments", () => {
-    const input = { originX: 3, originY: 4, aimAngle: 0.3, sweepDirection: 1 as const, innerRadius: 17, outerRadius: 35, arcRadians: 1.4, segmentCount: 14, maximumThickness: 7, sequence: 22 };
-    const before = { ...input };
-    const first = createCrescentTrailGeometry(input), second = createCrescentTrailGeometry(input);
-    expect(input).toEqual(before);
-    expect(first.trailingFragments).toEqual(second.trailingFragments);
-    for (const point of [...first.mainPolygon, ...first.highlightPolygon, ...first.trailingFragments]) {
-      expect(Number.isFinite(point.x) && Number.isFinite(point.y)).toBe(true);
-      expect(Number.isInteger(point.x) && Number.isInteger(point.y)).toBe(true);
+    expect(trail.frame.cells.length + trail.frame.edgeCells.length).toBeGreaterThan(20);
+    expect(trail.arcRadians).toBeLessThan(Math.PI);
+    expect(crescentThicknessAt(0.5, 6)).toBeGreaterThan(crescentThicknessAt(0, 6));
+    expect(crescentThicknessAt(0.5, 6)).toBeGreaterThan(crescentThicknessAt(1, 6));
+    for (const cell of [...trail.frame.cells, ...trail.frame.edgeCells]) {
+      expect(Number.isInteger(cell.x) && Number.isInteger(cell.y)).toBe(true);
+      expect(Math.hypot(cell.x, cell.y)).toBeLessThanOrEqual(trail.outerRadius + 1);
     }
+  });
+
+  it("keeps the knife mask smaller than the bat mask and matches profile range", () => {
+    const knife = geometry("knife"), bat = geometry("bat");
+    expect(knife.outerRadius).toBe(MELEE_ATTACK_DEFINITIONS.knife.swing.range);
+    expect(bat.outerRadius).toBe(MELEE_ATTACK_DEFINITIONS.bat.swing.range);
+    expect(knife.outerRadius).toBeLessThan(bat.outerRadius);
+    expect(knife.arcRadians).toBeLessThan(bat.arcRadians);
+  });
+
+  it("rotates with aim and reverses reveal order without changing the final mask", () => {
+    const horizontal = geometry("knife", 0, 1);
+    const vertical = geometry("knife", Math.PI / 2, 1);
+    const reversed = geometry("knife", 0, -1);
+    const average = (cells: readonly { x: number; y: number }[], axis: "x" | "y") => cells.reduce((sum, cell) => sum + cell[axis], 0) / cells.length;
+    expect(average(horizontal.frame.cells, "x")).toBeGreaterThan(average(horizontal.frame.cells, "y"));
+    expect(average(vertical.frame.cells, "y")).toBeGreaterThan(average(vertical.frame.cells, "x"));
+    expect(new Set(horizontal.frame.cells.map((cell) => `${cell.x},${cell.y}`))).toEqual(new Set(reversed.frame.cells.map((cell) => `${cell.x},${cell.y}`)));
+    expect(horizontal.revealFrames[0]).not.toEqual(reversed.revealFrames[0]);
+  });
+
+  it("contains no fragment, polygon, circle, or smooth-arc render data", () => {
+    const trail = geometry("bat");
+    expect(Object.keys(trail)).toEqual(["kind", "frame", "revealFrames", "innerRadius", "outerRadius", "arcRadians"]);
+    expect(Object.keys(trail.frame).sort()).toEqual(["cells", "edgeCells"]);
   });
 });

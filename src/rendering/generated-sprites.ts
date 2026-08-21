@@ -38,10 +38,8 @@ export class TopDownActorView implements OutlineableEntityView {
   private readonly weaponTip?: Phaser.GameObjects.Rectangle;
   private readonly fillOutlineShapes: Phaser.GameObjects.Shape[];
   private readonly strokeOutlineShapes: Phaser.GameObjects.Shape[];
-  private readonly healthBarBackground: Phaser.GameObjects.Rectangle;
-  private readonly healthBarFill: Phaser.GameObjects.Rectangle;
-  private readonly postureBarBackground: Phaser.GameObjects.Rectangle;
-  private readonly postureBarFill: Phaser.GameObjects.Rectangle;
+  private readonly healthBarBackground?: Phaser.GameObjects.Rectangle;
+  private readonly healthBarFill?: Phaser.GameObjects.Rectangle;
   private attackAnimation?: ActorAttackAnimation;
   private weapon: WeaponId = "pistol";
   private hitUntil = 0;
@@ -57,15 +55,11 @@ export class TopDownActorView implements OutlineableEntityView {
   private lastHealth = Number.NaN;
   private lastMaximum = Number.NaN;
   private lastAlwaysVisible = false;
-  private lastPosture = Number.NaN;
-  private lastPostureMaximum = Number.NaN;
-  private lastPostureShown = false;
-  private lastPostureBroken = false;
   private visible = true;
   private dead = false;
   private readonly outline: EntityOutlineController;
 
-  constructor(scene: Phaser.Scene, x: number, y: number, palette: ActorPalette, armed = true) {
+  constructor(scene: Phaser.Scene, x: number, y: number, palette: ActorPalette, armed = true, showHealthBar = true) {
     this.container = scene.add.container(Math.round(x), Math.round(y));
     const shadow = scene.add.ellipse(0, 6, 11, 4, 0x050708, 0.62);
     this.visual = scene.add.container(0, 0);
@@ -85,11 +79,12 @@ export class TopDownActorView implements OutlineableEntityView {
       for (const shape of this.fillOutlineShapes) shape.setFillStyle(color, 1);
       for (const shape of this.strokeOutlineShapes) shape.setStrokeStyle(1, color, 1);
     });
-    this.healthBarBackground = scene.add.rectangle(-7, -13, 14, 2, 0x171a18, 0.9).setOrigin(0, 0);
-    this.healthBarFill = scene.add.rectangle(-7, -13, 14, 2, 0x7aaa65, 1).setOrigin(0, 0);
-    this.postureBarBackground = scene.add.rectangle(-9, -16, 18, 2, 0x171a18, 0.88).setOrigin(0, 0).setVisible(false);
-    this.postureBarFill = scene.add.rectangle(-9, -16, 18, 2, 0xd8a84e, 1).setOrigin(0, 0).setVisible(false);
-    this.visual.add([torsoOutline, torso, torsoLight, headOutline, head, headLight, this.aimLayer, this.healthBarBackground, this.healthBarFill, this.postureBarBackground, this.postureBarFill]);
+    this.visual.add([torsoOutline, torso, torsoLight, headOutline, head, headLight, this.aimLayer]);
+    if (showHealthBar) {
+      this.healthBarBackground = scene.add.rectangle(-7, -13, 14, 2, 0x171a18, 0.9).setOrigin(0, 0);
+      this.healthBarFill = scene.add.rectangle(-7, -13, 14, 2, 0x7aaa65, 1).setOrigin(0, 0);
+      this.visual.add([this.healthBarBackground, this.healthBarFill]);
+    }
     this.container.add([shadow, this.visual]);
     this.setAim(0);
     this.setWeapon("pistol");
@@ -229,6 +224,7 @@ export class TopDownActorView implements OutlineableEntityView {
   }
 
   setHealth(current: number, maximum: number, alwaysVisible = false): void {
+    if (!this.healthBarBackground || !this.healthBarFill) return;
     if (current === this.lastHealth && maximum === this.lastMaximum && alwaysVisible === this.lastAlwaysVisible) return;
     this.lastHealth = current;
     this.lastMaximum = maximum;
@@ -240,19 +236,6 @@ export class TopDownActorView implements OutlineableEntityView {
     const ratio = Math.max(0, current / maximum);
     this.healthBarFill.setScale(ratio, 1);
     this.healthBarFill.setFillStyle(ratio > 0.45 ? 0x7aaa65 : 0xb64f45, 1);
-  }
-
-  setPosture(current: number, maximum: number, shown: boolean, broken: boolean): void {
-    if (current === this.lastPosture && maximum === this.lastPostureMaximum && shown === this.lastPostureShown && broken === this.lastPostureBroken) return;
-    this.lastPosture = current;
-    this.lastPostureMaximum = maximum;
-    this.lastPostureShown = shown;
-    this.lastPostureBroken = broken;
-    this.postureBarBackground.setVisible(shown);
-    this.postureBarFill.setVisible(shown);
-    if (!shown) return;
-    this.postureBarFill.setScale(Math.max(0, Math.min(1, current / Math.max(1, maximum))), 1);
-    this.postureBarFill.setFillStyle(broken ? 0xf0e5b0 : 0xd8a84e, 1);
   }
 
   setVisible(visible: boolean): void {

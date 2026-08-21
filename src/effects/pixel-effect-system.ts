@@ -6,18 +6,14 @@ import { effectRandom, effectSeed, getMuzzlePosition, getTracerSegment, getTrace
 import { PixelSlotPool } from "./pixel-effect-pool";
 import { createBloodEffectPlan, type DamageImpactContext } from "./blood-effect-math";
 import { BloodDecalLayer } from "./blood-decal-layer";
-import { createChargePixelPlan, createMeleeTrailPlan, createPostureShatterPlan } from "./melee-pixel-effect-math";
 import { createFootstepDustPlan, type FootstepDustTerrain } from "./footstep-dust";
 import { MeleeTrailSystem } from "./melee-trail-system";
 
 const PARTICLE_CAPACITY = 192;
-const SWING_CAPACITY = 64;
 const MUZZLE_CAPACITY = 24;
 const TRACER_CAPACITY = 32;
 export const FOOTSTEP_DUST_CAPACITY = 96;
 export const BLOOD_PARTICLE_CAPACITY = 224;
-const KNIFE_COLORS = [0xe8e3cf, 0xbcc4bf, 0x6e7774] as const;
-const BAT_COLORS = [0xb5976d, 0x80664c, 0x54473c] as const;
 const BLOOD_COLORS = [0x7d342f, 0x612824, 0xa7473e] as const;
 const SMOKE_COLORS = [0x555c59, 0x424846, 0x343a39] as const;
 const DUST_COLORS = [0x706759, 0x5c554b, 0x827665] as const;
@@ -41,7 +37,6 @@ interface RuntimeBloodPool{slots:PixelSlotPool;graphics:Phaser.GameObjects.Graph
 
 export interface PixelEffectStats {
   particles: number;
-  swings: number;
   muzzle: number;
   tracers: number;
   blood: number;
@@ -51,7 +46,6 @@ export interface PixelEffectStats {
 
 export class PixelEffectSystem implements AttackEffectSink {
   private readonly particles: RuntimePool;
-  private readonly swings: RuntimePool;
   private readonly muzzle: RuntimePool;
   private readonly tracers: RuntimePool;
   private readonly footstepDust: RuntimePool;
@@ -61,7 +55,6 @@ export class PixelEffectSystem implements AttackEffectSink {
 
   constructor(private readonly scene: Phaser.Scene, private readonly isVisible: (x: number, y: number) => boolean) {
     this.particles = this.createPool(PARTICLE_CAPACITY);
-    this.swings = this.createPool(SWING_CAPACITY);
     this.muzzle = this.createPool(MUZZLE_CAPACITY);
     this.tracers = this.createPool(TRACER_CAPACITY);
     this.footstepDust = this.createPool(FOOTSTEP_DUST_CAPACITY);
@@ -70,12 +63,11 @@ export class PixelEffectSystem implements AttackEffectSink {
   }
 
   playAttack(event: AttackEffectEvent): void {
-    const seed = effectSeed(event.sequence, event.weapon, event.originX, event.originY);
     const showCore = event.alwaysShowCore === true || this.isVisible(event.originX, event.originY);
     if (event.weapon === "knife" || event.weapon === "bat") {
-      if (showCore) { this.meleeTrails.play(event); this.emitSwing(event, seed); }
+      if (showCore) this.meleeTrails.play(event);
     } else if (showCore) {
-      this.emitFirearm(event, seed);
+      this.emitFirearm(event, effectSeed(event.sequence, event.weapon, event.originX, event.originY));
     }
     for (let index = 0; index < event.impacts.length; index += 1) {
       const impact = event.impacts[index];
@@ -85,17 +77,6 @@ export class PixelEffectSystem implements AttackEffectSink {
   }
 
   emitDirectionalBlood(context:DamageImpactContext,now:number):void{const plan=createBloodEffectPlan(context);this.bloodDecals.add(plan.decal,now);if(!this.isVisible(context.hitX,context.hitY))return;for(let index=0;index<plan.particles.length;index++){const particle=plan.particles[index]!;const color=particle.role==="impact"&&index<2?0xce5a4e:BLOOD_COLORS[index%BLOOD_COLORS.length]!;this.spawnBlood(particle.x,particle.y,particle.velocityX,particle.velocityY,particle.role==="droplet"?25:particle.role==="impact"?16:10,particle.role==="streak"?1.15:2.1,color,particle.size,particle.tailLength,now,now+particle.lifetimeMs);}}
-
-  emitMeleeCharge(x: number, y: number, angle: number, charge: number, sequence: number, now: number): void {
-    if (!this.isVisible(x, y)) return;
-    for (const pixel of createChargePixelPlan(sequence, x, y, angle, charge)) this.spawn(this.particles, pixel.x, pixel.y, 0, 0, 0, 0, 0xd8a84e, pixel.size, pixel.size, now + pixel.delayMs, now + pixel.delayMs + pixel.lifetimeMs, 0.75, true, PIXEL_EFFECT_PRIORITY.swing, DEPTH.effectEmissive, false);
-  }
-
-  emitPostureBreak(x: number, y: number, angle: number, sequence: number, now: number): void {
-    if (!this.isVisible(x, y)) return;
-    const colors = [0xf0e5b0, 0xd8a84e, 0x8f6139] as const;
-    for (const pixel of createPostureShatterPlan(sequence, x, y, angle)) this.spawn(this.particles, pixel.x, pixel.y, Math.cos(angle + Math.PI) * 5, Math.sin(angle + Math.PI) * 5, 8, 2, colors[pixel.colorIndex]!, pixel.size, pixel.size, now + pixel.delayMs, now + pixel.delayMs + pixel.lifetimeMs, 1, true, PIXEL_EFFECT_PRIORITY.impact, DEPTH.effectEmissive, false);
-  }
 
   emitWallImpact(x: number, y: number, shotAngle: number, sequence: number, now: number): void {
     if (!this.isVisible(x, y)) return;
@@ -147,7 +128,6 @@ export class PixelEffectSystem implements AttackEffectSink {
   update(now: number, deltaSeconds: number): void {
     this.meleeTrails.update(now);
     this.updatePool(this.particles, now, deltaSeconds);
-    this.updatePool(this.swings, now, deltaSeconds);
     this.updatePool(this.muzzle, now, deltaSeconds);
     this.updatePool(this.tracers, now, deltaSeconds);
     this.updatePool(this.footstepDust, now, deltaSeconds);
@@ -157,7 +137,6 @@ export class PixelEffectSystem implements AttackEffectSink {
   clear(): void {
     this.meleeTrails.clear();
     this.clearPool(this.particles);
-    this.clearPool(this.swings);
     this.clearPool(this.muzzle);
     this.clearPool(this.tracers);
     this.clearPool(this.footstepDust);
@@ -167,7 +146,6 @@ export class PixelEffectSystem implements AttackEffectSink {
   destroy(): void {
     this.meleeTrails.destroy();
     this.destroyPool(this.particles);
-    this.destroyPool(this.swings);
     this.destroyPool(this.muzzle);
     this.destroyPool(this.tracers);
     this.destroyPool(this.footstepDust);
@@ -177,27 +155,12 @@ export class PixelEffectSystem implements AttackEffectSink {
   getStats(): PixelEffectStats {
     return {
       particles: this.particles.slots.activeCount,
-      swings: this.swings.slots.activeCount,
       muzzle: this.muzzle.slots.activeCount,
       tracers: this.tracers.slots.activeCount,
       blood:this.blood.slots.activeCount,
       meleeTrails: this.meleeTrails.activeCount,
-      capacity: PARTICLE_CAPACITY + SWING_CAPACITY + MUZZLE_CAPACITY + TRACER_CAPACITY + FOOTSTEP_DUST_CAPACITY+BLOOD_PARTICLE_CAPACITY,
+      capacity: PARTICLE_CAPACITY + MUZZLE_CAPACITY + TRACER_CAPACITY + FOOTSTEP_DUST_CAPACITY+BLOOD_PARTICLE_CAPACITY,
     };
-  }
-
-  private emitSwing(event: AttackEffectEvent, seed: number): void {
-    const weapon = event.weapon as "knife" | "bat";
-    const colors = weapon === "knife" ? KNIFE_COLORS : BAT_COLORS;
-    const plan = createMeleeTrailPlan(event.sequence, weapon, event.meleeMode ?? "swing", event.originX, event.originY, event.angle, event.charge);
-    for (let index = 0; index < plan.length; index += 1) {
-      const pixel = plan[index]!;
-      const startsAt = event.startedAt + pixel.delayMs;
-      this.spawn(this.swings, pixel.x, pixel.y, 0, 0, 0, 0, colors[pixel.colorIndex] as number,
-        pixel.size, weapon === "bat" ? 2 : 1, startsAt, startsAt + pixel.lifetimeMs, 1, false,
-        PIXEL_EFFECT_PRIORITY.swing, weapon === "knife" ? DEPTH.effectEmissive : DEPTH.effectWorld, false);
-    }
-    if (weapon === "bat") this.emitDust(event.originX, event.originY + 5, event.angle + Math.PI, seed, 4, event.startedAt + 30);
   }
 
   private emitFirearm(event: AttackEffectEvent, seed: number): void {
