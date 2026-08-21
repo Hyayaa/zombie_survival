@@ -54,15 +54,15 @@ describe("pixel-only world effect policy", () => {
     } as unknown as Phaser.Scene;
     const effects = new PixelEffectSystem(scene, () => true);
     effects.playAttack({ sequence: 1, weapon: "knife", meleeMode: "swing", originX: 10, originY: 10, angle: 0, startedAt: 0, impacts: [] });
-    effects.playAttack({ sequence: 2, weapon: "pistol", originX: 10, originY: 10, angle: 0, startedAt: 0, endpointX: 50, endpointY: 10, impacts: [] });
+    effects.playAttack({ sequence: 2, weapon: "pistol", originX: 10, originY: 10, angle: 0, startedAt: 0, impacts: [] });
     effects.emitDirectionalBlood({ kind: "projectile", damage: 20, hitX: 30, hitY: 10, directionX: 1, directionY: 0, weaponId: "pistol", sequence: 3 }, 0);
     effects.emitFootstepDust(10, 10, 0, true, "ground", 4, 0);
     effects.emitFireBurst(20, 20, 5, 0);
     effects.update(30, 0.016);
-    expect(rectangles).toHaveLength(344);
+    expect(rectangles).toHaveLength(312);
     expect(graphics).toHaveLength(3);
     expect(rectangles.every((view) => Number.isInteger(view.x) && Number.isInteger(view.y))).toBe(true);
     expect(graphics.flatMap((view) => view.rects).every((rect) => Number.isInteger(rect.x) && Number.isInteger(rect.y))).toBe(true);
-    expect(effects.getStats().capacity).toBe(568);
+    expect(effects.getStats().capacity).toBe(536);
   });
 });

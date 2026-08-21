@@ -22,15 +22,22 @@ export interface ZombieDefinition {
   postureBreakImmunityMs: number;
 }
 
+export const ZOMBIE_BASE_SPEEDS = { walker: 27, runner: 49 } as const;
+export const ZOMBIE_GLOBAL_MOVEMENT_MULTIPLIERS: Record<ZombieKind, number> = { walker: 1.45, runner: 1.30 };
+
+export function getZombieMovementSpeed(kind: ZombieKind): number {
+  return ZOMBIE_BASE_SPEEDS[kind] * ZOMBIE_GLOBAL_MOVEMENT_MULTIPLIERS[kind];
+}
+
 export const ZOMBIE_DEFINITIONS: Record<ZombieKind, ZombieDefinition> = {
   walker: {
-    kind: "walker", name: "배회자", health: 72, speed: 27, sightRadius: 81, hearingMultiplier: 0.67,
+    kind: "walker", name: "배회자", health: 72, speed: getZombieMovementSpeed("walker"), sightRadius: 81, hearingMultiplier: 0.67,
     damage: 9, infectionScratch: 4, infectionBite: 16, attackCooldownMs: 1_300, biteWindupMs: 520,
     bodyColor: 0x687765, accentColor: 0x9aa486,
     postureMaximum: 100, postureRecoveryPerSecond: 27, postureRecoveryDelayMs: 1_450, postureBreakStaggerMs: 680, postureBreakImmunityMs: 580,
   },
   runner: {
-    kind: "runner", name: "질주자", health: 36, speed: 49, sightRadius: 95, hearingMultiplier: 0.9,
+    kind: "runner", name: "질주자", health: 36, speed: getZombieMovementSpeed("runner"), sightRadius: 95, hearingMultiplier: 0.9,
     damage: 7, infectionScratch: 5, infectionBite: 14, attackCooldownMs: 1_050, biteWindupMs: 420,
     bodyColor: 0x66483f, accentColor: 0x9b6a58,
     postureMaximum: 78, postureRecoveryPerSecond: 34, postureRecoveryDelayMs: 1_250, postureBreakStaggerMs: 490, postureBreakImmunityMs: 520,

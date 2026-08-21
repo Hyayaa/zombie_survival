@@ -16,13 +16,13 @@ class FakeGraphics {
 }
 
 describe("melee world effect policy", () => {
-  it("creates exactly one crescent only for arc-shaped attacks", () => {
+  it("creates one crescent for arcs and one stab trail for capsule attacks", () => {
     expect(createActiveMeleeTrail(event("knife", "swing"))?.geometry.kind).toBe("crescent");
     expect(createActiveMeleeTrail(event("bat", "swing"))?.geometry.kind).toBe("crescent");
     expect(createActiveMeleeTrail(event("bat", "heavy"))?.geometry.kind).toBe("crescent");
-    expect(createActiveMeleeTrail(event("knife", "stab"))).toBeUndefined();
-    expect(createActiveMeleeTrail(event("knife", "heavy"))).toBeUndefined();
-    expect(createActiveMeleeTrail(event("bat", "stab"))).toBeUndefined();
+    expect(createActiveMeleeTrail(event("knife", "stab"))?.geometry.kind).toBe("stab");
+    expect(createActiveMeleeTrail(event("knife", "heavy"))?.geometry.kind).toBe("stab");
+    expect(createActiveMeleeTrail(event("bat", "stab"))?.geometry.kind).toBe("stab");
   });
 
   it("does not attach echo or trailing fragment data", () => {

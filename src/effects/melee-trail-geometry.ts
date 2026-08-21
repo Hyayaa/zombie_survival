@@ -25,6 +25,25 @@ export interface CrescentTrailGeometry {
   arcRadians: number;
 }
 
+export interface StabTrailInput {
+  originX: number;
+  originY: number;
+  aimAngle: number;
+  length: number;
+  blunt: boolean;
+  heavy: boolean;
+}
+
+export interface StabTrailGeometry {
+  kind: "stab";
+  frame: PixelCrescentFrame;
+  revealFrames: readonly PixelCrescentFrame[];
+  length: number;
+  blunt: boolean;
+}
+
+export type MeleeTrailGeometry = CrescentTrailGeometry | StabTrailGeometry;
+
 const REVEAL_STEPS = 8;
 
 export function createCrescentTrailGeometry(input: CrescentTrailInput): CrescentTrailGeometry {
@@ -75,6 +94,54 @@ export function createCrescentTrailGeometry(input: CrescentTrailInput): Crescent
 export function crescentThicknessAt(progress: number, maximumThickness: number): number {
   const amount = Math.max(0, Math.min(1, progress));
   return 1 + (Math.max(2, maximumThickness) - 1) * Math.sin(Math.PI * amount);
+}
+
+export function createStabTrailGeometry(input: StabTrailInput): StabTrailGeometry {
+  const length = Math.max(6, Math.round(input.length));
+  const start = input.blunt ? 5 : 4;
+  const directionX = Math.cos(input.aimAngle);
+  const directionY = Math.sin(input.aimAngle);
+  const perpendicularX = -directionY;
+  const perpendicularY = directionX;
+  const frameCells: PixelCell[] = [];
+  const frameEdges: PixelCell[] = [];
+  const revealCells: PixelCell[][] = Array.from({ length: 4 }, () => []);
+  const revealEdges: PixelCell[][] = Array.from({ length: 4 }, () => []);
+  const seen = new Set<string>();
+
+  const add = (distance: number, side: number, edge: boolean): void => {
+    const cell = {
+      x: Math.round(input.originX + directionX * distance + perpendicularX * side),
+      y: Math.round(input.originY + directionY * distance + perpendicularY * side),
+    };
+    const key = `${cell.x}:${cell.y}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    (edge ? frameEdges : frameCells).push(cell);
+    const revealStart = Math.min(3, Math.max(0, Math.floor(distance / Math.max(1, length) * 4)));
+    for (let step = revealStart; step < 4; step += 1) (edge ? revealEdges[step]! : revealCells[step]!).push(cell);
+  };
+
+  for (let distance = start; distance <= length; distance += 1) {
+    if (distance < start + 3 && distance % 2 === 0) add(distance, 0, true);
+    else add(distance, 0, false);
+    if (input.blunt && distance >= length - 4) { add(distance, -1, true); add(distance, 1, true); }
+    else if ((input.heavy || distance % 4 === 1) && distance >= start + 2 && distance < length - 1) {
+      const side = distance % 2 === 0 ? -1 : 1;
+      add(distance, side, true);
+    }
+  }
+  add(length, 1, false);
+  if (input.blunt || input.heavy) add(length, -1, false);
+  if (input.blunt) { add(length - 1, 1, false); add(length - 1, -1, false); }
+
+  return {
+    kind: "stab",
+    frame: { cells: frameCells, edgeCells: frameEdges },
+    revealFrames: revealCells.map((cells, index) => ({ cells, edgeCells: revealEdges[index]! })),
+    length,
+    blunt: input.blunt,
+  };
 }
 
 function positiveAngle(value: number): number {

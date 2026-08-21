@@ -51,18 +51,18 @@ describe("attack effect integration", () => {
     let magazine = state.magazine;
     if (getAttackBlockReason(state, WEAPON_DEFINITIONS.pistol) === null) {
       magazine -= 1;
-      controller.play({ weapon: "pistol", originX: 10, originY: 20, angle: 0, startedAt: state.now, endpointX: 80, endpointY: 20, impacts: [] });
+      controller.play({ weapon: "pistol", originX: 10, originY: 20, angle: 0, startedAt: state.now, impacts: [] });
     }
     expect(magazine).toBe(2);
     expect(sink.events).toHaveLength(1);
-    expect(sink.events[0]).toMatchObject({ weapon: "pistol", endpointX: 80, endpointY: 20 });
+    expect(sink.events[0]).toMatchObject({ weapon: "pistol", impacts: [] });
   });
 
   it("passes wall and zombie results through without a second hit test", () => {
     const sink = new RecordingSink();
     const controller = new AttackEffectController(sink);
     controller.play({
-      weapon: "pistol", originX: 0, originY: 0, angle: 0, startedAt: 0, endpointX: 40, endpointY: 0,
+      weapon: "pistol", originX: 0, originY: 0, angle: 0, startedAt: 0,
       impacts: [{ x: 40, y: 0, kind: "wall" }],
     });
     controller.play({

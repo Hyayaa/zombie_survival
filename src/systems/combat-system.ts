@@ -33,32 +33,11 @@ export function targetsInMeleeArc(origin: Point, aimAngle: number, weapon: Weapo
     .slice(0, weapon.maxTargets);
 }
 
-export function firstTargetOnLine(origin: Point, end: Point, targets: readonly CombatTarget[], hitRadius = 8): { target: CombatTarget; amount: number } | null {
-  let best: { target: CombatTarget; amount: number } | null = null;
-  for (const target of targets) {
-    if (!target.alive) continue;
-    const projection = segmentProjection(origin, end, target.position);
-    if (projection.amount < 0 || projection.amount > 1 || projection.distance > hitRadius) continue;
-    if (!best || projection.amount < best.amount) best = { target, amount: projection.amount };
-  }
-  return best;
-}
-
 export function angleDifference(a: number, b: number): number {
   return Math.atan2(Math.sin(a - b), Math.cos(a - b));
 }
 
 export function distance(a: Point, b: Point): number {
   return Math.hypot(a.x - b.x, a.y - b.y);
-}
-
-function segmentProjection(start: Point, end: Point, point: Point): { amount: number; distance: number } {
-  const deltaX = end.x - start.x;
-  const deltaY = end.y - start.y;
-  const lengthSquared = deltaX * deltaX + deltaY * deltaY;
-  if (lengthSquared === 0) return { amount: 0, distance: distance(start, point) };
-  const amount = ((point.x - start.x) * deltaX + (point.y - start.y) * deltaY) / lengthSquared;
-  const closest = { x: start.x + deltaX * amount, y: start.y + deltaY * amount };
-  return { amount, distance: distance(closest, point) };
 }
 

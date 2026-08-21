@@ -2,7 +2,7 @@ import type Phaser from "phaser";
 import { DEPTH } from "../config/game-config";
 import { MELEE_ATTACK_DEFINITIONS, type MeleeAttackMode, type MeleeWeaponId } from "../data/melee-attack-definitions";
 import type { AttackEffectEvent } from "./pixel-effect-definitions";
-import { createCrescentTrailGeometry, type CrescentTrailGeometry, type PixelCrescentFrame } from "./melee-trail-geometry";
+import { createCrescentTrailGeometry, createStabTrailGeometry, type MeleeTrailGeometry, type PixelCrescentFrame } from "./melee-trail-geometry";
 
 export const MAX_ACTIVE_MELEE_TRAILS = 10;
 const RECENT_SEQUENCE_CAP = 32;
@@ -16,7 +16,7 @@ export interface ActiveMeleeTrail {
   mode: MeleeAttackMode;
   originX: number;
   originY: number;
-  geometry: CrescentTrailGeometry;
+  geometry: MeleeTrailGeometry;
   startedAt: number;
   revealEndsAt: number;
   holdEndsAt: number;
@@ -31,6 +31,8 @@ export interface MeleeTrailLifecycle {
 }
 
 export function getMeleeTrailTiming(weapon: MeleeWeaponId, mode: MeleeAttackMode): MeleeTrailTiming | undefined {
+  if (mode === "stab") return { revealMs: 24, holdMs: 24, fadeMs: 38 };
+  if (weapon === "knife" && mode === "heavy") return { revealMs: 30, holdMs: 36, fadeMs: 54 };
   if (weapon === "knife" && mode === "swing") return { revealMs: 35, holdMs: 25, fadeMs: 50 };
   if (weapon === "bat" && mode === "swing") return { revealMs: 40, holdMs: 35, fadeMs: 60 };
   if (weapon === "bat" && mode === "heavy") return { revealMs: 45, holdMs: 40, fadeMs: 75 };
@@ -43,10 +45,17 @@ export function createActiveMeleeTrail(event: AttackEffectEvent): ActiveMeleeTra
   const mode = event.meleeMode ?? "swing";
   const definition = MELEE_ATTACK_DEFINITIONS[weaponId][mode];
   const timing = getMeleeTrailTiming(weaponId, mode);
-  if (!timing || definition.geometry !== "arc") return undefined;
+  if (!timing) return undefined;
   const range = Math.max(8, event.meleeRange ?? definition.range);
   const arcRadians = Math.max(0.05, event.meleeArcRadians ?? definition.arcRadians);
-  const geometry = createCrescentTrailGeometry({
+  const geometry = definition.geometry === "capsule" ? createStabTrailGeometry({
+    originX: event.originX,
+    originY: event.originY,
+    aimAngle: event.angle,
+    length: range,
+    blunt: weaponId === "bat",
+    heavy: mode === "heavy",
+  }) : createCrescentTrailGeometry({
     originX: event.originX,
     originY: event.originY,
     aimAngle: event.angle,
@@ -67,7 +76,9 @@ export function createActiveMeleeTrail(event: AttackEffectEvent): ActiveMeleeTra
     revealEndsAt: event.startedAt + timing.revealMs,
     holdEndsAt: event.startedAt + timing.revealMs + timing.holdMs,
     expiresAt: event.startedAt + timing.revealMs + timing.holdMs + timing.fadeMs,
-    colors: { main: 0xf1f3e8, edge: 0xb9c1b8 },
+    colors: weaponId === "bat" && mode === "stab"
+      ? { main: 0xc8b98c, edge: 0x77766a }
+      : mode === "heavy" ? { main: 0xffffe7, edge: 0xe6e19a } : { main: 0xf5f5df, edge: 0xa6aa8d },
   };
 }
 

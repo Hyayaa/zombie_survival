@@ -29,6 +29,31 @@ canvas {
   image-rendering: pixelated;
 }
 
+canvas.has-weapon-crosshair { cursor: none; }
+
+.weapon-crosshair {
+  --crosshair-x: 0px;
+  --crosshair-y: 0px;
+  --crosshair-gap: 5px;
+  --crosshair-color: #f4f4e8;
+  position: fixed;
+  z-index: 60;
+  left: var(--crosshair-x);
+  top: var(--crosshair-y);
+  width: 1px;
+  height: 1px;
+  pointer-events: none;
+}
+.weapon-crosshair[hidden] { display: none; }
+.weapon-crosshair__arm { position:absolute;display:block;background:var(--crosshair-color);box-shadow:0 0 0 1px #080a09; }
+.weapon-crosshair__arm--top,.weapon-crosshair__arm--bottom { left:0;width:1px;height:6px;transform:translateX(-1px); }
+.weapon-crosshair__arm--left,.weapon-crosshair__arm--right { top:0;width:6px;height:1px;transform:translateY(-1px); }
+.weapon-crosshair__arm--top { bottom:var(--crosshair-gap); }
+.weapon-crosshair__arm--bottom { top:var(--crosshair-gap); }
+.weapon-crosshair__arm--left { right:var(--crosshair-gap); }
+.weapon-crosshair__arm--right { left:var(--crosshair-gap); }
+.weapon-crosshair.is-hit { --crosshair-color:#fff0c2; }
+
 button {
   color: #dce3dd;
   background: #26312f;

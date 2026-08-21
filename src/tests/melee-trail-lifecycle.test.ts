@@ -54,10 +54,10 @@ describe("melee trail lifecycle and batching", () => {
     expect(graphics.pixels).toBeGreaterThan(0);
   });
 
-  it("uses no trail for stabbing or fog-hidden attacks", () => {
-    expect(createActiveMeleeTrail(event(1, "knife", "stab"))).toBeUndefined();
-    expect(createActiveMeleeTrail(event(2, "knife", "heavy"))).toBeUndefined();
-    expect(createActiveMeleeTrail(event(3, "bat", "stab"))).toBeUndefined();
+  it("uses stab trails but does not draw fog-hidden attacks", () => {
+    expect(createActiveMeleeTrail(event(1, "knife", "stab"))?.geometry.kind).toBe("stab");
+    expect(createActiveMeleeTrail(event(2, "knife", "heavy"))?.geometry.kind).toBe("stab");
+    expect(createActiveMeleeTrail(event(3, "bat", "stab"))?.geometry.kind).toBe("stab");
     const graphics = new FakeGraphics();
     const system = new MeleeTrailSystem({ add: { graphics: () => graphics } } as unknown as Phaser.Scene, () => false);
     system.play(event(4));
