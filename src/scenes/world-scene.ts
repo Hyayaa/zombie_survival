@@ -694,6 +694,20 @@ export class WorldScene extends Phaser.Scene {
       onEquipWeapon: (instanceId, slot) => this.equipWeapon(instanceId, slot),
       onUnequipWeapon: (slot) => this.unequipWeapon(slot),
       onActivateWeapon: (slot) => this.activateWeapon(slot),
+      canUnequipItemToGrid: (slot, instanceId, target) => this.inventory.canUnequipItemToGrid(slot, instanceId, target).success,
+      onUnequipItemToGrid: (slot, instanceId, target) => {
+        const result = this.inventory.unequipItemToGrid(slot, instanceId, target);
+        if (result.success) { this.audio.play("unequip-clothing"); this.hud.showMessage("장비를 인벤토리로 옮겼습니다."); }
+        else this.hud.showMessage(result.reason === "storage-not-empty" ? "장비 수납공간을 먼저 비워야 합니다." : result.reason === "own-storage" ? "장비를 자기 수납공간에 넣을 수 없습니다." : "이 위치에는 장비를 놓을 수 없습니다.");
+        this.refreshInventoryPanel(); return result.success;
+      },
+      canUnequipWeaponToGrid: (slot, instanceId, target) => this.inventory.canUnequipWeaponToGrid(slot, instanceId, target).success,
+      onUnequipWeaponToGrid: (slot, instanceId, target) => {
+        const result = this.inventory.unequipWeaponToGrid(slot, instanceId, target);
+        if (result.success) { this.syncEquippedWeaponFromInventory(); this.hud.showMessage("무기를 인벤토리로 옮겼습니다."); }
+        else this.hud.showMessage("이 위치에는 무기를 놓을 수 없습니다.");
+        this.refreshInventoryPanel(); return result.success;
+      },
       onAudio: (cue) => { this.audio.play(cue); },
     });
     this.commandPanel = new CompanionCommandPanel(this.uiRoot, (command) => this.chooseCompanionCommand(command));

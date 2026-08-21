@@ -29,4 +29,16 @@ describe("grid inventory save migration", () => {
     expect(restored.getItems().every((item) => item.rotation === 0)).toBe(true);
     expect(restored.snapshot().version).toBe(4);
   });
+
+  it("repacks legacy two-by-four shirt contents into four-by-two storage without loss", () => {
+    const source = new InventorySystem(); source.add("water", 1); source.add("cloth", 3);
+    const saved = source.snapshot(); const shirtId = source.getContainers().find(({ kind }) => kind === "shirt")!.id;
+    const water = saved.items.find(({ itemId }) => itemId === "water")!; const cloth = saved.items.find(({ itemId }) => itemId === "cloth")!;
+    water.containerId = shirtId; water.x = 0; water.y = 2; water.rotation = 0;
+    cloth.containerId = shirtId; cloth.x = 1; cloth.y = 3; cloth.rotation = 0;
+    const restored = new InventorySystem(20, saved);
+    expect(restored.getContainers().find(({ kind }) => kind === "shirt")).toMatchObject({ width: 4, height: 2 });
+    expect(restored.getItem(water.instanceId)).not.toBeNull(); expect(restored.getItem(cloth.instanceId)).not.toBeNull();
+    expect(restored.count("water")).toBe(1); expect(restored.count("cloth")).toBe(3); expect(restored.takeLegacyOverflow()).toEqual([]);
+  });
 });

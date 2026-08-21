@@ -2,11 +2,11 @@ import { describe, expect, it } from "vitest";
 import { InventorySystem } from "../systems/inventory-system";
 
 describe("wearable storage", () => {
-  it("keeps the shirt item at two-by-two while restoring its expanded two-by-four storage", () => {
+  it("keeps the shirt item at two-by-two while restoring its four-by-two storage", () => {
     const inventory = new InventorySystem(); const shirt = inventory.getContainers().find(({ kind }) => kind === "shirt")!;
-    expect(shirt).toMatchObject({ width: 2, height: 4 }); inventory.add("cloth", 1); const cloth = inventory.getStoredItems().find(({ itemId }) => itemId === "cloth")!;
-    expect(inventory.moveItem(cloth.instanceId, { containerId: shirt.id, x: 0, y: 3 })).toBe(true);
-    const restored = new InventorySystem(20, inventory.snapshot()); expect(restored.getItem(cloth.instanceId)).toMatchObject({ x: 0, y: 3 });
+    expect(shirt).toMatchObject({ width: 4, height: 2 }); inventory.add("cloth", 1); const cloth = inventory.getStoredItems().find(({ itemId }) => itemId === "cloth")!;
+    expect(inventory.moveItem(cloth.instanceId, { containerId: shirt.id, x: 3, y: 1 })).toBe(true);
+    const restored = new InventorySystem(20, inventory.snapshot()); expect(restored.getItem(cloth.instanceId)).toMatchObject({ x: 3, y: 1 });
   });
   it("creates an independent container when equipment is worn", () => {
     const inventory = new InventorySystem();

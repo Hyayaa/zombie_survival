@@ -6,7 +6,7 @@ describe("grid inventory", () => {
     const inventory = new InventorySystem();
     const containers = inventory.getContainers();
     expect(containers.map(({ kind, width, height }) => [kind, width, height])).toEqual([
-      ["pockets", 4, 2], ["shirt", 2, 4], ["pants", 4, 2],
+      ["pockets", 4, 2], ["shirt", 4, 2], ["pants", 4, 2],
     ]);
     expect(containers.reduce((sum, container) => sum + container.occupancy.length, 0)).toBe(24);
   });

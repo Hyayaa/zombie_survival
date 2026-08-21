@@ -33,6 +33,10 @@ export interface WeaponEquipmentState {
 
 export type InventorySnapshot = Array<InventorySlot | null> | GridInventorySnapshot;
 export interface InventoryMoveTarget { containerId: string; x: number; y: number; rotation?: InventoryRotation }
+export type InventoryItemLocation = { kind: "container"; containerId: string; x: number; y: number } | { kind: "equipment"; slot: StorageSlot } | { kind: "weapon"; slot: WeaponEquipmentSlot };
+export type InventoryDropTarget = ({ kind: "container" } & InventoryMoveTarget) | { kind: "equipment"; slot: StorageSlot } | { kind: "weapon"; slot: WeaponEquipmentSlot };
+export type EquipmentMoveFailureReason = "storage-not-empty" | "target-blocked" | "invalid-slot" | "own-storage" | "missing-instance";
+export interface EquipmentMoveResult { success: boolean; reason?: EquipmentMoveFailureReason }
 
 const CONTAINER_ORDER: readonly InventoryContainerKind[] = ["pockets", "shirt", "pants", "belt", "vest", "backpack"];
 const EQUIPMENT_SLOTS: readonly StorageSlot[] = ["shirt", "pants", "belt", "vest", "backpack"];
@@ -74,6 +78,14 @@ export class InventorySystem {
   }
   getItem(instanceId: string): InventoryItemInstance | null {
     const item = this.items.get(instanceId); return item ? copyItem(item) : null;
+  }
+  getItemLocation(instanceId: string): InventoryItemLocation | null {
+    const item = this.items.get(instanceId); if (!item) return null;
+    if (item.containerId !== null) return { kind: "container", containerId: item.containerId, x: item.x, y: item.y };
+    for (const slot of EQUIPMENT_SLOTS) if (this.equipment[slot] === instanceId) return { kind: "equipment", slot };
+    if (this.weaponEquipment.primaryInstanceId === instanceId) return { kind: "weapon", slot: "primary" };
+    if (this.weaponEquipment.secondaryInstanceId === instanceId) return { kind: "weapon", slot: "secondary" };
+    return null;
   }
   getEquipment(): Readonly<Partial<Record<StorageSlot, string>>> { return { ...this.equipment }; }
   getWeaponEquipment(): Readonly<WeaponEquipmentState> { return { ...this.weaponEquipment }; }
@@ -284,6 +296,42 @@ export class InventorySystem {
     this.applyRotation(item, location.rotation ?? 0);
     if (!this.place(item, location.containerId, location.x, location.y)) { this.restore(before); return false; }
     this.bumpRevision(); return true;
+  }
+
+  canUnequipItemToGrid(slot: StorageSlot, instanceId: string, target: InventoryMoveTarget): EquipmentMoveResult {
+    const item = this.items.get(instanceId); if (!item || this.equipment[slot] !== instanceId) return { success: false, reason: "missing-instance" };
+    const storage = getInventoryObjectDefinition(item.itemId).storageEquipment; if (!storage || storage.slot !== slot) return { success: false, reason: "invalid-slot" };
+    const ownContainer = this.containerForSlot(slot); if (!ownContainer) return { success: false, reason: "missing-instance" };
+    if (!this.isContainerEmpty(ownContainer.id)) return { success: false, reason: "storage-not-empty" };
+    if (target.containerId === ownContainer.id) return { success: false, reason: "own-storage" };
+    const targetContainer = this.containers.get(target.containerId); if (!targetContainer || !this.canStoreInContainer(item.itemId, targetContainer)) return { success: false, reason: "target-blocked" };
+    const footprint = getEffectiveFootprint(getInventoryObjectDefinition(item.itemId), target.rotation ?? item.rotation);
+    return this.cellsAreFree(targetContainer, target.x, target.y, footprint.width, footprint.height) ? { success: true } : { success: false, reason: "target-blocked" };
+  }
+
+  unequipItemToGrid(slot: StorageSlot, instanceId: string, target: InventoryMoveTarget): EquipmentMoveResult {
+    const validation = this.canUnequipItemToGrid(slot, instanceId, target); if (!validation.success) return validation;
+    const item = this.items.get(instanceId)!; const ownContainer = this.containerForSlot(slot)!; const before = this.snapshot();
+    this.containers.delete(ownContainer.id); delete this.equipment[slot]; this.applyRotation(item, target.rotation ?? item.rotation);
+    if (!this.place(item, target.containerId, target.x, target.y)) { this.restore(before); return { success: false, reason: "target-blocked" }; }
+    this.bumpRevision(); return { success: true };
+  }
+
+  canUnequipWeaponToGrid(slot: WeaponEquipmentSlot, instanceId: string, target: InventoryMoveTarget): EquipmentMoveResult {
+    const slotId = slot === "primary" ? this.weaponEquipment.primaryInstanceId : this.weaponEquipment.secondaryInstanceId; const item = this.items.get(instanceId);
+    if (!item || slotId !== instanceId || !isWeaponItemId(item.itemId)) return { success: false, reason: "missing-instance" };
+    const targetContainer = this.containers.get(target.containerId); if (!targetContainer) return { success: false, reason: "target-blocked" };
+    const footprint = getEffectiveFootprint(getInventoryObjectDefinition(item.itemId), target.rotation ?? item.rotation);
+    return this.cellsAreFree(targetContainer, target.x, target.y, footprint.width, footprint.height) ? { success: true } : { success: false, reason: "target-blocked" };
+  }
+
+  unequipWeaponToGrid(slot: WeaponEquipmentSlot, instanceId: string, target: InventoryMoveTarget): EquipmentMoveResult {
+    const validation = this.canUnequipWeaponToGrid(slot, instanceId, target); if (!validation.success) return validation;
+    const item = this.items.get(instanceId)!; const before = this.snapshot(); const slotKey = slot === "primary" ? "primaryInstanceId" : "secondaryInstanceId";
+    delete this.weaponEquipment[slotKey]; this.applyRotation(item, target.rotation ?? item.rotation);
+    if (!this.place(item, target.containerId, target.x, target.y)) { this.restore(before); return { success: false, reason: "target-blocked" }; }
+    if (this.weaponEquipment.activeSlot === slot) this.weaponEquipment.activeSlot = slot === "primary" && this.weaponEquipment.secondaryInstanceId ? "secondary" : "primary";
+    this.bumpRevision(); return { success: true };
   }
 
   dropInstance(instanceId: string, quantity = 1): InventorySlot | null {

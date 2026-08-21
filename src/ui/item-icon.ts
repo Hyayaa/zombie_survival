@@ -11,7 +11,7 @@ export function createItemIconMarkup(options:ItemIconMarkupOptions):string{
 }
 
 export function bindItemIconFallbacks(root:ParentNode):void{
-  for(const image of root.querySelectorAll<HTMLImageElement>("img.item-icon"))image.addEventListener("error",()=>{image.hidden=true;const fallback=image.nextElementSibling as HTMLElement|null;if(fallback)fallback.hidden=false;},{once:true});
+  for(const image of root.querySelectorAll<HTMLImageElement>("img.item-icon,img.inventory-item-image"))image.addEventListener("error",()=>{image.hidden=true;const fallback=image.nextElementSibling as HTMLElement|null;if(fallback)fallback.hidden=false;},{once:true});
 }
 
 function escapeAttribute(value:string):string{return value.replaceAll("&","&amp;").replaceAll('"',"&quot;").replaceAll("<","&lt;").replaceAll(">","&gt;");}

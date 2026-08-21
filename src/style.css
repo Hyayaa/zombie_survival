@@ -292,23 +292,30 @@ button:focus-visible {
 .storage-row { min-width:0;padding:6px;background:#101614;border:1px solid #34413c; }
 .storage-row h3 { display:flex;gap:6px;min-height:18px;margin-top:0; }
 .storage-row h3 small { color:#76827c;font-weight:normal; }
-.storage-row__body { display:grid;grid-template-columns:132px minmax(0,1fr);gap:8px;align-items:center; }
-.storage-row__equipment { min-height:76px;display:grid;grid-template-columns:minmax(62px,auto) 1fr;grid-template-rows:1fr auto;gap:2px 6px;align-items:center;padding:5px;background:#18201d;border:1px solid #3d4b45; }
-.storage-row__equipment .equipment-icon { grid-row:1/3;width:var(--render-frame-w,42px);height:var(--render-frame-h,42px);max-width:72px;max-height:72px; }
+.storage-row__body { display:grid;grid-template-columns:max-content minmax(0,1fr);gap:12px;align-items:start; }
+.storage-row__equipment { min-height:76px;display:grid;grid-template-columns:max-content minmax(76px,1fr);gap:4px 8px;align-items:center;padding:5px;background:#18201d;border:1px solid #3d4b45; }
 .storage-row__equipment b { font-size:.88em; }.storage-row__equipment small { color:#87938d;font-size:.72em; }
 .storage-row__equipment button { padding:2px 5px;justify-self:start; }
 .storage-row__equipment.is-empty { opacity:.65; }.storage-row__equipment.is-built-in { grid-template-columns:1fr; }
 .storage-row__unavailable { display:grid;place-items:center;min-height:42px;color:#66716c;border:1px dashed #34413c;background:#0c1110; }
 .grid-inventory__surface { --cell:40px;position:relative;width:calc(var(--grid-w) * var(--cell));height:calc(var(--grid-h) * var(--cell));max-width:100%;background-color:#111816;background-image:linear-gradient(to right,#34413c 1px,transparent 1px),linear-gradient(to bottom,#34413c 1px,transparent 1px);background-size:var(--cell) var(--cell);border-right:1px solid #34413c;border-bottom:1px solid #34413c; }
-.grid-inventory__item { position:absolute;left:calc(var(--item-x) * var(--cell) + 2px);top:calc(var(--item-y) * var(--cell) + 2px);width:calc(var(--item-w) * var(--cell) - 4px);height:calc(var(--item-h) * var(--cell) - 4px);display:grid;place-items:center;padding:0;overflow:hidden;background:#25312d;border:1px solid #718079;touch-action:none;cursor:grab; }
+.grid-inventory__item { position:absolute;left:calc(var(--item-x) * var(--cell));top:calc(var(--item-y) * var(--cell));width:var(--render-frame-w);height:var(--render-frame-h);display:block;padding:0;overflow:visible;background:transparent;border:0;touch-action:none;cursor:grab; }
 .grid-inventory__item:active { cursor:grabbing; }.grid-inventory__item:hover { border-color:#d6c27c; }
 .grid-inventory__item.is-dragging { opacity:.28; }
-.grid-item-icon { width:100%;height:100%;border:0;background:transparent; }.grid-item-icon .item-icon { width:var(--render-image-w,90%);height:var(--render-image-h,90%);max-width:none;max-height:none; }
-.grid-inventory__quantity,.grid-inventory__item em { position:absolute;right:2px;bottom:1px;padding:0 2px;color:#f3e5b0;background:#070a09;font-size:10px;font-style:normal; }
-.grid-inventory__item em { right:auto;left:2px;color:#d7bd6f; }
-.inventory-drag-ghost { position:fixed;z-index:80;display:grid;place-items:center;pointer-events:none;opacity:.82;background:#25312d;border:1px solid #d6c27c; }
+.inventory-item-frame { position:relative;display:block;box-sizing:border-box;width:var(--render-frame-w);height:var(--render-frame-h);overflow:hidden;background-color:#25312d;background-image:linear-gradient(to right,#46534e 1px,transparent 1px),linear-gradient(to bottom,#46534e 1px,transparent 1px);background-size:var(--inventory-cell-size) var(--inventory-cell-size);border:1px solid #718079;image-rendering:pixelated;touch-action:none; }
+.inventory-item-frame.is-dragging { opacity:.28; }
+.inventory-item-visual-stage { position:absolute;inset:var(--item-inner-padding);overflow:hidden;pointer-events:none; }
+.inventory-item-centerer { position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);pointer-events:none; }
+.inventory-item-image,.inventory-item-fallback { display:block;width:var(--render-image-w);height:var(--render-image-h);max-width:none;max-height:none;object-fit:contain;image-rendering:pixelated;image-rendering:crisp-edges;pointer-events:none; }
+.inventory-item-image { transform:rotate(var(--icon-rotation));transform-origin:50% 50%; }
+.inventory-item-fallback { background:var(--swatch);box-shadow:2px 2px #000; }
+.inventory-item-fallback[hidden] { display:none; }
+.inventory-item-badge,.inventory-item-quick { position:absolute;right:2px;bottom:1px;padding:0 2px;color:#f3e5b0;background:#070a09;font-size:10px;font-style:normal;pointer-events:none; }
+.inventory-item-quick { right:auto;left:2px;color:#d7bd6f; }
+.inventory-drag-ghost { position:fixed;z-index:80;display:block;pointer-events:none;opacity:.82; }
+.inventory-drag-ghost .inventory-item-frame { border-color:#d6c27c; }
 .inventory-drag-ghost[hidden],.inventory-placement-preview[hidden],.item-context-popover[hidden] { display:none; }
-.inventory-placement-preview { position:absolute;z-index:4;left:calc(var(--item-x) * var(--cell) + 1px);top:calc(var(--item-y) * var(--cell) + 1px);width:calc(var(--render-frame-w,var(--item-w) * var(--cell)) - 2px);height:calc(var(--render-frame-h,var(--item-h) * var(--cell)) - 2px);pointer-events:none; }
+.inventory-placement-preview { position:absolute;z-index:4;box-sizing:border-box;left:calc(var(--item-x) * var(--cell));top:calc(var(--item-y) * var(--cell));width:var(--render-frame-w,calc(var(--item-w) * var(--cell)));height:var(--render-frame-h,calc(var(--item-h) * var(--cell)));pointer-events:none; }
 .inventory-placement-preview.is-valid { background:rgb(88 151 103 / 30%);border:2px solid #70c184; }
 .inventory-placement-preview.is-invalid { background:rgb(177 67 58 / 34%);border:2px solid #db655b; }
 .item-context-popover { position:fixed;z-index:81;width:min(230px,calc(100vw - 16px));padding:7px;background:#18211e; }
@@ -319,7 +326,7 @@ button:focus-visible {
   display: grid;
   gap: 4px;
 }
-.weapon-equipment{display:grid;gap:7px}.weapon-equipment__slot{min-height:82px;display:grid;grid-template-columns:minmax(62px,auto) 1fr auto;grid-template-rows:auto auto;gap:3px 6px;align-items:center;padding:6px;background:#18201d;border:1px solid #485650}.weapon-equipment__slot.is-empty{grid-template-columns:1fr;opacity:.72}.weapon-equipment__slot.is-active{border-color:#d6c27c;background:#29342c}.weapon-equipment-icon{grid-row:1/3;width:var(--render-frame-w);height:var(--render-frame-h);max-width:72px;max-height:72px}.weapon-equipment-icon .item-icon,.equipment-icon .item-icon{width:var(--render-image-w,90%);height:var(--render-image-h,90%);max-width:none;max-height:none}.weapon-equipment__slot button{padding:2px 5px}.equipment-drop-target.is-drop-valid{border-color:#70c184;box-shadow:inset 0 0 0 2px rgb(112 193 132 / 35%)}.equipment-drop-target.is-drop-invalid{border-color:#db655b;box-shadow:inset 0 0 0 2px rgb(219 101 91 / 35%)}
+.weapon-equipment{display:grid;gap:7px}.weapon-equipment__slot{min-height:82px;display:grid;grid-template-columns:max-content minmax(90px,1fr);gap:4px 8px;align-items:center;padding:6px;background:#18201d;border:1px solid #485650}.weapon-equipment__slot.is-empty{grid-template-columns:1fr;opacity:.72}.weapon-equipment__slot.is-active{border-color:#d6c27c;background:#29342c}.weapon-equipment__slot button{padding:2px 5px}.equipment-drop-target.is-drop-valid{border-color:#70c184;box-shadow:inset 0 0 0 2px rgb(112 193 132 / 35%)}.equipment-drop-target.is-drop-invalid{border-color:#db655b;box-shadow:inset 0 0 0 2px rgb(219 101 91 / 35%)}
 
 .crafting-list { display:grid;gap:7px; }
 .craft-card { display:grid;grid-template-columns:minmax(180px,1fr) 24px minmax(120px,.7fr) 110px;gap:8px;align-items:center;padding:7px;background:#101614;border:1px solid #34413c; }
@@ -450,7 +457,6 @@ button:focus-visible {
 
 @media (max-width: 700px), (max-height: 480px) {
   .inventory-panel__content { grid-template-columns: 1fr 190px; }
-  .grid-inventory__surface { --cell:36px; }
   .craft-card { grid-template-columns:1fr 20px 1fr; }.craft-card>button { grid-column:1/4; }
   .hud__objective { top: 42px; max-width: 45%; }
   .hud__bottom-right { right:6px;bottom:42px;gap:3px; }
