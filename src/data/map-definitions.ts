@@ -2,6 +2,8 @@ import { MAP_HEIGHT_TILES, MAP_ID, MAP_VERSION, MAP_WIDTH_TILES, OBSTACLE_BALANC
 import type { SegmentGeometry } from "../systems/collision-geometry";
 import type { ZombieKind } from "./zombie-definitions";
 import type { WeaponId } from "./weapon-definitions";
+import { BUILDABLE_DEFINITIONS } from "./buildable-definitions";
+import type { StructureOwnership,StructureSource } from "../entities/placed-structure";
 
 export enum TerrainType { Ground = 0, Road = 1, Sidewalk = 2, Floor = 3 }
 export type RoadKind = "arterial" | "street" | "diagonal";
@@ -15,6 +17,7 @@ export type BuildingOrientation = 0 | 45 | 90 | 135;
 export type BuildingKind = "safehouse" | "house" | "store" | "warehouse" | "office" | "clinic" | "garage" | "gas-station" | "ruin";
 export type DoorOrientation = "horizontal" | "vertical" | "diagonal-down" | "diagonal-up";
 export type CoverHeight = "none" | "low" | "full";
+export interface GeneratedBuildingStructure {id:string;buildableId:"wood-wall"|"wood-door";source:"generated";ownership:"world";placement:SegmentGeometry;buildingId:string;wallIndex:number;demolishable:false;refund:false}
 
 export interface BuildingDefinition {
   id: string; name: string; kind: BuildingKind;
@@ -37,6 +40,7 @@ export interface DoorDefinition {
   orientation: DoorOrientation; open: boolean;
   segment?: SegmentGeometry;
   health: number; maxHealth: number; destroyed: boolean;
+  source?:StructureSource;ownership?:StructureOwnership;
 }
 
 export interface LootStack { itemId: string; quantity: number }
@@ -55,6 +59,7 @@ export interface MapDefinition {
   minimapWallCoverage: Uint8Array;
   roadSegments: RoadSegment[]; buildings: BuildingDefinition[]; structures: BuildingDefinition[];
   wallSegments: SegmentGeometry[];
+  generatedStructures:GeneratedBuildingStructure[];
   obstacles: WorldObstacle[]; doors: DoorDefinition[]; containers: ContainerDefinition[];
   groundItems: GroundItemDefinition[]; zombieSpawns: ZombieSpawnDefinition[];
   playerSpawn: { x: number; y: number }; companionSpawns: CompanionSpawnDefinition[];
@@ -81,7 +86,7 @@ const ROAD_SEGMENTS: RoadSegment[] = [
 const KIND_CYCLE: BuildingKind[] = ["house", "house", "store", "office", "ruin", "house", "warehouse", "garage", "clinic"];
 const FLOOR_COLORS = [0x4c5148, 0x514a42, 0x4c4842, 0x4b514c, 0x484d4c, 0x504a46];
 
-export const CURRENT_MAP_GENERATION_VERSION=2;
+export const CURRENT_MAP_GENERATION_VERSION=3;
 export function createCityBlockMap(mapSeed = 0x51a7c1,mapGenerationVersion=CURRENT_MAP_GENERATION_VERSION): MapDefinition {
   const widthTiles = MAP_WIDTH_TILES;
   const heightTiles = MAP_HEIGHT_TILES;
@@ -95,6 +100,7 @@ export function createCityBlockMap(mapSeed = 0x51a7c1,mapGenerationVersion=CURRE
   const doors: DoorDefinition[] = [];
   const obstacles: WorldObstacle[] = [];
   const wallSegments: SegmentGeometry[] = [];
+  const generatedStructures:GeneratedBuildingStructure[]=[];
   for (const road of roadSegments) {
     if (buildings.length >= 38) break;
     let acceptedForRoad = 0;
@@ -152,14 +158,15 @@ export function createCityBlockMap(mapSeed = 0x51a7c1,mapGenerationVersion=CURRE
         acceptedForRoad += 1;
         for (const index of footprint) { occupied[index] = 1; terrain[index] = TerrainType.Floor; }
         for (const index of wallTiles) minimapWallCoverage[index] = 1;
-        if (diagonalGeometry) wallSegments.push(...diagonalGeometry.walls);
+        if(mapGenerationVersion>=3){const buildingWalls=diagonalGeometry?.walls??wallTiles.map((index)=>createTileWallSegment(index%widthTiles,Math.floor(index/widthTiles),doorOrientationForBoundary(index,footprintSet,widthTiles)));building.wallSegments=buildingWalls;buildingWalls.forEach((placement,wallIndex)=>{wallSegments.push(placement);generatedStructures.push({id:`generated:${id}:wall:${wallIndex}`,buildableId:"wood-wall",source:"generated",ownership:"world",placement,buildingId:id,wallIndex,demolishable:false,refund:false});});}
+        else if (diagonalGeometry) wallSegments.push(...diagonalGeometry.walls);
         else for (const index of wallTiles) {
           const tileX = index % widthTiles;
           const tileY = Math.floor(index / widthTiles);
           obstacles.push(wall(`${id}-wall-${tileX}-${tileY}`, tileX, tileY));
         }
         const orientationValue = diagonalGeometry ? doorOrientationFromSegment(diagonalGeometry.door) : doorOrientation(orientation);
-        entrances.forEach((entranceIndex,doorIndex)=>{const doorX=entranceIndex%widthTiles,doorY=Math.floor(entranceIndex/widthTiles),doorId=doorIndex===0?`door-${id}`:`door-${id}-${doorIndex+1}`,candidateOrientation=diagonalGeometry?orientationValue:doorOrientationForBoundary(entranceIndex,footprintSet,widthTiles);doors.push({kind:"door",id:doorId,buildingId:id,tileX:doorX,tileY:doorY,orientation:candidateOrientation,segment:doorIndex===0&&diagonalGeometry?diagonalGeometry.door:createTileDoorSegment(doorX,doorY,candidateOrientation),open:isDoorInitiallyOpen(mapSeed,doorId),health:OBSTACLE_BALANCE.doorHealth,maxHealth:OBSTACLE_BALANCE.doorHealth,destroyed:false});});
+        entrances.forEach((entranceIndex,doorIndex)=>{const doorX=entranceIndex%widthTiles,doorY=Math.floor(entranceIndex/widthTiles),doorId=mapGenerationVersion>=3?`generated:${id}:door:${doorIndex}`:doorIndex===0?`door-${id}`:`door-${id}-${doorIndex+1}`,candidateOrientation=diagonalGeometry?orientationValue:doorOrientationForBoundary(entranceIndex,footprintSet,widthTiles),segment=doorIndex===0&&diagonalGeometry?diagonalGeometry.door:createTileDoorSegment(doorX,doorY,candidateOrientation);doors.push({kind:"door",id:doorId,buildingId:id,tileX:doorX,tileY:doorY,orientation:candidateOrientation,segment,open:isDoorInitiallyOpen(mapSeed,doorId),health:OBSTACLE_BALANCE.doorHealth,maxHealth:OBSTACLE_BALANCE.doorHealth,destroyed:false,source:mapGenerationVersion>=3?"generated":undefined,ownership:mapGenerationVersion>=3?"world":undefined});if(mapGenerationVersion>=3)generatedStructures.push({id:doorId,buildableId:"wood-door",source:"generated",ownership:"world",placement:segment,buildingId:id,wallIndex:doorIndex,demolishable:false,refund:false});});
         const doorX = entrance % widthTiles;
         const doorY = Math.floor(entrance / widthTiles);
         rasterizeWalkway(terrain, occupied, widthTiles, heightTiles, doorX, doorY, Math.round(roadX), Math.round(roadY));
@@ -199,7 +206,8 @@ export function createCityBlockMap(mapSeed = 0x51a7c1,mapGenerationVersion=CURRE
   fuelBuilding.kind = "gas-station"; fuelBuilding.name = "동부 주유소";
   engineBuilding.kind = "garage"; engineBuilding.name = "서부 정비소";
 
-  if(mapGenerationVersion>=2)for(const building of [safehouse,batteryBuilding,fuelBuilding,engineBuilding])restorePresetPrimaryDoor(building,doors,obstacles,minimapWallCoverage,widthTiles);
+  if(mapGenerationVersion>=2&&mapGenerationVersion<3)for(const building of [safehouse,batteryBuilding,fuelBuilding,engineBuilding])restorePresetPrimaryDoor(building,doors,obstacles,minimapWallCoverage,widthTiles);
+  else if(mapGenerationVersion>=3)for(const building of [safehouse,batteryBuilding,fuelBuilding,engineBuilding])restoreGeneratedPresetPrimaryDoor(building,doors,generatedStructures,wallSegments,minimapWallCoverage,widthTiles);
 
   const containers = createContainers(buildings, widthTiles, batteryBuilding, fuelBuilding, engineBuilding, mapSeed);
   const groundItems = createGroundItems(buildings, widthTiles);
@@ -209,7 +217,7 @@ export function createCityBlockMap(mapSeed = 0x51a7c1,mapGenerationVersion=CURRE
   const safeBounds = footprintBounds(safehouse.footprintTiles, widthTiles);
   return {
     mapId: MAP_ID, mapVersion: MAP_VERSION, mapGenerationVersion, mapSeed, widthTiles, heightTiles, terrain, minimapWallCoverage, roadSegments,
-    buildings, structures: buildings, wallSegments, obstacles, doors, containers, groundItems, zombieSpawns,
+    buildings, structures: buildings, wallSegments,generatedStructures, obstacles, doors, containers, groundItems, zombieSpawns,
     playerSpawn: tileWorld(playerTile, widthTiles), companionSpawns, survivorSpawn: tileWorld(survivorTile, widthTiles),
     extractionZone: { ...tileWorld(extractionTile, widthTiles), radius: 52 },
     safehouseZone: {
@@ -229,6 +237,7 @@ function selectBuildingEntrances(boundary:readonly number[],primary:number,width
 function stableUnit(seed:number,key:string):number{let hash=(seed^0x85ebca6b)>>>0;for(let index=0;index<key.length;index+=1){hash^=key.charCodeAt(index);hash=Math.imul(hash,0x01000193)>>>0;}hash^=hash>>>16;return(hash>>>0)/0x1_0000_0000;}
 function doorOrientationForBoundary(index:number,footprint:ReadonlySet<number>,width:number):DoorOrientation{const left=footprint.has(index-1),right=footprint.has(index+1),up=footprint.has(index-width),down=footprint.has(index+width);return(!left||!right)&&(up||down)?"vertical":"horizontal";}
 function restorePresetPrimaryDoor(building:BuildingDefinition,doors:DoorDefinition[],obstacles:WorldObstacle[],minimapWallCoverage:Uint8Array,width:number):void{for(let index=doors.length-1;index>=0;index-=1){const door=doors[index]!;if(door.buildingId!==building.id||door.id===`door-${building.id}`)continue;doors.splice(index,1);const tileIndex=door.tileY*width+door.tileX;if(!building.wallTiles.includes(tileIndex))building.wallTiles.push(tileIndex);const floorIndex=building.floorTiles.indexOf(tileIndex);if(floorIndex>=0)building.floorTiles.splice(floorIndex,1);minimapWallCoverage[tileIndex]=1;if(building.orientation!==45&&building.orientation!==135)obstacles.push(wall(`${building.id}-wall-${door.tileX}-${door.tileY}`,door.tileX,door.tileY));}}
+function restoreGeneratedPresetPrimaryDoor(building:BuildingDefinition,doors:DoorDefinition[],generated:GeneratedBuildingStructure[],walls:SegmentGeometry[],minimapWallCoverage:Uint8Array,width:number):void{for(let index=doors.length-1;index>=0;index-=1){const door=doors[index]!;if(door.buildingId!==building.id||door.id===`generated:${building.id}:door:0`)continue;doors.splice(index,1);const generatedIndex=generated.findIndex((structure)=>structure.id===door.id);if(generatedIndex>=0)generated.splice(generatedIndex,1);const tileIndex=door.tileY*width+door.tileX;if(!building.wallTiles.includes(tileIndex))building.wallTiles.push(tileIndex);const floorIndex=building.floorTiles.indexOf(tileIndex);if(floorIndex>=0)building.floorTiles.splice(floorIndex,1);minimapWallCoverage[tileIndex]=1;const placement=createTileWallSegment(door.tileX,door.tileY,door.orientation),wallIndex=building.wallSegments.length;building.wallSegments.push(placement);walls.push(placement);generated.push({id:`generated:${building.id}:wall:${wallIndex}`,buildableId:"wood-wall",source:"generated",ownership:"world",placement,buildingId:building.id,wallIndex,demolishable:false,refund:false});}}
 
 export function isDoorInitiallyOpen(mapSeed: number, doorId: string): boolean {
   let hash = (mapSeed ^ 0x9e3779b9) >>> 0;
@@ -365,6 +374,8 @@ function createTileDoorSegment(tileX: number, tileY: number, orientation: DoorOr
   if (orientation === "vertical") return { startX: centerX, startY: centerY - halfLength, endX: centerX, endY: centerY + halfLength, thickness: DOOR_THICKNESS };
   return { startX: centerX - halfLength, startY: centerY, endX: centerX + halfLength, endY: centerY, thickness: DOOR_THICKNESS };
 }
+
+function createTileWallSegment(tileX:number,tileY:number,orientation:DoorOrientation):SegmentGeometry{const centerX=(tileX+.5)*TILE_SIZE,centerY=(tileY+.5)*TILE_SIZE,half=TILE_SIZE/2,thickness=BUILDABLE_DEFINITIONS["wood-wall"].segment!.thickness;if(orientation==="vertical")return{startX:centerX,startY:centerY-half,endX:centerX,endY:centerY+half,thickness};return{startX:centerX-half,startY:centerY,endX:centerX+half,endY:centerY,thickness};}
 
 function canPlaceBuilding(footprint: readonly number[], terrain: Uint8Array, occupied: Uint8Array, width: number, height: number): boolean {
   for (const index of footprint) {

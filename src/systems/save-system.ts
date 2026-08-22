@@ -9,6 +9,7 @@ import { GameClock } from "../core/game-clock";
 import { createSurvivalNeeds } from "./survival-needs-system";
 import type { GridInventorySnapshot, InventorySlot } from "./inventory-system";
 import { BUILDABLE_DEFINITIONS } from "../data/buildable-definitions";
+const LAST_LEGACY_MAP_GENERATION_VERSION=2;
 
 export interface StorageLike {
   getItem(key: string): string | null;
@@ -55,7 +56,7 @@ export class SaveSystem {
       }
       if (!this.isValidBase(parsed, SAVE_VERSION) || !this.hasValidObstacleState(parsed) || !this.hasValidCompanions(parsed) || !this.hasValidStructures(parsed) || !this.hasValidSurvivalState(parsed)) return null;
       const exploredFog = isValidExploredFog(parsed.exploredFog) ? parsed.exploredFog : emptyFogExploration();
-      return { ...parsed,mapGenerationVersion:parsed.mapGenerationVersion??CURRENT_MAP_GENERATION_VERSION, player: { ...parsed.player!, survivalNeeds: createSurvivalNeeds(parsed.player!.survivalNeeds) }, version: SAVE_VERSION, exploredFog } as SaveGame;
+      return { ...parsed,mapGenerationVersion:parsed.mapGenerationVersion??LAST_LEGACY_MAP_GENERATION_VERSION, player: { ...parsed.player!, survivalNeeds: createSurvivalNeeds(parsed.player!.survivalNeeds) }, version: SAVE_VERSION, exploredFog } as SaveGame;
     } catch {
       return null;
     }
@@ -85,7 +86,7 @@ export class SaveSystem {
   private migrateV3(value: SaveCandidate): SaveGame | null {
     if (!this.isValidBase(value, 3) || typeof value.mapSeed !== "number") return null;
     const openedDoors = new Set(value.openedDoors);
-    const map = createCityBlockMap(value.mapSeed);
+    const map = createCityBlockMap(value.mapSeed,LAST_LEGACY_MAP_GENERATION_VERSION);
     const exploredFog = isValidExploredFog(value.exploredFog) ? value.exploredFog : emptyFogExploration();
     const v4 = {
       ...value,
@@ -106,7 +107,7 @@ export class SaveSystem {
     if (!this.isValidBase(value, 4) || !this.hasValidObstacleState(value) || typeof value.mapSeed !== "number") return null;
     const legacy = value.companion;
     if (!legacy) return null;
-    const map = createCityBlockMap(value.mapSeed);
+    const map = createCityBlockMap(value.mapSeed,LAST_LEGACY_MAP_GENERATION_VERSION);
     const companions = map.companionSpawns.map((spawn, index) => index === 0 ? {
       id: spawn.id,
       x: legacy.x!, y: legacy.y!, health: legacy.health!,

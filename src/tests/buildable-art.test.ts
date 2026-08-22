@@ -1,0 +1,10 @@
+import {describe,expect,it} from "vitest";
+// @ts-expect-error Vitest runs on Node; keeping Node types out avoids a runtime dependency.
+import {existsSync,readFileSync,readdirSync} from "node:fs";
+import {BUILDABLE_DEFINITIONS,getBuildableCatalogArtPath} from "../data/buildable-definitions";
+
+describe("buildable catalog art",()=>{
+  it("has one valid footprint-sized PNG and metadata for every buildable",()=>{for(const definition of Object.values(BUILDABLE_DEFINITIONS)){const path=`public/${definition.catalogArt.imagePath}`,bytes=readFileSync(path);expect(existsSync(path)).toBe(true);expect([...bytes.subarray(0,8)]).toEqual([137,80,78,71,13,10,26,10]);expect(bytes.readUInt32BE(16)).toBe(definition.catalogArt.widthCells*64);expect(bytes.readUInt32BE(20)).toBe(definition.catalogArt.heightCells*64);expect(definition.catalogArt.parts.length).toBeGreaterThanOrEqual(4);expect(getBuildableCatalogArtPath(definition.kind,"/zombie_survival/")).toContain("/zombie_survival/assets/buildables/catalog/");}});
+  it("uses distinct detailed workbench art and no fallback or temporary formats",()=>{const benches=["makeshift_workbench","plank_workbench","technical_workbench"] as const;expect(new Set(benches.map((kind)=>BUILDABLE_DEFINITIONS[kind].catalogArt.imagePath)).size).toBe(3);expect(new Set(benches.map((kind)=>BUILDABLE_DEFINITIONS[kind].catalogArt.parts.join("|"))).size).toBe(3);expect(readdirSync("public/assets/buildables/catalog").filter((name:string)=>/\.(zip|bmp|psd)$/i.test(name))).toEqual([]);});
+  it("records material and functional parts without rotated duplicate PNGs",()=>{expect(BUILDABLE_DEFINITIONS["wood-wall"].catalogArt.palette).not.toEqual(BUILDABLE_DEFINITIONS["metal-wall"].catalogArt.palette);expect(BUILDABLE_DEFINITIONS["wood-door"].catalogArt.parts).toEqual(expect.arrayContaining(["hinge","handle"]));for(const kind of ["turret","solar-generator","fuel-generator","battery-bank"] as const)expect(BUILDABLE_DEFINITIONS[kind].catalogArt.parts.length).toBeGreaterThanOrEqual(5);expect(readdirSync("public/assets/buildables/catalog").some((name:string)=>/(rotated|north|west)/i.test(name))).toBe(false);});
+});

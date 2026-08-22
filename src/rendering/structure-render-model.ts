@@ -60,8 +60,11 @@ export function drawStructureRenderModel(graphics: GraphicsLike, model: Structur
   else if(kind === "battery-bank") graphics.fillStyle(tint??0x3e484d,alpha).fillRect(x-8,y-9,16,18).strokeRect(x-8,y-9,16,18).lineStyle(1,tint??0x69777b,alpha).lineBetween(x-8,y-3,x+8,y-3).lineBetween(x-8,y+3,x+8,y+3);
   else if(kind === "wood-crate"||kind === "barricade") graphics.fillStyle(tint??0x6f5033,alpha).fillRect(x-9,y-8,18,16).strokeRect(x-9,y-8,18,16).lineStyle(1,tint??0xa47a4c,alpha).lineBetween(x-8,y-2,x+8,y-2).lineBetween(x,y-7,x,y+7);
   else {
-    const width=geometry.width-5,height=geometry.height-7,left=x-Math.floor(width/2),top=y-Math.floor(height/2),technical=kind==="technical_workbench",plank=kind==="plank_workbench";
-    graphics.fillStyle(tint??(technical?0x425554:plank?0x74583b:0x5c4934),alpha).fillRect(left,top,width,height).strokeRect(left,top,width,height).fillStyle(tint??(technical?0x718481:0x9b744b),alpha).fillRect(left+2,top+3,width-4,5).fillStyle(tint??0x252d2b,alpha).fillRect(left+4,top+11,width-8,3).fillRect(left+4,top+height-7,4,6).fillRect(left+width-8,top+height-7,4,6);
+    const width=geometry.width-2,height=geometry.height-2,left=x-Math.floor(width/2),top=y-Math.floor(height/2),technical=kind==="technical_workbench",plank=kind==="plank_workbench",base=tint??(technical?0x425554:plank?0x74583b:0x5c4934),highlight=tint??(technical?0x718481:0x9b744b);
+    graphics.fillStyle(base,alpha).fillRect(left,top,width,height).strokeRect(left,top,width,height).fillStyle(highlight,alpha).fillRect(left+2,top+2,width-4,3).fillStyle(tint??0x252d2b,alpha).fillRect(left+3,top+height-4,3,3).fillRect(left+width-6,top+height-4,3,3);
+    if(technical)graphics.fillStyle(tint??0x56a77a,alpha).fillRect(left+5,top+6,5,2).fillStyle(tint??0x6595b0,alpha).fillRect(left+13,top+6,2,2);
+    else if(plank)graphics.lineStyle(1,tint??0xd0aa6f,alpha).lineBetween(left+5,top+6,left+13,top+6).fillStyle(tint??0x596262,alpha).fillRect(left+15,top+5,4,3);
+    else graphics.lineStyle(1,tint??0xb7a078,alpha).lineBetween(left+5,top+7,left+10,top+4).fillStyle(tint??0x6c7471,alpha).fillRect(left+14,top+5,4,2);
   }
   if(rotated)graphics.restore();
 }

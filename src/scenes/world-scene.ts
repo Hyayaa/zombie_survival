@@ -66,7 +66,7 @@ import { canRun, createSurvivalNeeds, getRunSpeedMultiplier, updateSurvivalNeeds
 import { getHordeActivationCount, getHordeActivationIntervalMs, HORDE_SPAWN_SCAN_BUDGET, isEligibleHordeSpawn } from "../systems/gunshot-horde-system";
 import { CompanionCommandPanel } from "../ui/companion-command-panel";
 import { Hud } from "../ui/hud";
-import { InventoryPanel, type InventoryPanelState } from "../ui/inventory-panel";
+import { InventoryPanel, type BuildTabSelectionIntent, type InventoryPanelState } from "../ui/inventory-panel";
 import { PauseMenu } from "../ui/pause-menu";
 import { MinimapPanel, shouldPauseSimulationForMap } from "../ui/minimap";
 import { DayAnnouncement, getInitialDayAnnouncement } from "../ui/day-announcement";
@@ -77,8 +77,9 @@ import { HitStopSystem } from "../systems/hit-stop-system";
 import { ProjectileSystem, type ProjectileImpact, type ProjectileTarget, type ProjectileTeam, type ProjectileWeaponId } from "../systems/projectile-system";
 import { createWeaponAccuracyState, deterministicProjectileAngle, getEffectiveWeaponSpread, recordWeaponShot, recoverWeaponBloom, type WeaponMovementAccuracy } from "../systems/weapon-accuracy-system";
 import { WeaponCrosshair } from "../ui/weapon-crosshair";
-import { BuildCatalogPanel } from "../ui/build-catalog-panel";
 import { createOrientedSegmentChain, isWithinBuildRange, segmentConflicts, snapStructureAnchor, type SegmentBuildableKind, type StructureSegment } from "../systems/structure-segment-placement";
+import { beginWallDrag, clearWallDrag, createWallDragState, markWallDragCommitted, snapshotWallDrag, updateWallDragPreview, type WallBuildableKind } from "../systems/wall-drag-chain-placement";
+import { commitStructureSegmentChain } from "../systems/build-transaction";
 import { PlacedStructureRegistry } from "../systems/placed-structure-registry";
 import { StructureDurabilitySystem, getDemolitionRefund, getRepairCost } from "../systems/structure-durability-system";
 import { deterministicStorageDropOffsets, WorldStorageContainer } from "../systems/world-storage-container";
@@ -162,10 +163,10 @@ export class WorldScene extends Phaser.Scene {
   private powerWireGraphics?: Phaser.GameObjects.Graphics;
   private indoorTiles = new Uint8Array(0);
   private structureCounter = 0;
-  private buildCatalog!: BuildCatalogPanel;
   private buildPreview?: Phaser.GameObjects.Graphics;
   private pendingBuildPlacement?: PendingBuildPlacement;
   private buildStartAnchor?: Point;
+  private readonly wallDrag = createWallDragState();
   private lastBuildFailureMessageAt = Number.NEGATIVE_INFINITY;
   private readonly demolitionConfirmUntil = new Map<string, number>();
   private worldStoragePanel!: WorldStoragePanel;
@@ -251,6 +252,8 @@ export class WorldScene extends Phaser.Scene {
   private readonly projectileBloodKeys = new Set<string>();
   private readonly projectileBloodOrder: string[] = [];
   private readonly preventCanvasContextMenu = (event: Event) => event.preventDefault();
+  private readonly handleWindowBuildPointerUp = (event: PointerEvent) => { if (event.button === 0) this.finishWallDrag("commit"); };
+  private readonly handleBuildPointerCancel = () => this.finishWallDrag("cancel");
   private nextAutoPickupAt = 0;
   private nextInventoryFullMessageAt = 0;
   private nextZombieGrowlAt = 0;
@@ -527,6 +530,7 @@ export class WorldScene extends Phaser.Scene {
     this.turretTargetScratch.length = 0;
     this.craftingStations.clear();
     this.activeCraftingStationId = undefined;
+    clearWallDrag(this.wallDrag);
     this.pendingBuildPlacement = undefined;
     this.buildStartAnchor = undefined;
     this.indoorTiles = new Uint8Array(0);
@@ -772,7 +776,8 @@ export class WorldScene extends Phaser.Scene {
       this.player.aimAngle = Math.atan2(world.y - this.player.position.y, world.x - this.player.position.x);
       if (this.pendingBuildPlacement) {
         if (pointer.button === 2) { this.cancelBuildPlacement(); return; }
-        if (pointer.button === 0) this.confirmBuildPlacement(world);
+        if (pointer.button === 0 && this.isPendingWallChain()) this.startWallDrag(world);
+        else if (pointer.button === 0) this.confirmBuildPlacement(world);
         return;
       }
       if (pointer.button === 0 && this.pendingCompanionCommand) {
@@ -786,6 +791,7 @@ export class WorldScene extends Phaser.Scene {
       } else if (pointer.button === 0) this.tryPlayerAttack();
     });
     this.input.on("pointerup", (pointer: Phaser.Input.Pointer) => {
+      if (pointer.button === 0 && this.wallDrag.active) { this.finishWallDrag("commit"); return; }
       if (pointer.button !== 0 || !isMeleeWeaponId(this.player.equippedWeapon)) return;
       if (this.meleeAction.state.phase !== "charging") return;
       const mode = this.simulationTime - this.meleeAction.state.pressedAt >= MELEE_INPUT_BALANCE.heavyThresholdMs ? "heavy" : "stab";
@@ -793,6 +799,9 @@ export class WorldScene extends Phaser.Scene {
       else this.showMeleeStaminaFailure(mode);
     });
     this.game.canvas.addEventListener("contextmenu", this.preventCanvasContextMenu);
+    window.addEventListener("pointerup", this.handleWindowBuildPointerUp);
+    this.game.canvas.addEventListener("pointercancel", this.handleBuildPointerCancel);
+    this.game.canvas.addEventListener("lostpointercapture", this.handleBuildPointerCancel);
     keyboard.on("keydown",()=>this.audio.unlockAndStartBgm());
   }
 
@@ -810,6 +819,7 @@ export class WorldScene extends Phaser.Scene {
       onClose: () => { this.activeCraftingStationId = undefined; this.inventoryPanel.hide(); },
       onCraft: (recipeId) => this.craft(recipeId),
       onUseItem: (instanceId) => this.useInventoryItem(instanceId),
+      onStartBuildPlacement:(intent)=>this.startBuildPlacement(intent),
       onDropItem: (instanceId) => this.dropInventoryItem(instanceId),
       onAssignQuickslot: (instanceId, quickslot) => this.assignQuickslot(instanceId, quickslot),
       onMoveItem: (instanceId, target) => { const success = this.inventory.moveItem(instanceId, target); this.refreshInventoryPanel(); return success; },
@@ -853,7 +863,6 @@ export class WorldScene extends Phaser.Scene {
       onUiSound:()=>this.audio.play("ui"),
     });
     this.pauseMenu.setDeveloperMode(this.settings.developerMode);
-    this.buildCatalog = new BuildCatalogPanel(this.uiRoot, (kind) => { this.beginBuildPlacement(kind,this.settings.developerMode?{kind:"developer"}:{kind:"materials"});this.buildCatalog.update((id) => this.inventory.count(id),this.settings.developerMode); },()=>this.settings.developerMode);
     this.worldStoragePanel = new WorldStoragePanel(this.uiRoot,this.inventory,()=>{this.refreshInventoryPanel();this.saveGame(false);});
     this.buildPreview = this.add.graphics().setDepth(DEPTH.effectWorld - 10);
   }
@@ -863,9 +872,9 @@ export class WorldScene extends Phaser.Scene {
     if (Phaser.Input.Keyboard.JustDown(this.keys.build) && !this.inventoryPanel.isOpen() && !this.pauseMenu.isOpen() && !this.minimap.isFull()) {
       this.commandPanel.hide(); this.pendingCompanionCommand = undefined;
       this.cancelBuildPlacement();
-      this.buildCatalog.toggle((id) => this.inventory.count(id));
+      this.inventoryPanel.showBuild(this.getInventoryPanelState());
     }
-    if (this.pendingBuildPlacement && Phaser.Input.Keyboard.JustDown(this.keys.reload)) rotatePendingBuildPlacement(this.pendingBuildPlacement);
+    if (this.pendingBuildPlacement && Phaser.Input.Keyboard.JustDown(this.keys.reload)) { rotatePendingBuildPlacement(this.pendingBuildPlacement); if(this.wallDrag.active){this.wallDrag.direction=this.pendingBuildPlacement.rotation;this.refreshWallDragPreview(this.pointerWorldSnapshot);} }
     if(this.pendingBuildPlacement&&Phaser.Input.Keyboard.JustDown(this.keys.buildGrid)){if(toggleFurniturePlacementMode(this.pendingBuildPlacement))this.hud.showMessage(`가구 배치: ${this.pendingBuildPlacement.placementMode==="free"?"자유":"격자"}`);else this.hud.showMessage("구조물은 격자 배치만 지원합니다.");}
     if (this.minimap.isVisible()) {
       if (Phaser.Input.Keyboard.JustDown(this.keys.pause)) {
@@ -1181,7 +1190,7 @@ export class WorldScene extends Phaser.Scene {
     this.crosshair.update({
       x, y, spreadRadians: spread, ranged, pointerInsideGame: this.pointerInsideGame,
       windowFocused: document.hasFocus(),
-      blocked: forceBlocked || this.gameEnded || Boolean(this.pendingBuildPlacement) || this.buildCatalog.isOpen() || this.inventoryPanel.isOpen() || this.worldStoragePanel.isOpen() || this.pauseMenu.isOpen() || this.commandPanel.isOpen() || this.minimap.isFull(),
+      blocked: forceBlocked || this.gameEnded || Boolean(this.pendingBuildPlacement) || this.inventoryPanel.isOpen() || this.worldStoragePanel.isOpen() || this.pauseMenu.isOpen() || this.commandPanel.isOpen() || this.minimap.isFull(),
       now: this.simulationTime,
     });
   }
@@ -2173,7 +2182,7 @@ export class WorldScene extends Phaser.Scene {
     const item = this.inventory.getItem(instanceId);
     if (!item) return;
     const buildableId=getItemBuildableId(item.itemId);
-    if(buildableId){this.beginBuildPlacement(buildableId,{kind:"item",instanceId,itemId:item.itemId});this.inventoryPanel.hide();this.activeCraftingStationId=undefined;this.hud.showMessage(`${getItemDefinition(item.itemId).name} 배치 · 좌클릭 확정 · R 회전 · 우클릭/ESC 취소`);return;}
+    if(buildableId){this.activeCraftingStationId=undefined;this.inventoryPanel.openBuildTabForPlacement({buildableId,source:{kind:"item",instanceId,itemId:item.itemId},requestedAt:Date.now()},this.getInventoryPanelState());return;}
     this.useItem(item.itemId);
   }
 
@@ -2243,15 +2252,48 @@ export class WorldScene extends Phaser.Scene {
     this.fogInvalidation.invalidate();
   }
 
-  private manageStructure(state:PlacedStructureState):void{if(state.health<state.maximumHealth){const costs=getRepairCost(state);if(this.structureDurability.repair(state,this.inventory)){this.structureViews.get(state.id)?.refresh?.();this.hud.showMessage(`${BUILDABLE_DEFINITIONS[state.kind].name} 수리 완료 · ${costs.map((cost)=>`${getItemDefinition(cost.itemId).name} ${cost.quantity}`).join(" · ")}`);this.buildCatalog.update((id)=>this.inventory.count(id),this.settings.developerMode);}else this.hud.showMessage("수리 재료가 부족하거나 수리가 필요하지 않습니다.");return;}const storage=this.structureStorage.get(state.id);if(storage&&!storage.isEmpty()){this.hud.showMessage("보관함을 비운 뒤 철거할 수 있습니다.");return;}if((this.demolitionConfirmUntil.get(state.id)??0)<this.simulationTime){this.demolitionConfirmUntil.set(state.id,this.simulationTime+2_000);this.hud.showMessage("2초 안에 Shift+E를 다시 눌러 철거를 확인하세요.");return;}const refund=getDemolitionRefund(state);this.destroyPlayerStructure(state.id,false);for(const item of refund){const added=this.inventory.add(item.itemId,item.quantity);if(added<item.quantity)this.spawnDrop(item.itemId,item.quantity-added,this.player.position.x,this.player.position.y);}this.hud.showMessage(`${BUILDABLE_DEFINITIONS[state.kind].name} 철거 완료`);}
+  private manageStructure(state:PlacedStructureState):void{if(state.source!=="player-built"||state.ownership!=="player"){this.hud.showMessage("도시의 기존 구조물은 철거하거나 환급받을 수 없습니다.");return;}if(state.health<state.maximumHealth){const costs=getRepairCost(state);if(this.structureDurability.repair(state,this.inventory)){this.structureViews.get(state.id)?.refresh?.();this.hud.showMessage(`${BUILDABLE_DEFINITIONS[state.kind].name} 수리 완료 · ${costs.map((cost)=>`${getItemDefinition(cost.itemId).name} ${cost.quantity}`).join(" · ")}`);this.refreshInventoryPanel();}else this.hud.showMessage("수리 재료가 부족하거나 수리가 필요하지 않습니다.");return;}const storage=this.structureStorage.get(state.id);if(storage&&!storage.isEmpty()){this.hud.showMessage("보관함을 비운 뒤 철거할 수 있습니다.");return;}if((this.demolitionConfirmUntil.get(state.id)??0)<this.simulationTime){this.demolitionConfirmUntil.set(state.id,this.simulationTime+2_000);this.hud.showMessage("2초 안에 Shift+E를 다시 눌러 철거를 확인하세요.");return;}const refund=getDemolitionRefund(state);this.destroyPlayerStructure(state.id,false);for(const item of refund){const added=this.inventory.add(item.itemId,item.quantity);if(added<item.quantity)this.spawnDrop(item.itemId,item.quantity-added,this.player.position.x,this.player.position.y);}this.hud.showMessage(`${BUILDABLE_DEFINITIONS[state.kind].name} 철거 완료`);}
 
-  private beginBuildPlacement(buildableId:BuildableKind,source:BuildPlacementSource):void{if(!BUILDABLE_DEFINITIONS[buildableId])return;this.pendingBuildPlacement=createPendingBuildPlacement(buildableId,source);this.buildStartAnchor=undefined;this.commandPanel.hide();this.pendingCompanionCommand=undefined;this.cancelMeleeAction();}
+  private beginBuildPlacement(buildableId:BuildableKind,source:BuildPlacementSource):void{if(!BUILDABLE_DEFINITIONS[buildableId])return;clearWallDrag(this.wallDrag);this.pendingBuildPlacement=createPendingBuildPlacement(buildableId,source);this.buildStartAnchor=undefined;this.commandPanel.hide();this.pendingCompanionCommand=undefined;this.cancelMeleeAction();}
+
+  private startBuildPlacement(intent:BuildTabSelectionIntent):boolean{const definition=BUILDABLE_DEFINITIONS[intent.buildableId];if(!definition)return false;if(intent.source.kind==="developer"&&!this.settings.developerMode)return false;if(intent.source.kind==="item"){const item=this.inventory.getItem(intent.source.instanceId);if(!item||item.itemId!==intent.source.itemId||item.quantity<1||getItemBuildableId(item.itemId)!==intent.buildableId)return false;}else if(intent.source.kind==="materials"&&getBuildCostItems(definition).some((cost)=>this.inventory.count(cost.itemId)<cost.quantity))return false;this.beginBuildPlacement(intent.buildableId,intent.source);this.activeCraftingStationId=undefined;this.hud.showMessage(`${definition.name} 배치 · 좌클릭 드래그/확정 · R 회전 · 우클릭/ESC 취소`);return true;}
 
   private isBuildPlacementSourceValid(pending:PendingBuildPlacement):boolean{if(!BUILDABLE_DEFINITIONS[pending.buildableId])return false;if(pending.source.kind==="developer")return this.settings.developerMode;if(pending.source.kind==="materials")return true;const item=this.inventory.getItem(pending.source.instanceId);return Boolean(item&&item.itemId===pending.source.itemId&&item.quantity>0&&getItemBuildableId(item.itemId)===pending.buildableId);}
   private hasBuildPlacementCost(pending:PendingBuildPlacement,quantity=1):boolean{if(!this.isBuildPlacementSourceValid(pending))return false;if(pending.source.kind==="item"||pending.source.kind==="developer")return true;return getBuildCostItems(BUILDABLE_DEFINITIONS[pending.buildableId]).every((cost)=>this.inventory.count(cost.itemId)>=cost.quantity*quantity);}
 
+  private isPendingWallChain():boolean{const kind=this.pendingBuildPlacement?.buildableId;return kind==="wood-wall"||kind==="metal-wall";}
+
+  private startWallDrag(world:Point):void{
+    const pending=this.pendingBuildPlacement;if(!pending||(pending.buildableId!=="wood-wall"&&pending.buildableId!=="metal-wall")||this.wallDrag.active)return;
+    const anchor=snapStructureAnchor(world);beginWallDrag(this.wallDrag,pending.buildableId as WallBuildableKind,anchor,pending.rotation);this.refreshWallDragPreview(anchor);
+  }
+
+  private refreshWallDragPreview(end:Point):void{
+    const pending=this.pendingBuildPlacement;if(!pending||!this.wallDrag.active||!this.wallDrag.startAnchor||!this.wallDrag.buildableId)return;
+    const snapped=snapStructureAnchor(end),chain=createOrientedSegmentChain(this.wallDrag.buildableId,this.wallDrag.startAnchor,snapped,pending.rotation);
+    const invalidReason=!this.hasBuildPlacementCost(pending,chain.length)?"missing-source":chain.length>0&&this.validateSegmentChain(chain)?undefined:"invalid-placement";
+    updateWallDragPreview(this.wallDrag,snapped,chain,invalidReason);updatePendingBuildPlacement(pending,snapped.x,snapped.y,()=>invalidReason??null,true);
+  }
+
+  private finishWallDrag(reason:"commit"|"cancel"):void{
+    if(!this.wallDrag.active)return;const sequence=this.wallDrag.dragSequence;
+    if(reason==="cancel"){clearWallDrag(this.wallDrag,sequence);this.buildPreview?.clear();return;}
+    this.refreshWallDragPreview(this.pointerWorldSnapshot);const snapshot=snapshotWallDrag(this.wallDrag),pending=this.pendingBuildPlacement;
+    if(!snapshot||!pending||pending.buildableId!==snapshot.buildableId||!markWallDragCommitted(this.wallDrag,sequence))return;
+    const inventoryBefore=this.inventory.snapshot(),definition=BUILDABLE_DEFINITIONS[snapshot.buildableId];
+    const result=commitStructureSegmentChain({buildableId:snapshot.buildableId,source:pending.source,segments:snapshot.segments,dragSequence:snapshot.dragSequence,
+      validateSegment:(_segment,index,all)=>index!==0||snapshot.valid&&this.validateSegmentChain(all as readonly StructureSegment[]),validateSource:(quantity)=>this.hasBuildPlacementCost(pending,quantity),reserveIds:(quantity)=>Array.from({length:quantity},()=>this.reserveStructureId()),
+      consumeSource:(quantity)=>{if(pending.source.kind==="developer")return true;if(pending.source.kind==="item")return quantity===1&&this.inventory.dropInstance(pending.source.instanceId,1)?.quantity===1;for(const cost of getBuildCostItems(definition))if(this.inventory.count(cost.itemId)<cost.quantity*quantity)return false;for(const cost of getBuildCostItems(definition))if(!this.inventory.remove(cost.itemId,cost.quantity*quantity))return false;return true;},restoreSource:()=>this.inventory.restore(inventoryBefore),
+      createAndRegister:(segment,id)=>{const state=createPlacedSegment(id,snapshot.buildableId,segment.startX,segment.startY,segment.endX,segment.endY,this.structureCounter);this.restoreStructure(state);const built=this.structureRegistry.get(id);if(!built)throw new Error("segment registration failed");this.registerStructureObject(built);},rollbackCreated:(id)=>{this.removeStructureRuntime(id);},
+    });
+    clearWallDrag(this.wallDrag,sequence);
+    if(!result.success){this.reportBuildPlacementFailure(result.reason==="missing-source"?"missing-source":snapshot.invalidReason??"invalid-placement");this.refreshInventoryPanel();return;}
+    this.afterStructureTopologyChange();const built=this.structureRegistry.get(result.createdIds[0]!);if(built){const center=getPlacedStructureCenter(built);this.effects.emitFootstepDust(center.x,center.y,0,false,"ground",++this.ambientEffectSequence,this.simulationTime);}this.audio.play("craft");this.hud.showMessage(`${definition.name} ${result.installedCount}칸 설치 완료`);
+    if(pending.source.kind!=="developer")this.closeBuildMode();else{pending.snappedX=Number.NaN;pending.snappedY=Number.NaN;}this.refreshInventoryPanel();
+  }
+
   private confirmBuildPlacement(world:Point):void{const pending=this.pendingBuildPlacement;if(!pending)return;const definition=BUILDABLE_DEFINITIONS[pending.buildableId];if(definition.placementClass==="furniture"){this.confirmFurniturePlacement(pending,world);return;}if(definition.placementKind==="segment"&&!this.buildStartAnchor){this.buildStartAnchor=snapStructureAnchor(world);pending.snappedX=Number.NaN;pending.snappedY=Number.NaN;this.hud.showMessage("끝 anchor를 선택하세요. 취소: 우클릭/ESC");return;}
-    const footprint=definition.placementKind==="footprint"?getRotatedStructureFootprint(pending.buildableId,pending.rotation):undefined;const tileX=Math.floor(world.x/TILE_SIZE),tileY=Math.floor(world.y/TILE_SIZE);const generatedSegments=definition.placementKind==="segment"?createOrientedSegmentChain(pending.buildableId as SegmentBuildableKind,this.buildStartAnchor!,world,pending.rotation):[],segments=pending.source.kind==="developer"?generatedSegments.slice(0,1):generatedSegments;const quantity=Math.max(1,segments.length);const placementFailure=()=>!this.hasBuildPlacementCost(pending,quantity)?"missing-source":definition.placementKind==="footprint"?this.validateFootprintPlacement(pending.buildableId,tileX,tileY,footprint!.width,footprint!.height):segments.length>0&&this.validateSegmentChain(segments)?null:"invalid-placement";const validate=()=>placementFailure()===null;updatePendingBuildPlacement(pending,definition.placementKind==="footprint"?tileX:Math.round(world.x),definition.placementKind==="footprint"?tileY:Math.round(world.y),placementFailure,true);
+    const footprint=definition.placementKind==="footprint"?getRotatedStructureFootprint(pending.buildableId,pending.rotation):undefined;const tileX=Math.floor(world.x/TILE_SIZE),tileY=Math.floor(world.y/TILE_SIZE);const segments=definition.placementKind==="segment"?createOrientedSegmentChain(pending.buildableId as SegmentBuildableKind,this.buildStartAnchor!,world,pending.rotation):[];const quantity=Math.max(1,segments.length);const placementFailure=()=>!this.hasBuildPlacementCost(pending,quantity)?"missing-source":definition.placementKind==="footprint"?this.validateFootprintPlacement(pending.buildableId,tileX,tileY,footprint!.width,footprint!.height):segments.length>0&&this.validateSegmentChain(segments)?null:"invalid-placement";const validate=()=>placementFailure()===null;updatePendingBuildPlacement(pending,definition.placementKind==="footprint"?tileX:Math.round(world.x),definition.placementKind==="footprint"?tileY:Math.round(world.y),placementFailure,true);
     const inventoryBefore=this.inventory.snapshot(),createdIds:string[]=[];const success=confirmPendingBuildPlacement(pending,{validateSource:()=>this.hasBuildPlacementCost(pending,quantity),validatePlacement:validate,consumeSource:()=>{if(pending.source.kind==="developer")return true;if(pending.source.kind==="item")return this.inventory.dropInstance(pending.source.instanceId,1)?.quantity===1;for(const cost of getBuildCostItems(definition)){if(this.inventory.count(cost.itemId)<cost.quantity*quantity)return false;}for(const cost of getBuildCostItems(definition))if(!this.inventory.remove(cost.itemId,cost.quantity*quantity))return false;return true;},restoreSource:()=>this.inventory.restore(inventoryBefore),create:()=>{if(definition.placementKind==="footprint"){const id=this.reserveStructureId();createdIds.push(id);const state=createPlacedStructure(id,pending.buildableId,tileX,tileY,pending.rotation,this.structureCounter);this.restoreStructure(state);if(!this.structureRegistry.get(id))throw new Error("structure registration failed");this.registerStructureObject(this.structureRegistry.get(id)!);}else for(const segment of segments){const id=this.reserveStructureId();createdIds.push(id);const state=createPlacedSegment(id,pending.buildableId as SegmentBuildableKind,segment.startX,segment.startY,segment.endX,segment.endY,this.structureCounter,pending.hingeSide);this.restoreStructure(state);if(!this.structureRegistry.get(id))throw new Error("segment registration failed");this.registerStructureObject(this.structureRegistry.get(id)!);}},rollbackCreate:()=>{for(const id of createdIds)this.removeStructureRuntime(id);}});
     if(!success){this.reportBuildPlacementFailure(pending.invalidReason??(this.hasBuildPlacementCost(pending,quantity)?"invalid-placement":"missing-source"));return;}this.afterStructureTopologyChange();const built=this.structureRegistry.get(createdIds[0]!);if(built){const center=getPlacedStructureCenter(built);this.effects.emitFootstepDust(center.x,center.y,0,false,"ground",++this.ambientEffectSequence,this.simulationTime);}this.audio.play("craft");this.hud.showMessage(`${definition.name} 설치 완료`);if(pending.source.kind==="developer"){this.buildStartAnchor=undefined;pending.snappedX=Number.NaN;pending.snappedY=Number.NaN;}else this.closeBuildMode();this.refreshInventoryPanel();}
 
@@ -2288,16 +2330,16 @@ export class WorldScene extends Phaser.Scene {
 
   private updateBuildPreview(): void {
     const graphics=this.buildPreview,pending=this.pendingBuildPlacement;if(!graphics)return;graphics.clear();if(!pending)return;if(!this.isBuildPlacementSourceValid(pending)){this.cancelBuildPlacement();this.hud.showMessage("배치할 아이템이 없어 건축을 취소했습니다.");return;}const definition=BUILDABLE_DEFINITIONS[pending.buildableId];
-    if(definition.placementKind==="segment"){const snapped=snapStructureAnchor(this.pointerWorldSnapshot);let chain:StructureSegment[];if(this.buildStartAnchor)chain=createOrientedSegmentChain(pending.buildableId as SegmentBuildableKind,this.buildStartAnchor,snapped,pending.rotation);else{const length=definition.segment!.length,directions=[{x:length,y:0},{x:length,y:length},{x:0,y:length},{x:length,y:-length}],direction=directions[pending.rotation]!;chain=[{kind:pending.buildableId as SegmentBuildableKind,startX:snapped.x,startY:snapped.y,endX:snapped.x+direction.x,endY:snapped.y+direction.y,thickness:definition.segment!.thickness}];}updatePendingBuildPlacement(pending,snapped.x,snapped.y,()=>!this.hasBuildPlacementCost(pending,chain.length)?"missing-source":chain.length>0&&this.validateSegmentChain(chain)?null:"invalid-placement");for(const segment of chain)drawStructureRenderModel(graphics,createStructureRenderModel(pending.buildableId,{kind:"segment",startX:segment.startX,startY:segment.startY,endX:segment.endX,endY:segment.endY,hingeSide:pending.hingeSide},{alpha:pending.valid?BUILD_PREVIEW_ALPHA:INVALID_BUILD_PREVIEW_ALPHA,invalid:!pending.valid}));const anchor=this.buildStartAnchor??snapped;graphics.fillStyle(pending.valid?0x80d18b:0xd65d57,.9).fillRect(anchor.x-1,anchor.y-1,3,3);return;}
+    if(definition.placementKind==="segment"){const snapped=snapStructureAnchor(this.pointerWorldSnapshot);let chain:readonly StructureSegment[];if(this.wallDrag.active&&this.wallDrag.startAnchor){this.refreshWallDragPreview(snapped);chain=this.wallDrag.previewSegments as readonly StructureSegment[];}else if(this.buildStartAnchor)chain=createOrientedSegmentChain(pending.buildableId as SegmentBuildableKind,this.buildStartAnchor,snapped,pending.rotation);else{const length=definition.segment!.length,directions=[{x:length,y:0},{x:length,y:length},{x:0,y:length},{x:length,y:-length}],direction=directions[pending.rotation]!;chain=[{kind:pending.buildableId as SegmentBuildableKind,startX:snapped.x,startY:snapped.y,endX:snapped.x+direction.x,endY:snapped.y+direction.y,thickness:definition.segment!.thickness}];updatePendingBuildPlacement(pending,snapped.x,snapped.y,()=>!this.hasBuildPlacementCost(pending,chain.length)?"missing-source":chain.length>0&&this.validateSegmentChain(chain as readonly StructureSegment[])?null:"invalid-placement");}for(const segment of chain)drawStructureRenderModel(graphics,createStructureRenderModel(pending.buildableId,{kind:"segment",startX:segment.startX,startY:segment.startY,endX:segment.endX,endY:segment.endY,hingeSide:pending.hingeSide},{alpha:pending.valid?BUILD_PREVIEW_ALPHA:INVALID_BUILD_PREVIEW_ALPHA,invalid:!pending.valid}));const anchor=this.wallDrag.startAnchor??this.buildStartAnchor??snapped;graphics.fillStyle(pending.valid?0x80d18b:0xd65d57,.9).fillRect(anchor.x-1,anchor.y-1,3,3);return;}
     if(definition.placementClass==="furniture"){const previousAngleBucket=Math.round(pending.angle*180/Math.PI),placement=getFurniturePlacement(this.pointerWorldSnapshot,this.player.position,pending.placementMode,pending.angle,TILE_SIZE),structureChanged=pending.validatedStructureRevision!==this.structureRegistry.revision;pending.x=placement.x;pending.y=placement.y;pending.angle=placement.angle;updatePendingBuildPlacement(pending,placement.x,placement.y,()=>!this.hasBuildPlacementCost(pending)?"missing-source":this.validateFurniturePlacement(pending.buildableId,placement.x,placement.y,placement.angle),structureChanged||previousAngleBucket!==Math.round(placement.angle*180/Math.PI));pending.validatedStructureRevision=this.structureRegistry.revision;const color=pending.valid?0x80d18b:0xd65d57,alpha=pending.valid?BUILD_PREVIEW_ALPHA:INVALID_BUILD_PREVIEW_ALPHA;drawStructureRenderModel(graphics,createStructureRenderModel(pending.buildableId,{kind:"furniture",...placement},{alpha,invalid:!pending.valid}));const size=definition.furnitureSize!;graphics.lineStyle(1,color,.9);drawObbOutline(graphics,{x:placement.x,y:placement.y,angle:placement.angle,halfWidth:size.width/2,halfHeight:size.height/2});return;}
     const footprint=getRotatedStructureFootprint(pending.buildableId,pending.rotation),tileX=Math.floor(this.pointerWorldSnapshot.x/TILE_SIZE),tileY=Math.floor(this.pointerWorldSnapshot.y/TILE_SIZE);updatePendingBuildPlacement(pending,tileX,tileY,()=>!this.hasBuildPlacementCost(pending)?"missing-source":this.validateFootprintPlacement(pending.buildableId,tileX,tileY,footprint.width,footprint.height));const color=pending.valid?0x80d18b:0xd65d57,alpha=pending.valid?BUILD_PREVIEW_ALPHA:INVALID_BUILD_PREVIEW_ALPHA;drawStructureRenderModel(graphics,createStructureRenderModel(pending.buildableId,{kind:"footprint",tileX,tileY,rotation:pending.rotation},{alpha,invalid:!pending.valid}));graphics.lineStyle(1,color,.9).strokeRect(tileX*TILE_SIZE,tileY*TILE_SIZE,footprint.width*TILE_SIZE,footprint.height*TILE_SIZE);
   }
 
   private reserveStructureId(): string { let id:string; do id=`structure-${this.seed}-${++this.structureCounter}`;while(this.structureRegistry.get(id));return id; }
-  private afterStructureTopologyChange(): void { this.rebuildPowerTopology();this.fogInvalidation.invalidate();this.buildCatalog.update((id)=>this.inventory.count(id),this.settings.developerMode);this.noise.emit({x:this.player.position.x,y:this.player.position.y,intensity:24,category:"craft",createdAt:this.simulationTime}); }
+  private afterStructureTopologyChange(): void { this.rebuildPowerTopology();this.fogInvalidation.invalidate();this.noise.emit({x:this.player.position.x,y:this.player.position.y,intensity:24,category:"craft",createdAt:this.simulationTime}); }
   private reportBuildPlacementFailure(reason:string):void{if(!shouldReportBuildPlacementFailure(this.simulationTime,this.lastBuildFailureMessageAt))return;this.lastBuildFailureMessageAt=this.simulationTime;this.audio.play("ui");const message:Record<string,string>={"out-of-bounds":"맵 밖에는 설치할 수 없습니다.",occupied:"다른 구조물과 겹칩니다.",actor:"생존자나 좀비와 겹칩니다.",unseen:"보이지 않는 위치에는 설치할 수 없습니다.","out-of-range":"너무 멀리 떨어져 있습니다.","line-of-sight":"벽 너머에는 설치할 수 없습니다.","missing-source":"배치할 아이템 또는 재료가 없습니다."};this.hud.showMessage(message[reason]??"이 위치에는 설치할 수 없습니다.");}
-  private cancelBuildPlacement():void{this.pendingBuildPlacement=undefined;this.buildStartAnchor=undefined;this.buildPreview?.clear();}
-  private closeBuildMode(): void { this.buildCatalog?.hide();this.cancelBuildPlacement(); }
+  private cancelBuildPlacement():void{clearWallDrag(this.wallDrag);this.pendingBuildPlacement=undefined;this.buildStartAnchor=undefined;this.buildPreview?.clear();}
+  private closeBuildMode(): void { this.cancelBuildPlacement(); }
   private removeStructureRuntime(id:string):PlacedStructureState|undefined{const state=this.structureRegistry.remove(id);if(!state)return undefined;this.structures=this.structures.filter((candidate)=>candidate.id!==id);const markerIndex=this.minimapStructureSources.findIndex((marker)=>marker.id===id);if(markerIndex>=0)this.minimapStructureSources.splice(markerIndex,1);if(state.placement.kind==="segment")this.collision.removeDynamicSegment(id);else if(state.placement.kind==="furniture")this.collision.removeDynamicFurniture(id);else this.collision.removeDynamicObstacle(id);this.structureViews.get(id)?.destroy();this.structureViews.delete(id);this.worldObjects.unregister(id);this.craftingStations.unregister(id);this.turretRuntime.delete(id);this.structureStorage.delete(id);return state;}
   private destroyPlayerStructure(id:string,dropStorage:boolean):void{const state=this.structureRegistry.get(id);if(!state)return;const center=getPlacedStructureCenter(state);const storage=this.structureStorage.get(id);const items=dropStorage&&storage?storage.drainForDestruction():[];const offsets=deterministicStorageDropOffsets(items.length);this.removeStructureRuntime(id);items.forEach((item,index)=>{const offset=offsets[index]!;this.spawnDrop(item.itemId,item.quantity,Math.max(6,Math.min(WORLD_WIDTH-6,center.x+offset.x)),Math.max(6,Math.min(WORLD_HEIGHT-6,center.y+offset.y)));});this.cancelZombieObstacleTargets(id);this.rebuildPowerTopology();this.fogInvalidation.invalidate();this.interactionSystem.invalidate();this.demolitionConfirmUntil.delete(id);}
 
@@ -2434,7 +2476,7 @@ export class WorldScene extends Phaser.Scene {
     this.settings = this.settingsStore.setDeveloperMode(enabled);
     this.pauseMenu.setDeveloperMode(enabled);
     if(!enabled&&this.pendingBuildPlacement?.source.kind==="developer"){const costs=getBuildCostItems(BUILDABLE_DEFINITIONS[this.pendingBuildPlacement.buildableId]);if(costs.every((cost)=>this.inventory.count(cost.itemId)>=cost.quantity))this.pendingBuildPlacement.source={kind:"materials"};else{this.cancelBuildPlacement();this.hud.showMessage("재료가 없어 개발자 건축 배치를 취소했습니다.");}}
-    this.buildCatalog.update((id)=>this.inventory.count(id),enabled);
+    this.refreshInventoryPanel();
     this.refreshInventoryPanel();
     this.minimap.invalidateMarkers();
     this.hud.showMessage(`개발자 모드 ${enabled ? "켜짐" : "꺼짐"}`);
@@ -2866,6 +2908,9 @@ export class WorldScene extends Phaser.Scene {
   private shutdownUi(): void {
     this.cancelBuildPlacement();
     this.game.canvas.removeEventListener("contextmenu", this.preventCanvasContextMenu);
+    window.removeEventListener("pointerup", this.handleWindowBuildPointerUp);
+    this.game.canvas.removeEventListener("pointercancel", this.handleBuildPointerCancel);
+    this.game.canvas.removeEventListener("lostpointercapture", this.handleBuildPointerCancel);
     this.audio?.destroy();
     this.cameraController?.destroy();
     this.performanceMonitor?.destroy();
@@ -2880,7 +2925,6 @@ export class WorldScene extends Phaser.Scene {
     this.pauseMenu?.destroy();
     this.minimap?.destroy();
     this.crosshair?.destroy();
-    this.buildCatalog?.destroy();
     this.worldStoragePanel?.destroy();
     this.buildPreview?.destroy();
     this.structureChunks?.destroy();
