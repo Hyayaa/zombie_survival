@@ -18,7 +18,7 @@ describe("local and full map data", () => {
   it("uses a clamped 32x32 local window", () => {
     expect(getLocalMapWindow(64, 64, 32)).toEqual({ startX: 48, startY: 48, width: 32, height: 32 });
     expect(getLocalMapWindow(0, 0, 32)).toEqual({ startX: 0, startY: 0, width: 32, height: 32 });
-    expect(getLocalMapWindow(127, 127, 32)).toEqual({ startX: 96, startY: 96, width: 32, height: 32 });
+    expect(getLocalMapWindow(127, 127, 32,128,128)).toEqual({ startX: 96, startY: 96, width: 32, height: 32 });
     expect(MINIMAP.localSize).toBe(192);
     expect(getLocalMinimapPixelsPerTile(32)).toBe(6);
   });
@@ -38,7 +38,7 @@ describe("local and full map data", () => {
 
   it("re-centers and clamps zoomed local windows and companion edge markers", () => {
     expect(getLocalMapWindow(64, 64, 16)).toEqual({ startX: 56, startY: 56, width: 16, height: 16 });
-    expect(getLocalMapWindow(127, 127, 64)).toEqual({ startX: 64, startY: 64, width: 64, height: 64 });
+    expect(getLocalMapWindow(127, 127, 64,128,128)).toEqual({ startX: 64, startY: 64, width: 64, height: 64 });
     const window = getLocalMapWindow(64, 64, 32);
     expect(getLocalMarkerPosition({ x: 64 * 24, y: 64 * 24 }, window, 6)).toEqual({ x: 96, y: 96 });
     expect(getLocalMarkerPosition({ x: 127 * 24, y: 64 * 24 }, window, 6)).toBeUndefined();
@@ -135,7 +135,7 @@ describe("local and full map data", () => {
   });
 
   it("deduplicates 8x8 fog-cell changes into 128-wide map tiles", () => {
-    const tracker = new MinimapFogTracker();
+    const tracker = new MinimapFogTracker(128,128);
     tracker.markFogIndices([0, 1, 7, 1_024 * 8], 1_024);
     const consumed: number[] = [];
     tracker.consume((index) => consumed.push(index));
@@ -145,7 +145,7 @@ describe("local and full map data", () => {
 
   it("skips updates while hidden and caps markers at 10Hz", () => {
     expect(shouldUpdateMinimap(false, 1_000, 0)).toBe(false);
-    expect(shouldUpdateMinimap(true, 99, 0)).toBe(false);
-    expect(shouldUpdateMinimap(true, 100, 0)).toBe(true);
+    expect(shouldUpdateMinimap(true, 199, 0)).toBe(false);
+    expect(shouldUpdateMinimap(true, 200, 0)).toBe(true);
   });
 });

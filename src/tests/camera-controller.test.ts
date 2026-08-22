@@ -37,7 +37,7 @@ describe("camera controller math", () => {
 
   it("clamps focus only to the playable world instead of viewport half-size", () => {
     expect(clampCameraFocus({ x: -50, y: -50 }, LOGICAL_WIDTH, LOGICAL_HEIGHT, 0.35)).toEqual({ x: 0, y: 0 });
-    expect(clampCameraFocus({ x: 5_000, y: 5_000 }, LOGICAL_WIDTH, LOGICAL_HEIGHT, 2)).toEqual({ x: WORLD_WIDTH, y: WORLD_HEIGHT });
+    expect(clampCameraFocus({ x: 10_000, y: 10_000 }, LOGICAL_WIDTH, LOGICAL_HEIGHT, 2)).toEqual({ x: WORLD_WIDTH, y: WORLD_HEIGHT });
     expect(clampCameraFocus({ x: 180, y: 180 }, LOGICAL_WIDTH, LOGICAL_HEIGHT, 0.35)).toEqual({ x: 180, y: 180 });
   });
 

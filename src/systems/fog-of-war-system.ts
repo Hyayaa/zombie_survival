@@ -49,7 +49,7 @@ export class FogInvalidationTracker {
   shouldRecompute(input: FogInvalidationInput, force = false): boolean {
     return force || this.invalidated
       || input.playerCell !== this.lastPlayerCell
-      || input.flashlightAimBucket !== this.lastFlashlightAimBucket
+      || (input.flashlightActive && input.flashlightAimBucket !== this.lastFlashlightAimBucket)
       || input.visionRevision !== this.lastVisionRevision
       || input.ambientRadiusBucket !== this.lastAmbientRadiusBucket
       || input.flashlightActive !== this.lastFlashlightActive

@@ -8,8 +8,9 @@ export function validateMap(map: MapDefinition): MapValidationResult {
   const errors: string[] = [];
   const tileCount = map.widthTiles * map.heightTiles;
   if (map.terrain.length !== tileCount) errors.push(`terrain length ${map.terrain.length}, expected ${tileCount}`);
-  if (map.widthTiles !== 128 || map.heightTiles !== 128) errors.push(`map dimensions ${map.widthTiles}x${map.heightTiles}, expected 128x128`);
-  if (map.buildings.length < 30) errors.push(`building count ${map.buildings.length}, expected at least 30`);
+  const expectedWidth=map.worldPlan?.widthTiles??128,expectedHeight=map.worldPlan?.heightTiles??128;
+  if (map.widthTiles !== expectedWidth || map.heightTiles !== expectedHeight) errors.push(`map dimensions ${map.widthTiles}x${map.heightTiles}, expected ${expectedWidth}x${expectedHeight}`);
+  if (map.buildings.length < (map.worldPlan ? 60 : 30)) errors.push(`building count ${map.buildings.length}, expected at least ${map.worldPlan ? 60 : 30}`);
   if (!map.buildings.some((building) => building.orientation === 45)) errors.push("missing orientation 45 building");
   if (!map.buildings.some((building) => building.orientation === 135)) errors.push("missing orientation 135 building");
   if (!map.roadSegments.some((road) => road.kind === "diagonal" && road.endY > road.startY)) errors.push("missing NW-SE diagonal road");
@@ -18,6 +19,9 @@ export function validateMap(map: MapDefinition): MapValidationResult {
   const owner = new Int16Array(tileCount).fill(-1);
   map.buildings.forEach((building, buildingIndex) => {
     if (building.entranceTiles.length === 0) errors.push(`${building.id}: missing entrance`);
+    const buildingDoors=map.doors.filter((door)=>door.buildingId===building.id);
+    if(buildingDoors.length<1||buildingDoors.length>4)errors.push(`${building.id}: door count ${buildingDoors.length}, expected 1-4`);
+    if(building.entranceTiles.length!==buildingDoors.length)errors.push(`${building.id}: entrance count ${building.entranceTiles.length} does not match door count ${buildingDoors.length}`);
     for (const index of building.footprintTiles) {
       if (index < 0 || index >= tileCount) { errors.push(`${building.id}: out-of-bounds footprint ${index}`); continue; }
       if (map.terrain[index] === TerrainType.Road) errors.push(`${building.id}: overlaps road at ${formatIndex(index, map.widthTiles)}`);
@@ -44,6 +48,15 @@ export function validateMap(map: MapDefinition): MapValidationResult {
       }
     }
   });
+
+  if(map.mapGenerationVersion>=6){
+    if(!map.roadGraph||!map.reservedCorridors||!map.roadRenderData)errors.push("road-first generation metadata is missing");
+    if(map.buildingLots?.length!==map.buildings.length)errors.push(`building lot count ${map.buildingLots?.length??0}, expected ${map.buildings.length}`);
+    if(map.buildingEnvelopes?.length!==map.buildings.length)errors.push(`building envelope count ${map.buildingEnvelopes?.length??0}, expected ${map.buildings.length}`);
+    for(const envelope of map.buildingEnvelopes??[])if(envelope.clearanceTiles<-.01)errors.push(`${envelope.buildingId}: wall envelope overlaps a reserved corridor by ${(-envelope.clearanceTiles).toFixed(2)} tiles`);
+    if(map.doorAccessPlans?.length!==map.doors.length)errors.push(`door access plan count ${map.doorAccessPlans?.length??0}, expected ${map.doors.length}`);
+    for(const prop of map.districtProps??[])if(!prop.interiorBuildingId){const terrain=map.terrain[prop.tileY*map.widthTiles+prop.tileX];if(terrain===TerrainType.Road||terrain===TerrainType.BridgeRoad)errors.push(`${prop.id}: outdoor prop overlaps road`);}
+  }
 
   const roadReachable = floodRoads(map);
   for (const road of map.roadSegments) {
@@ -113,10 +126,10 @@ function buildBlockedGrid(map: MapDefinition): Uint8Array {
 }
 
 function floodRoads(map: MapDefinition): Uint8Array {
-  const first = map.terrain.findIndex((terrain) => terrain === TerrainType.Road);
+  const first = map.terrain.findIndex(isRoadTerrain);
   const visited = new Uint8Array(map.terrain.length);
   if (first < 0) return visited;
-  return flood(map.widthTiles, map.heightTiles, first, (index) => map.terrain[index] === TerrainType.Road, visited);
+  return flood(map.widthTiles, map.heightTiles, first, (index) => isRoadTerrain(map.terrain[index]!), visited);
 }
 
 function floodWalkable(map: MapDefinition, blocked: Uint8Array, start: number): Uint8Array {
@@ -150,12 +163,14 @@ function nearestRoadIndex(map: MapDefinition, targetX: number, targetY: number):
   let best = -1; let bestDistance = Number.POSITIVE_INFINITY;
   for (let y = Math.max(0, targetY - 5); y <= Math.min(map.heightTiles - 1, targetY + 5); y += 1) for (let x = Math.max(0, targetX - 5); x <= Math.min(map.widthTiles - 1, targetX + 5); x += 1) {
     const index = y * map.widthTiles + x;
-    if (map.terrain[index] !== TerrainType.Road) continue;
+    if (!isRoadTerrain(map.terrain[index]!)) continue;
     const candidate = (x - targetX) ** 2 + (y - targetY) ** 2;
     if (candidate < bestDistance) { best = index; bestDistance = candidate; }
   }
   return best;
 }
+
+function isRoadTerrain(terrain:number):boolean{return terrain===TerrainType.Road||terrain===TerrainType.BridgeRoad;}
 
 function worldIndex(map: MapDefinition, worldX: number, worldY: number): number {
   const x = Math.floor(worldX / TILE_SIZE); const y = Math.floor(worldY / TILE_SIZE);
