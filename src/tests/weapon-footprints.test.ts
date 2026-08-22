@@ -9,6 +9,8 @@ describe("weapon inventory footprints", () => {
     const expected = {
       knife: [{ width: 2, height: 1 }, { width: 1, height: 2 }],
       bat: [{ width: 4, height: 1 }, { width: 1, height: 4 }],
+      smg: [{ width: 3, height: 2 }, { width: 2, height: 3 }],
+      shotgun: [{ width: 4, height: 2 }, { width: 2, height: 4 }],
       hunting_rifle: [{ width: 4, height: 2 }, { width: 2, height: 4 }],
     } as const;
     for (const [id, [base, rotated]] of Object.entries(expected)) {
@@ -24,6 +26,8 @@ describe("weapon inventory footprints", () => {
     const rotated = getEquipmentItemPreviewGeometry("hunting_rifle", 1);
     expect(base.effectiveWidthCells).toBe(4); expect(base.effectiveHeightCells).toBe(2);
     expect(rotated.effectiveWidthCells).toBe(2); expect(rotated.effectiveHeightCells).toBe(4);
+    expect(getEquipmentItemPreviewGeometry("smg", 0)).toMatchObject({ effectiveWidthCells: 3, effectiveHeightCells: 2 });
+    expect(getEquipmentItemPreviewGeometry("smg", 1)).toMatchObject({ effectiveWidthCells: 2, effectiveHeightCells: 3 });
   });
 
   it("repacks an invalid legacy rifle placement without changing its instance id", () => {

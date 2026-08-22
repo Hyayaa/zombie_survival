@@ -2,7 +2,10 @@
   "weapons": [
     {
       "id": "pistol",
+      "itemId": "pistol",
+      "facing": "east",
       "direction": "east",
+      "category": "pistol",
       "source": "WEAPON_DEFINITIONS",
       "footprint": {
         "width": 2,
@@ -12,8 +15,14 @@
         "width": 128,
         "height": 128
       },
+      "alphaBounds": {
+        "left": 12,
+        "top": 28,
+        "right": 122,
+        "bottom": 114
+      },
       "keypoints": {
-        "stockX": 6,
+        "stockX": 12,
         "muzzleX": 121
       },
       "parts": [
@@ -32,19 +41,28 @@
     },
     {
       "id": "smg",
+      "itemId": "smg",
+      "facing": "east",
       "direction": "east",
+      "category": "smg",
       "source": "WEAPON_DEFINITIONS",
       "footprint": {
         "width": 3,
-        "height": 1
+        "height": 2
       },
       "canvas": {
         "width": 192,
-        "height": 64
+        "height": 128
+      },
+      "alphaBounds": {
+        "left": 12,
+        "top": 32,
+        "right": 184,
+        "bottom": 112
       },
       "keypoints": {
-        "stockX": 6,
-        "muzzleX": 185
+        "stockX": 12,
+        "muzzleX": 183
       },
       "parts": [
         "short_stock",
@@ -61,19 +79,28 @@
     },
     {
       "id": "shotgun",
+      "itemId": "shotgun",
+      "facing": "east",
       "direction": "east",
+      "category": "shotgun",
       "source": "WEAPON_DEFINITIONS",
       "footprint": {
-        "width": 2,
-        "height": 4
+        "width": 4,
+        "height": 2
       },
       "canvas": {
-        "width": 128,
-        "height": 256
+        "width": 256,
+        "height": 128
+      },
+      "alphaBounds": {
+        "left": 14,
+        "top": 36,
+        "right": 246,
+        "bottom": 100
       },
       "keypoints": {
-        "stockX": 6,
-        "muzzleX": 121
+        "stockX": 14,
+        "muzzleX": 245
       },
       "parts": [
         "stock",
@@ -89,7 +116,10 @@
     },
     {
       "id": "hunting_rifle",
+      "itemId": "hunting_rifle",
+      "facing": "east",
       "direction": "east",
+      "category": "rifle",
       "source": "WEAPON_DEFINITIONS",
       "footprint": {
         "width": 4,
@@ -99,9 +129,15 @@
         "width": 256,
         "height": 128
       },
+      "alphaBounds": {
+        "left": 14,
+        "top": 22,
+        "right": 246,
+        "bottom": 110
+      },
       "keypoints": {
-        "stockX": 6,
-        "muzzleX": 249
+        "stockX": 14,
+        "muzzleX": 245
       },
       "parts": [
         "wood_stock",

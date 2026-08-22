@@ -10,10 +10,20 @@ describe("ranged weapon pixel art", () => {
   it("covers every ranged definition with an east-facing part manifest", () => {
     expect(metadata.weapons.map((weapon) => weapon.id)).toEqual(ranged.map((weapon) => weapon.id));
     for (const weapon of metadata.weapons) {
-      expect(weapon.source).toBe("WEAPON_DEFINITIONS"); expect(weapon.direction).toBe("east");
+      expect(weapon.source).toBe("WEAPON_DEFINITIONS"); expect(weapon.direction).toBe("east"); expect(weapon.facing).toBe("east");
       expect(weapon.keypoints.stockX).toBeLessThan(weapon.keypoints.muzzleX);
       expect(weapon.parts).toContain("muzzle"); expect(weapon.parts.length).toBeGreaterThanOrEqual(9);
+      expect(weapon.footprint.width).toBeGreaterThanOrEqual(weapon.footprint.height);
+      expect(weapon.alphaBounds.right - weapon.alphaBounds.left).toBeGreaterThan(weapon.alphaBounds.bottom - weapon.alphaBounds.top);
+      expect(weapon.alphaBounds.left).toBeGreaterThan(0); expect(weapon.alphaBounds.right).toBeLessThan(weapon.canvas.width);
     }
+  });
+
+  it("keeps distinct structural metadata for SMG, shotgun and rifle", () => {
+    const parts = (id: string) => metadata.weapons.find((weapon) => weapon.id === id)?.parts ?? [];
+    expect(parts("smg")).toEqual(expect.arrayContaining(["short_stock", "magazine", "polymer_body"]));
+    expect(parts("shotgun")).toEqual(expect.arrayContaining(["stock", "pump", "tubular_magazine"]));
+    expect(parts("hunting_rifle")).toEqual(expect.arrayContaining(["wood_stock", "bolt", "scope"]));
   });
 
   it("preserves each footprint-sized transparent PNG canvas", () => {

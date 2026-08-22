@@ -185,26 +185,58 @@ RANGED_WEAPON_PARTS = {
     "shotgun": ("stock", "receiver", "trigger_guard", "trigger", "pump", "long_barrel", "tubular_magazine", "front_sight", "muzzle"),
     "hunting_rifle": ("wood_stock", "receiver", "trigger_guard", "trigger", "bolt", "long_barrel", "scope", "scope_mount", "muzzle"),
 }
+RANGED_WEAPON_CATEGORIES = {"pistol": "pistol", "smg": "smg", "shotgun": "shotgun", "hunting_rifle": "rifle"}
+
+
+def draw_ranged_icon(item_id, logical_size):
+    image = Image.new("RGBA", logical_size, (0, 0, 0, 0))
+    d = ImageDraw.Draw(image)
+    if item_id == "pistol":
+        p(d, [(6, 15), (49, 15), (58, 20), (58, 27), (43, 30), (38, 34), (18, 34), (18, 29), (6, 26)], "#687270")
+        d.rectangle((9, 16, 48, 19), fill="#c5ceca"); d.rectangle((15, 20, 50, 23), fill="#8f9b99"); d.rectangle((29, 16, 39, 18), fill="#e1e6df")
+        r(d, (43, 20, 51, 25), "#39413f"); d.rectangle((46, 21, 49, 23), fill="#1d2322"); d.rectangle((53, 14, 56, 17), fill="#202625"); d.rectangle((56, 20, 60, 26), fill="#101413")
+        p(d, [(20, 33), (38, 33), (34, 54), (20, 54)], "#303735"); d.rectangle((23, 36, 34, 49), fill="#4d5754"); d.rectangle((24, 38, 32, 39), fill="#737e7a"); d.rectangle((22, 52, 34, 56), fill="#171b1a")
+        p(d, [(36, 32), (44, 33), (42, 43), (35, 43)], "#171b1a"); d.rectangle((38, 35, 40, 39), fill=GOLD); d.rectangle((10, 14, 14, 16), fill="#202625"); d.rectangle((31, 21, 33, 25), fill="#596461")
+    elif item_id == "smg":
+        p(d, [(6, 25), (15, 18), (28, 19), (32, 25), (28, 34), (16, 37), (6, 34)], "#2c3331"); d.rectangle((10, 26, 25, 29), fill="#59625f")
+        r(d, (25, 20, 70, 36), "#4d5754"); d.rectangle((29, 21, 61, 25), fill="#b7c1bd"); d.rectangle((34, 27, 68, 34), fill="#65716d"); d.rectangle((42, 29, 57, 32), fill="#303735")
+        l(d, [(68, 25), (88, 25)], "#879395", 4); d.rectangle((86, 22, 91, 29), fill="#171b1a"); d.rectangle((38, 17, 43, 21), fill="#171b1a"); d.rectangle((60, 16, 65, 21), fill="#171b1a")
+        p(d, [(31, 35), (45, 35), (41, 54), (31, 52)], "#242a29"); d.rectangle((34, 39, 40, 49), fill="#4f5956"); p(d, [(48, 35), (61, 35), (65, 55), (52, 55)], "#7a8581"); d.rectangle((53, 38, 60, 51), fill="#a8b1ad")
+        p(d, [(25, 35), (34, 36), (31, 45), (23, 44)], "#171b1a"); d.rectangle((28, 37, 30, 41), fill=GOLD)
+    elif item_id == "shotgun":
+        p(d, [(7, 30), (17, 22), (37, 23), (48, 30), (41, 39), (22, 43), (8, 39)], "#7d5435"); d.rectangle((12, 30, 37, 34), fill="#c18a52"); d.rectangle((17, 25, 35, 28), fill="#9c6a40"); d.rectangle((9, 35, 24, 38), fill="#5e402c")
+        r(d, (39, 23, 61, 39), "#46504e"); d.rectangle((42, 24, 58, 28), fill="#b4bfbb"); d.rectangle((44, 30, 58, 36), fill="#65706d"); d.rectangle((56, 25, 61, 31), fill="#2a302f")
+        p(d, [(43, 38), (55, 38), (53, 49), (42, 49)], "#171b1a"); d.rectangle((46, 40, 49, 45), fill=GOLD)
+        l(d, [(59, 24), (119, 20)], "#aeb8b5", 3); l(d, [(59, 31), (120, 28)], "#596361", 3); d.rectangle((117, 18, 122, 31), fill="#171b1a"); d.rectangle((118, 20, 120, 23), fill="#d3dbd6")
+        r(d, (69, 30, 91, 39), "#8b5d38"); d.rectangle((72, 31, 88, 34), fill="#c18a52"); d.line((77, 31, 75, 38), fill="#5e402c", width=2); d.line((84, 31, 82, 38), fill="#5e402c", width=2); d.rectangle((59, 19, 63, 23), fill="#171b1a")
+    elif item_id == "hunting_rifle":
+        p(d, [(7, 32), (18, 23), (42, 24), (54, 31), (48, 39), (31, 42), (23, 53), (10, 54), (16, 41), (7, 39)], "#805538"); d.rectangle((13, 31, 42, 35), fill="#c08a55"); d.rectangle((18, 25, 40, 28), fill="#9b6941")
+        r(d, (42, 23, 64, 39), "#46504e"); d.rectangle((45, 24, 61, 28), fill="#b8c2be"); d.rectangle((48, 30, 61, 36), fill="#65706d"); d.rectangle((61, 27, 67, 33), fill=GOLD)
+        p(d, [(44, 38), (56, 38), (53, 49), (43, 49)], "#171b1a"); d.rectangle((47, 40, 50, 45), fill=GOLD)
+        l(d, [(63, 26), (120, 22)], "#aeb8b5", 3); d.rectangle((117, 20, 122, 27), fill="#171b1a"); r(d, (38, 14, 70, 20), "#303735"); d.rectangle((42, 15, 66, 17), fill="#7a8581"); d.rectangle((43, 11, 48, 15), fill="#596361"); d.rectangle((62, 11, 67, 15), fill="#596361")
+    else:
+        raise KeyError(item_id)
+    return image
 
 
 def load_footprints():
     item_source = (ROOT / "src" / "data" / "item-definitions.ts").read_text(encoding="utf-8")
     weapon_source = (ROOT / "src" / "data" / "weapon-definitions.ts").read_text(encoding="utf-8")
     footprints = {
-        item_id: (int(width), int(height))
+        item_id: (max(int(width), int(height)), min(int(width), int(height)))
         for item_id, width, height in re.findall(r"([a-z_]+):\{width:(\d+),height:(\d+)\}", item_source)
     }
     for item_id, width, height in re.findall(r'id:\s*"([a-z_]+)".*?inventoryFootprint:\{width:(\d+),height:(\d+)\}', weapon_source):
-        footprints[item_id] = (int(width), int(height))
+        footprints[item_id] = (max(int(width), int(height)), min(int(width), int(height)))
     return footprints
 
 
 def render_footprint_icon(item_id, footprint):
-    source = draw_icon(item_id)
     width, height = footprint
-    if item_id == "bat" and height > width:
-        source = source.transpose(Image.Transpose.ROTATE_270)
     logical_size = (width * 32, height * 32)
+    if item_id in RANGED_WEAPON_IDS:
+        return draw_ranged_icon(item_id, logical_size).resize((width * 64, height * 64), Image.Resampling.NEAREST)
+    source = draw_icon(item_id)
     margin = 3
     artwork = source.resize((logical_size[0] - margin * 2, logical_size[1] - margin * 2), Image.Resampling.NEAREST)
     canvas = Image.new("RGBA", logical_size, (0, 0, 0, 0))
@@ -213,6 +245,7 @@ def render_footprint_icon(item_id, footprint):
 
 
 def validate_icon(item_id, image, footprint):
+    assert footprint[0] >= footprint[1], (item_id, footprint)
     expected_size = (footprint[0] * 64, footprint[1] * 64)
     assert image.size == expected_size, (item_id, image.size, expected_size)
     assert set(image.getchannel("A").get_flattened_data()).issubset({0, 255}), item_id
@@ -228,17 +261,26 @@ def validate_icon(item_id, image, footprint):
     if item_id in RANGED_WEAPON_IDS:
         colors = {pixel for pixel in image.get_flattened_data() if pixel[3]}
         assert 7 <= len(colors) <= 14, (item_id, len(colors))
+        assert used_width > used_height, (item_id, bounds)
+        assert 0.75 <= used_width / image.width <= 0.92, (item_id, bounds)
 
 
 def ranged_weapon_metadata(item_id, image, footprint):
-    margin = 6
+    bounds = image.getchannel("A").getbbox()
+    assert bounds is not None
+    stock_x = bounds[0]
+    muzzle_x = bounds[2] - 1
     return {
         "id": item_id,
+        "itemId": item_id,
+        "facing": "east",
         "direction": "east",
+        "category": RANGED_WEAPON_CATEGORIES[item_id],
         "source": "WEAPON_DEFINITIONS",
         "footprint": {"width": footprint[0], "height": footprint[1]},
         "canvas": {"width": image.width, "height": image.height},
-        "keypoints": {"stockX": margin, "muzzleX": image.width - margin - 1},
+        "alphaBounds": {"left": bounds[0], "top": bounds[1], "right": bounds[2], "bottom": bounds[3]},
+        "keypoints": {"stockX": stock_x, "muzzleX": muzzle_x},
         "parts": list(RANGED_WEAPON_PARTS[item_id]),
     }
 

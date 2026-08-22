@@ -3,8 +3,11 @@ import type { AudioCue } from "./audio-definitions";
 export type ItemCategory = "food" | "medical" | "material" | "ammo" | "tool" | "quest" | "equipment";
 export interface InventoryFootprint { width: number; height: number }
 export type InventoryRotation = 0 | 1;
+export function normalizeInventoryFootprint(footprint: InventoryFootprint): InventoryFootprint {
+  return footprint.width >= footprint.height ? { ...footprint } : { width: footprint.height, height: footprint.width };
+}
 export function getEffectiveFootprint(definition: Pick<ItemDefinition, "inventoryFootprint">, rotation: InventoryRotation): InventoryFootprint {
-  const footprint = definition.inventoryFootprint;
+  const footprint = normalizeInventoryFootprint(definition.inventoryFootprint);
   return rotation === 1 ? { width: footprint.height, height: footprint.width } : { ...footprint };
 }
 export type StorageSlot = "shirt" | "pants" | "belt" | "vest" | "backpack";
@@ -86,7 +89,7 @@ const ITEM_SOURCES: ItemSource[] = [
 const ITEMS: ItemDefinition[] = ITEM_SOURCES.map((item) => {
   const inventoryFootprint = ITEM_FOOTPRINTS[item.id];
   if (!inventoryFootprint) throw new Error(`Missing inventory footprint: ${item.id}`);
-  return { ...item, inventoryFootprint };
+  return { ...item, inventoryFootprint: normalizeInventoryFootprint(inventoryFootprint) };
 });
 
 export const ITEM_DEFINITIONS: Readonly<Record<string, ItemDefinition>> = Object.freeze(

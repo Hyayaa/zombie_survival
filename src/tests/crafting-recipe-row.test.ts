@@ -13,7 +13,7 @@ describe("crafting recipe row", () => {
     expect(first.placements.map(({ itemId, x, y, width, height }) => ({ itemId, x, y, width, height }))).toEqual([
       { itemId: "steel_plate", x: 0, y: 0, width: 2, height: 2 },
       { itemId: "screws", x: 2, y: 0, width: 1, height: 1 },
-      { itemId: "electric_motor", x: 3, y: 0, width: 1, height: 2 },
+      { itemId: "electric_motor", x: 3, y: 0, width: 2, height: 1 },
     ]);
   });
 
