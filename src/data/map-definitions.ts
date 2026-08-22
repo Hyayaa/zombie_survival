@@ -50,7 +50,7 @@ export interface ZombieSpawnDefinition { id: string; tileX: number; tileY: numbe
 export interface CompanionSpawnDefinition { id: string; tileX: number; tileY: number }
 
 export interface MapDefinition {
-  mapId: string; mapVersion: number; mapSeed: number;
+  mapId: string; mapVersion: number; mapGenerationVersion: number; mapSeed: number;
   widthTiles: number; heightTiles: number; terrain: Uint8Array;
   minimapWallCoverage: Uint8Array;
   roadSegments: RoadSegment[]; buildings: BuildingDefinition[]; structures: BuildingDefinition[];
@@ -81,7 +81,8 @@ const ROAD_SEGMENTS: RoadSegment[] = [
 const KIND_CYCLE: BuildingKind[] = ["house", "house", "store", "office", "ruin", "house", "warehouse", "garage", "clinic"];
 const FLOOR_COLORS = [0x4c5148, 0x514a42, 0x4c4842, 0x4b514c, 0x484d4c, 0x504a46];
 
-export function createCityBlockMap(mapSeed = 0x51a7c1): MapDefinition {
+export const CURRENT_MAP_GENERATION_VERSION=2;
+export function createCityBlockMap(mapSeed = 0x51a7c1,mapGenerationVersion=CURRENT_MAP_GENERATION_VERSION): MapDefinition {
   const widthTiles = MAP_WIDTH_TILES;
   const heightTiles = MAP_HEIGHT_TILES;
   const terrain = new Uint8Array(widthTiles * heightTiles);
@@ -131,9 +132,10 @@ export function createCityBlockMap(mapSeed = 0x51a7c1): MapDefinition {
           const candidate = squared(tileX + 0.5 - roadX) + squared(tileY + 0.5 - roadY);
           if (candidate < entranceDistance) { entrance = index; entranceDistance = candidate; }
         }
-        const wallTiles = boundary.filter((index) => index !== entrance);
+        const entrances=mapGenerationVersion>=2&&orientation!==45&&orientation!==135?selectBuildingEntrances(boundary,entrance,widthTiles,buildingWidth*buildingDepth,mapSeed,`building-${String(buildings.length).padStart(2,"0")}`):[entrance];
+        const entranceSet=new Set(entrances);const wallTiles = boundary.filter((index) => !entranceSet.has(index));
         const wallSet = new Set(boundary);
-        const floorTiles = footprint.filter((index) => !wallSet.has(index) || index === entrance);
+        const floorTiles = footprint.filter((index) => !wallSet.has(index) || entranceSet.has(index));
         const id = `building-${String(buildings.length).padStart(2, "0")}`;
         const kind = KIND_CYCLE[buildings.length % KIND_CYCLE.length]!;
         const diagonalGeometry = orientation === 45 || orientation === 135
@@ -156,17 +158,10 @@ export function createCityBlockMap(mapSeed = 0x51a7c1): MapDefinition {
           const tileY = Math.floor(index / widthTiles);
           obstacles.push(wall(`${id}-wall-${tileX}-${tileY}`, tileX, tileY));
         }
+        const orientationValue = diagonalGeometry ? doorOrientationFromSegment(diagonalGeometry.door) : doorOrientation(orientation);
+        entrances.forEach((entranceIndex,doorIndex)=>{const doorX=entranceIndex%widthTiles,doorY=Math.floor(entranceIndex/widthTiles),doorId=doorIndex===0?`door-${id}`:`door-${id}-${doorIndex+1}`,candidateOrientation=diagonalGeometry?orientationValue:doorOrientationForBoundary(entranceIndex,footprintSet,widthTiles);doors.push({kind:"door",id:doorId,buildingId:id,tileX:doorX,tileY:doorY,orientation:candidateOrientation,segment:doorIndex===0&&diagonalGeometry?diagonalGeometry.door:createTileDoorSegment(doorX,doorY,candidateOrientation),open:isDoorInitiallyOpen(mapSeed,doorId),health:OBSTACLE_BALANCE.doorHealth,maxHealth:OBSTACLE_BALANCE.doorHealth,destroyed:false});});
         const doorX = entrance % widthTiles;
         const doorY = Math.floor(entrance / widthTiles);
-        const doorId = `door-${id}`;
-        const orientationValue = diagonalGeometry ? doorOrientationFromSegment(diagonalGeometry.door) : doorOrientation(orientation);
-        doors.push({
-          kind: "door", id: doorId, buildingId: id, tileX: doorX, tileY: doorY,
-          orientation: orientationValue,
-          segment: diagonalGeometry?.door ?? createTileDoorSegment(doorX, doorY, orientationValue),
-          open: isDoorInitiallyOpen(mapSeed, doorId), health: OBSTACLE_BALANCE.doorHealth,
-          maxHealth: OBSTACLE_BALANCE.doorHealth, destroyed: false,
-        });
         rasterizeWalkway(terrain, occupied, widthTiles, heightTiles, doorX, doorY, Math.round(roadX), Math.round(roadY));
         if (buildings.length >= 38 || acceptedForRoad >= perRoadLimit) break;
       }
@@ -204,6 +199,8 @@ export function createCityBlockMap(mapSeed = 0x51a7c1): MapDefinition {
   fuelBuilding.kind = "gas-station"; fuelBuilding.name = "동부 주유소";
   engineBuilding.kind = "garage"; engineBuilding.name = "서부 정비소";
 
+  if(mapGenerationVersion>=2)for(const building of [safehouse,batteryBuilding,fuelBuilding,engineBuilding])restorePresetPrimaryDoor(building,doors,obstacles,minimapWallCoverage,widthTiles);
+
   const containers = createContainers(buildings, widthTiles, batteryBuilding, fuelBuilding, engineBuilding, mapSeed);
   const groundItems = createGroundItems(buildings, widthTiles);
   addVehicles(obstacles, terrain, occupied, widthTiles, heightTiles);
@@ -211,7 +208,7 @@ export function createCityBlockMap(mapSeed = 0x51a7c1): MapDefinition {
   const zombieSpawns = createZombieSpawns(terrain, occupied, widthTiles, heightTiles, mapSeed, playerTile);
   const safeBounds = footprintBounds(safehouse.footprintTiles, widthTiles);
   return {
-    mapId: MAP_ID, mapVersion: MAP_VERSION, mapSeed, widthTiles, heightTiles, terrain, minimapWallCoverage, roadSegments,
+    mapId: MAP_ID, mapVersion: MAP_VERSION, mapGenerationVersion, mapSeed, widthTiles, heightTiles, terrain, minimapWallCoverage, roadSegments,
     buildings, structures: buildings, wallSegments, obstacles, doors, containers, groundItems, zombieSpawns,
     playerSpawn: tileWorld(playerTile, widthTiles), companionSpawns, survivorSpawn: tileWorld(survivorTile, widthTiles),
     extractionZone: { ...tileWorld(extractionTile, widthTiles), radius: 52 },
@@ -222,6 +219,16 @@ export function createCityBlockMap(mapSeed = 0x51a7c1): MapDefinition {
     },
   };
 }
+
+function selectBuildingEntrances(boundary:readonly number[],primary:number,width:number,area:number,mapSeed:number,buildingId:string):number[]{
+  const cap=area<24?1:area<48?2:area<80?3:4;if(cap===1)return[primary];const desired=1+Math.floor(stableUnit(mapSeed,buildingId)*cap),selected=[primary],primaryX=primary%width,primaryY=Math.floor(primary/width);
+  const candidates=boundary.filter((index)=>{const x=index%width,y=Math.floor(index/width);if(Math.abs(x-primaryX)+Math.abs(y-primaryY)<2)return false;let neighbors=0;for(const [dx,dy] of [[1,0],[-1,0],[0,1],[0,-1]] as const)if(boundary.includes((y+dy)*width+x+dx))neighbors+=1;return neighbors>=2;}).sort((a,b)=>stableUnit(mapSeed,`${buildingId}:${a}`)-stableUnit(mapSeed,`${buildingId}:${b}`));
+  while(selected.length<desired&&candidates.length){let bestIndex=0,bestDistance=-1;for(let index=0;index<candidates.length;index+=1){const candidate=candidates[index]!,x=candidate%width,y=Math.floor(candidate/width),minimum=Math.min(...selected.map((chosen)=>Math.abs(x-chosen%width)+Math.abs(y-Math.floor(chosen/width))));if(minimum>bestDistance){bestDistance=minimum;bestIndex=index;}}const [picked]=candidates.splice(bestIndex,1);if(picked!==undefined&&bestDistance>=2)selected.push(picked);else break;}return selected;
+}
+
+function stableUnit(seed:number,key:string):number{let hash=(seed^0x85ebca6b)>>>0;for(let index=0;index<key.length;index+=1){hash^=key.charCodeAt(index);hash=Math.imul(hash,0x01000193)>>>0;}hash^=hash>>>16;return(hash>>>0)/0x1_0000_0000;}
+function doorOrientationForBoundary(index:number,footprint:ReadonlySet<number>,width:number):DoorOrientation{const left=footprint.has(index-1),right=footprint.has(index+1),up=footprint.has(index-width),down=footprint.has(index+width);return(!left||!right)&&(up||down)?"vertical":"horizontal";}
+function restorePresetPrimaryDoor(building:BuildingDefinition,doors:DoorDefinition[],obstacles:WorldObstacle[],minimapWallCoverage:Uint8Array,width:number):void{for(let index=doors.length-1;index>=0;index-=1){const door=doors[index]!;if(door.buildingId!==building.id||door.id===`door-${building.id}`)continue;doors.splice(index,1);const tileIndex=door.tileY*width+door.tileX;if(!building.wallTiles.includes(tileIndex))building.wallTiles.push(tileIndex);const floorIndex=building.floorTiles.indexOf(tileIndex);if(floorIndex>=0)building.floorTiles.splice(floorIndex,1);minimapWallCoverage[tileIndex]=1;if(building.orientation!==45&&building.orientation!==135)obstacles.push(wall(`${building.id}-wall-${door.tileX}-${door.tileY}`,door.tileX,door.tileY));}}
 
 export function isDoorInitiallyOpen(mapSeed: number, doorId: string): boolean {
   let hash = (mapSeed ^ 0x9e3779b9) >>> 0;

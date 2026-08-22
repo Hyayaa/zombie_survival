@@ -25,6 +25,7 @@ export class Zombie {
   obstacleTargetId?: string;
   obstacleAttackCompletesAt = 0;
   nextObstacleAttackAt = 0;
+  lastDamagedAt=Number.NEGATIVE_INFINITY;
   wanderTarget?: Point;
   aimAngle = 0;
   readonly motion = createActorMotionSmoothingState();
@@ -51,6 +52,7 @@ export class Zombie {
     this.health = Math.max(0, this.health - amount);
     this.applyKnockback(knockback);
     this.view.flashHit(now);
+    this.lastDamagedAt=now;
     if (this.health === 0) {
       this.mind = { ...this.mind, state: "Dead" };
       this.view.setDead(true);

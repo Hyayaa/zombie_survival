@@ -2,7 +2,7 @@ import { MAP_ID, MAP_VERSION, SAVE_VERSION, TILE_SIZE } from "../config/game-con
 import type { SaveGame } from "../core/save-state";
 import { ITEM_DEFINITIONS } from "../data/item-definitions";
 import { getInventoryObjectDefinition } from "../data/inventory-object-definitions";
-import { createCityBlockMap } from "../data/map-definitions";
+import { createCityBlockMap, CURRENT_MAP_GENERATION_VERSION } from "../data/map-definitions";
 import { emptyFogExploration, isValidExploredFog } from "./fog-save-codec";
 import { createWeaponMagazines } from "./weapon-system";
 import { GameClock } from "../core/game-clock";
@@ -24,7 +24,7 @@ export class SaveSystem {
     try {
       const exploredFog = isValidExploredFog(data.exploredFog) ? data.exploredFog : emptyFogExploration();
       const player = { ...data.player, survivalNeeds: createSurvivalNeeds(data.player.survivalNeeds) };
-      this.storage.setItem(this.key, JSON.stringify({ ...data, player, exploredFog, version: SAVE_VERSION, savedAt: Date.now() }));
+      this.storage.setItem(this.key, JSON.stringify({ ...data, mapGenerationVersion:data.mapGenerationVersion??CURRENT_MAP_GENERATION_VERSION,player, exploredFog, version: SAVE_VERSION, savedAt: Date.now() }));
       return true;
     } catch {
       return false;
@@ -47,6 +47,7 @@ export class SaveSystem {
       if (parsed.version === 6) return this.migrateV6(parsed);
       if (parsed.version === 7) return this.migrateV7(parsed);
       if (parsed.version === 8) return this.migrateV8(parsed);
+      if (parsed.version === 9) return this.migrateV9(parsed);
       if (parsed.version !== SAVE_VERSION) {
         this.storage.removeItem(this.key);
         this.incompatibleMapReset = true;
@@ -54,7 +55,7 @@ export class SaveSystem {
       }
       if (!this.isValidBase(parsed, SAVE_VERSION) || !this.hasValidObstacleState(parsed) || !this.hasValidCompanions(parsed) || !this.hasValidStructures(parsed) || !this.hasValidSurvivalState(parsed)) return null;
       const exploredFog = isValidExploredFog(parsed.exploredFog) ? parsed.exploredFog : emptyFogExploration();
-      return { ...parsed, player: { ...parsed.player!, survivalNeeds: createSurvivalNeeds(parsed.player!.survivalNeeds) }, version: SAVE_VERSION, exploredFog } as SaveGame;
+      return { ...parsed,mapGenerationVersion:parsed.mapGenerationVersion??CURRENT_MAP_GENERATION_VERSION, player: { ...parsed.player!, survivalNeeds: createSurvivalNeeds(parsed.player!.survivalNeeds) }, version: SAVE_VERSION, exploredFog } as SaveGame;
     } catch {
       return null;
     }
@@ -145,7 +146,7 @@ export class SaveSystem {
       ...value,
       version: SAVE_VERSION,
       player: { ...value.player!, survivalNeeds: createSurvivalNeeds() },
-      clock: clock.snapshot(),
+      clock: clock.snapshot(),mapGenerationVersion:1,
     } as SaveGame;
     this.save(migrated);
     return migrated;
@@ -154,16 +155,18 @@ export class SaveSystem {
   private migrateV7(value: SaveCandidate): SaveGame | null {
     if (!this.isValidBase(value, 7) || !this.hasValidObstacleState(value) || !this.hasValidCompanions(value)
       || !this.hasValidStructures(value) || !this.hasValidSurvivalState(value)) return null;
-    const migrated = { ...value, version: SAVE_VERSION } as SaveGame;
+    const migrated = { ...value, version: SAVE_VERSION,mapGenerationVersion:1 } as SaveGame;
     this.save(migrated);
     return migrated;
   }
 
   private migrateV8(value: SaveCandidate): SaveGame | null {
     if (!this.isValidBase(value, 8) || !this.hasValidObstacleState(value) || !this.hasValidCompanions(value) || !this.hasValidStructures(value) || !this.hasValidSurvivalState(value)) return null;
-    const migrated = { ...value, version: SAVE_VERSION, nextStructureId: value.structures?.length ?? 0 } as SaveGame;
+    const migrated = { ...value, version: SAVE_VERSION, nextStructureId: value.structures?.length ?? 0,mapGenerationVersion:1 } as SaveGame;
     this.save(migrated); return migrated;
   }
+
+  private migrateV9(value:SaveCandidate):SaveGame|null{if(!this.isValidBase(value,9)||!this.hasValidObstacleState(value)||!this.hasValidCompanions(value)||!this.hasValidStructures(value)||!this.hasValidSurvivalState(value))return null;const migrated={...value,version:SAVE_VERSION,mapGenerationVersion:1} as SaveGame;this.save(migrated);return migrated;}
 
   private isValidBase(value: SaveCandidate, version: number): boolean {
     return value.version === version
@@ -259,7 +262,9 @@ export class SaveSystem {
       && (state.fuelSeconds === undefined || typeof state.fuelSeconds === "number")
       && (state.health === undefined || typeof state.health === "number")
       && (state.maximumHealth === undefined || typeof state.maximumHealth === "number")
-      && (state.placement === undefined || (state.placement.kind === "footprint"
+      && (state.placement === undefined || (state.placement.kind === "furniture"
+        ? [state.placement.x,state.placement.y,state.placement.angle].every((coordinate:unknown)=>typeof coordinate==="number"&&Number.isFinite(coordinate))
+        : state.placement.kind === "footprint"
         ? typeof state.placement.tileX === "number" && typeof state.placement.tileY === "number" && typeof state.placement.rotation === "number"
         : state.placement.kind === "segment" && [state.placement.startX, state.placement.startY, state.placement.endX, state.placement.endY].every((coordinate: unknown) => typeof coordinate === "number"))));
   }

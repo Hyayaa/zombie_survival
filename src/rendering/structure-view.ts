@@ -35,7 +35,7 @@ export class StructureView implements WorldEntityView {
 
   private draw(): void {
     const outline = this.outline?.getState() === "interactable" ? ENTITY_OUTLINE.interactable : ENTITY_OUTLINE.normal;
-    const center=getPlacedStructureCenter(this.state);this.body.clear();drawStructureRenderModel(this.body,createStructureRenderModel(this.state.kind,this.state.placement,{doorOpen:this.state.doorOpen,aimAngle:this.state.aimAngle}),center.x,center.y,outline);
+    const center=getPlacedStructureCenter(this.state),placementAngle=this.state.placement.kind==="furniture"?this.state.placement.angle:0;this.body.clear();drawStructureRenderModel(this.body,createStructureRenderModel(this.state.kind,this.state.placement,{doorOpen:this.state.doorOpen,aimAngle:(this.state.aimAngle??0)-placementAngle}),center.x,center.y,outline);
   }
   refresh(): void { this.draw(); }
 

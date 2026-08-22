@@ -2,6 +2,7 @@ import type { PlacedStructureState } from "../entities/placed-structure";
 import { BUILDABLE_DEFINITIONS, getRotatedStructureFootprint } from "../data/buildable-definitions";
 import { visitSegmentTiles, type SegmentGeometry } from "./collision-geometry";
 import { TILE_SIZE } from "../config/game-config";
+import { getObbAabb } from "./oriented-furniture-collision";
 
 export class PlacedStructureRegistry {
   private readonly structures = new Map<string, PlacedStructureState>();
@@ -35,6 +36,10 @@ export class PlacedStructureRegistry {
       const geometry: SegmentGeometry = { ...state.placement, thickness: definition.thickness };
       visitSegmentTiles(geometry, TILE_SIZE, this.widthTiles, this.heightTiles, (x, y) => visitor(y * this.widthTiles + x), 6);
       return;
+    }
+    if(state.placement.kind==="furniture"){
+      const size=BUILDABLE_DEFINITIONS[state.kind].furnitureSize!;const bounds=getObbAabb({x:state.placement.x,y:state.placement.y,angle:state.placement.angle,halfWidth:size.width/2,halfHeight:size.height/2});
+      for(let y=Math.max(0,Math.floor(bounds.minY/TILE_SIZE));y<=Math.min(this.heightTiles-1,Math.floor(bounds.maxY/TILE_SIZE));y+=1)for(let x=Math.max(0,Math.floor(bounds.minX/TILE_SIZE));x<=Math.min(this.widthTiles-1,Math.floor(bounds.maxX/TILE_SIZE));x+=1)visitor(y*this.widthTiles+x);return;
     }
     const footprint = getRotatedStructureFootprint(state.kind, state.placement.rotation);
     for (let y = state.tileY; y < state.tileY + footprint.height; y += 1) for (let x = state.tileX; x < state.tileX + footprint.width; x += 1) if (x >= 0 && y >= 0 && x < this.widthTiles && y < this.heightTiles) visitor(y * this.widthTiles + x);

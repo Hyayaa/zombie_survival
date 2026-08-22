@@ -4,6 +4,7 @@ import type { WorldStorageSnapshot } from "../systems/world-storage-container";
 
 export type StructurePlacement =
   | { kind: "segment"; startX: number; startY: number; endX: number; endY: number; hingeSide?: -1 | 1 }
+  | { kind: "furniture"; x: number; y: number; angle: number }
   | { kind: "footprint"; tileX: number; tileY: number; rotation: number };
 
 export interface PlacedStructureState {
@@ -23,6 +24,12 @@ export function createPlacedStructure(id: string, kind: BuildableKind, tileX: nu
   return { id, kind, tileX, tileY, placement: { kind: "footprint", tileX, tileY, rotation }, health: definition.maximumHealth, maximumHealth: definition.maximumHealth, createdOrder, storedEnergy: 0, fuelSeconds: kind === "fuel-generator" ? 0 : undefined, powered: false, aimAngle: kind === "turret" ? 0 : undefined };
 }
 
+export function createPlacedFurniture(id: string, kind: BuildableKind, x: number, y: number, angle = 0, createdOrder = 0): PlacedStructureState {
+  const definition = BUILDABLE_DEFINITIONS[kind];
+  if (definition.placementClass !== "furniture") throw new Error(`${kind} is not furniture`);
+  return { id, kind, tileX: Math.floor(x / TILE_SIZE), tileY: Math.floor(y / TILE_SIZE), placement: { kind: "furniture", x, y, angle }, health: definition.maximumHealth, maximumHealth: definition.maximumHealth, createdOrder, storedEnergy: 0, fuelSeconds: kind === "fuel-generator" ? 0 : undefined, powered: false, aimAngle: kind === "turret" ? 0 : undefined };
+}
+
 export function createPlacedSegment(id: string, kind: "wood-wall" | "metal-wall" | "wood-door", startX: number, startY: number, endX: number, endY: number, createdOrder = 0, hingeSide: -1 | 1 = 1): PlacedStructureState {
   const definition = BUILDABLE_DEFINITIONS[kind];
   return { id, kind, tileX: Math.floor(Math.min(startX, endX) / TILE_SIZE), tileY: Math.floor(Math.min(startY, endY) / TILE_SIZE), placement: { kind: "segment", startX, startY, endX, endY, hingeSide: kind === "wood-door" ? hingeSide : undefined }, health: definition.maximumHealth, maximumHealth: definition.maximumHealth, createdOrder, storedEnergy: 0, powered: false, doorOpen: kind === "wood-door" ? false : undefined };
@@ -30,13 +37,18 @@ export function createPlacedSegment(id: string, kind: "wood-wall" | "metal-wall"
 
 export function normalizePlacedStructure(state: Partial<PlacedStructureState> & Pick<PlacedStructureState, "id" | "kind" | "tileX" | "tileY">): PlacedStructureState {
   const definition = BUILDABLE_DEFINITIONS[state.kind];
-  const placement = state.placement ?? { kind: "footprint" as const, tileX: state.tileX, tileY: state.tileY, rotation: 0 };
+  let placement = state.placement ?? { kind: "footprint" as const, tileX: state.tileX, tileY: state.tileY, rotation: 0 };
+  if (definition.placementClass === "furniture" && placement.kind === "footprint") {
+    const footprint = getRotatedStructureFootprint(state.kind, placement.rotation);
+    placement = { kind: "furniture", x: (placement.tileX + footprint.width / 2) * TILE_SIZE, y: (placement.tileY + footprint.height / 2) * TILE_SIZE, angle: placement.rotation * Math.PI / 2 };
+  }
   const maximumHealth = state.maximumHealth ?? definition.maximumHealth;
   return { ...state, placement, health: Math.max(0, Math.min(maximumHealth, state.health ?? maximumHealth)), maximumHealth, createdOrder: state.createdOrder ?? 0, storedEnergy: state.storedEnergy ?? 0, powered: state.powered ?? false } as PlacedStructureState;
 }
 
 export function getPlacedStructureCenter(state: Pick<PlacedStructureState, "kind" | "tileX" | "tileY" | "placement">): { x: number; y: number } {
   if (state.placement.kind === "segment") return { x: (state.placement.startX + state.placement.endX) / 2, y: (state.placement.startY + state.placement.endY) / 2 };
+  if (state.placement.kind === "furniture") return { x: state.placement.x, y: state.placement.y };
   const footprint = getRotatedStructureFootprint(state.kind, state.placement.rotation);
   return { x: (state.tileX + footprint.width / 2) * TILE_SIZE, y: (state.tileY + footprint.height / 2) * TILE_SIZE };
 }

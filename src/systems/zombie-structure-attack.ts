@@ -3,6 +3,7 @@ import { getPlacedStructureCenter, type PlacedStructureState } from "../entities
 import { segmentIntersectsThickSegment, type SegmentGeometry } from "./collision-geometry";
 import { estimateStructureBreakCost } from "./structure-durability-system";
 import type { Point } from "./zombie-ai-system";
+import { segmentIntersectsObb } from "./oriented-furniture-collision";
 
 export interface NavigationWaypoint extends Point { blockingStructureId?: string }
 export const ZOMBIE_STRUCTURE_DAMAGE = { walker: 12, runner: 8 } as const;
@@ -11,6 +12,7 @@ export function chooseBlockingStructure(from: Point, to: Point, candidates: read
   const movement:SegmentGeometry={startX:from.x,startY:from.y,endX:to.x,endY:to.y,thickness:0}; let best:PlacedStructureState|undefined;let bestCost=Number.POSITIVE_INFINITY;
   for(const state of candidates){if(state.health<=0||(state.kind==="wood-door"&&state.doorOpen))continue;const definition=BUILDABLE_DEFINITIONS[state.kind];let blocks=false;
     if(state.placement.kind==="segment")blocks=segmentIntersectsThickSegment(movement,{...state.placement,thickness:definition.segment!.thickness},5);
+    else if(state.placement.kind==="furniture"){const size=definition.furnitureSize!;blocks=segmentIntersectsObb(from,to,{x:state.placement.x,y:state.placement.y,angle:state.placement.angle,halfWidth:size.width/2,halfHeight:size.height/2},5)!==null;}
     else{const center=getPlacedStructureCenter(state);const radius=Math.hypot(definition.footprint!.width*12,definition.footprint!.height*12);blocks=distanceToSegmentSquared(center,movement)<=radius*radius;}
     if(!blocks)continue;const center=getPlacedStructureCenter(state);const cost=Math.hypot(center.x-from.x,center.y-from.y)+estimateStructureBreakCost(state,12,8);if(cost<bestCost){best=state;bestCost=cost;}
   }return best;

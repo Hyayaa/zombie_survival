@@ -60,6 +60,7 @@ export interface SaveGame {
   version: number;
   mapId: string;
   mapVersion: number;
+  mapGenerationVersion?: number;
   mapSeed: number;
   seed: number;
   rngState: number;

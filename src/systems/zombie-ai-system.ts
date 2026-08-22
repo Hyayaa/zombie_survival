@@ -1,4 +1,5 @@
 import type { ZombieStateName } from "../data/zombie-definitions";
+import type { ZombieKind } from "../data/zombie-definitions";
 import type { HeardNoise } from "./noise-system";
 
 export interface Point {
@@ -18,8 +19,10 @@ export interface ZombieMind {
   outOfRangeSince?: number;
 }
 
-export const VISUAL_AGGRO_RELEASE_DISTANCE = 1_000;
-export const VISUAL_AGGRO_RELEASE_GRACE_MS = 6_000;
+export const ZOMBIE_AGGRO_RELEASE_PROFILE:Record<ZombieKind,{releaseDistance:number;reengageDistance:number;graceMs:number}>={walker:{releaseDistance:720,reengageDistance:610,graceMs:4_000},runner:{releaseDistance:840,reengageDistance:710,graceMs:4_600}};
+/** Compatibility aliases use the most permissive profile. */
+export const VISUAL_AGGRO_RELEASE_DISTANCE = ZOMBIE_AGGRO_RELEASE_PROFILE.runner.releaseDistance;
+export const VISUAL_AGGRO_RELEASE_GRACE_MS = ZOMBIE_AGGRO_RELEASE_PROFILE.runner.graceMs;
 export const ZOMBIE_CHASE_MULTIPLIER = { walker: 1.24, runner: 1.14 } as const;
 
 export interface PerceptionUpdate {
@@ -32,6 +35,10 @@ export interface PerceptionUpdate {
   nowMs?: number;
   targetAlive?: boolean;
   targetDistance?: number;
+  targetDistanceSquared?:number;
+  zombieKind?:ZombieKind;
+  zombiePosition?:Point;
+  lastDamagedAt?:number;
 }
 
 export function createZombieMind(): ZombieMind {
@@ -58,9 +65,10 @@ export function updateZombieMind(mind: ZombieMind, update: PerceptionUpdate): Zo
   if (mind.visualLock) {
     if (update.targetAlive === false || !mind.currentTargetId) return clearVisualLock(mind);
     const now = update.nowMs ?? mind.lastSeenAt;
-    const outside = (update.targetDistance ?? 0) > VISUAL_AGGRO_RELEASE_DISTANCE;
-    const outOfRangeSince = outside ? mind.outOfRangeSince ?? now : undefined;
-    if (outside && outOfRangeSince !== undefined && now - outOfRangeSince >= VISUAL_AGGRO_RELEASE_GRACE_MS) return clearVisualLock(mind);
+    const profile=ZOMBIE_AGGRO_RELEASE_PROFILE[update.zombieKind??"walker"],distanceSquared=update.targetDistanceSquared??(update.targetDistance??0)**2,outside=distanceSquared>profile.releaseDistance**2,insideReengage=distanceSquared<profile.reengageDistance**2;
+    const outOfRangeSince = outside ? mind.outOfRangeSince ?? now : insideReengage?undefined:mind.outOfRangeSince;
+    const damageExtension=update.lastDamagedAt!==undefined&&now-update.lastDamagedAt<=1_500?Math.max(0,1_500-(now-update.lastDamagedAt)):0;
+    if (outside && outOfRangeSince !== undefined && now - outOfRangeSince >= profile.graceMs+damageExtension) return clearVisualLock(mind,update.zombiePosition);
     return { ...mind, state: update.inAttackRange ? "Attack" : "Chase", lastSeenTargetPosition: update.targetPosition ? { ...update.targetPosition } : mind.lastSeenTargetPosition, outOfRangeSince, alertLevel: 1 };
   }
 
@@ -90,6 +98,6 @@ export function updateZombieMind(mind: ZombieMind, update: PerceptionUpdate): Zo
   return { ...mind, state: mind.state === "Idle" ? "Wander" : mind.state };
 }
 
-function clearVisualLock(mind: ZombieMind): ZombieMind {
-  return { ...mind, state: "SearchLastKnownPosition", currentTargetId: undefined, visualLock: false, outOfRangeSince: undefined, searchTicks: 3 };
+function clearVisualLock(mind: ZombieMind,currentPosition?:Point): ZombieMind {
+  return { ...mind, state: "SearchLastKnownPosition", currentTargetId: undefined, visualLock: false, outOfRangeSince: undefined,lastSeenTargetPosition:currentPosition?{...currentPosition}:mind.lastSeenTargetPosition, searchTicks: 1 };
 }

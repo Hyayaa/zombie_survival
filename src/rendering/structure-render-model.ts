@@ -9,6 +9,7 @@ export interface StructureRenderGeometry {
   centerY: number;
   width: number;
   height: number;
+  angle: number;
 }
 
 export interface StructureRenderModel {
@@ -20,6 +21,7 @@ export interface StructureRenderModel {
 }
 
 interface GraphicsLike {
+  save():this;restore():this;translateCanvas(x:number,y:number):this;rotateCanvas(radians:number):this;
   lineStyle(width: number, color: number, alpha?: number): this;
   fillStyle(color: number, alpha?: number): this;
   fillCircle(x: number, y: number, radius: number): this;
@@ -30,9 +32,10 @@ interface GraphicsLike {
 }
 
 export function createStructureRenderGeometry(kind: BuildableKind, placement: StructurePlacement): StructureRenderGeometry {
-  if (placement.kind === "segment") return { kind, placement, centerX: (placement.startX + placement.endX) / 2, centerY: (placement.startY + placement.endY) / 2, width: Math.abs(placement.endX - placement.startX), height: Math.abs(placement.endY - placement.startY) };
+  if (placement.kind === "segment") return { kind, placement, centerX: (placement.startX + placement.endX) / 2, centerY: (placement.startY + placement.endY) / 2, width: Math.abs(placement.endX - placement.startX), height: Math.abs(placement.endY - placement.startY), angle: 0 };
+  if(placement.kind==="furniture"){const size=BUILDABLE_DEFINITIONS[kind].furnitureSize!;return{kind,placement,centerX:placement.x,centerY:placement.y,width:size.width,height:size.height,angle:placement.angle};}
   const footprint = getRotatedStructureFootprint(kind, placement.rotation);
-  return { kind, placement, centerX: (placement.tileX + footprint.width / 2) * TILE_SIZE, centerY: (placement.tileY + footprint.height / 2) * TILE_SIZE, width: footprint.width * TILE_SIZE, height: footprint.height * TILE_SIZE };
+  return { kind, placement, centerX: (placement.tileX + footprint.width / 2) * TILE_SIZE, centerY: (placement.tileY + footprint.height / 2) * TILE_SIZE, width: footprint.width * TILE_SIZE, height: footprint.height * TILE_SIZE, angle: placement.rotation*Math.PI/2 };
 }
 
 export function createStructureRenderModel(kind: BuildableKind, placement: StructurePlacement, options: { alpha?: number; invalid?: boolean; doorOpen?: boolean; aimAngle?: number } = {}): StructureRenderModel {
@@ -49,6 +52,7 @@ export function drawStructureRenderModel(graphics: GraphicsLike, model: Structur
     graphics.lineStyle(BUILDABLE_DEFINITIONS[kind].segment!.thickness+2,outline,alpha).lineBetween(sx,sy,ex,ey).lineStyle(BUILDABLE_DEFINITIONS[kind].segment!.thickness,color,alpha).lineBetween(sx,sy,ex,ey);
     return;
   }
+  const rotated=geometry.placement.kind==="furniture"&&Math.abs(geometry.angle)>1e-8;if(rotated)graphics.save().translateCanvas(x,y).rotateCanvas(geometry.angle).translateCanvas(-x,-y);
   graphics.lineStyle(1,outline,alpha);
   if(kind === "turret") { const barrelX=x+Math.cos(model.aimAngle)*16,barrelY=y+Math.sin(model.aimAngle)*16;graphics.lineStyle(3,tint??0x7b8582,alpha).lineBetween(x,y,barrelX,barrelY).lineStyle(1,outline,alpha).fillStyle(tint??0x414b4a,alpha).fillCircle(x,y,8).strokeCircle(x,y,8).fillStyle(tint??0x697573,alpha).fillCircle(x,y,4); }
   else if(kind === "solar-generator") graphics.fillStyle(tint??0x294c68,alpha).fillRect(x-10,y-7,20,14).strokeRect(x-10,y-7,20,14).lineStyle(1,tint??0x71808a,alpha).lineBetween(x-3,y-7,x-3,y+7).lineBetween(x+4,y-7,x+4,y+7).lineBetween(x-10,y,x+10,y);
@@ -59,4 +63,5 @@ export function drawStructureRenderModel(graphics: GraphicsLike, model: Structur
     const width=geometry.width-5,height=geometry.height-7,left=x-Math.floor(width/2),top=y-Math.floor(height/2),technical=kind==="technical_workbench",plank=kind==="plank_workbench";
     graphics.fillStyle(tint??(technical?0x425554:plank?0x74583b:0x5c4934),alpha).fillRect(left,top,width,height).strokeRect(left,top,width,height).fillStyle(tint??(technical?0x718481:0x9b744b),alpha).fillRect(left+2,top+3,width-4,5).fillStyle(tint??0x252d2b,alpha).fillRect(left+4,top+11,width-8,3).fillRect(left+4,top+height-7,4,6).fillRect(left+width-8,top+height-7,4,6);
   }
+  if(rotated)graphics.restore();
 }

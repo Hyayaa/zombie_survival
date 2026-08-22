@@ -8,6 +8,7 @@ import {
 } from "./collision-geometry";
 import type { VisionGrid } from "./fog-of-war-system";
 import type { Point } from "./zombie-ai-system";
+import { circleIntersectsObb, getObbAabb, segmentIntersectsObb, type OrientedRectangle } from "./oriented-furniture-collision";
 
 const VISION_CELLS_PER_TILE = FOG_CELLS_PER_TILE;
 const SEGMENT_BUCKET_PADDING = 12;
@@ -21,6 +22,8 @@ interface SegmentCollider {
   blocksVision: boolean;
   blocksProjectiles: boolean;
 }
+
+interface FurnitureCollider { id: string; geometry: OrientedRectangle; blocksMovement: boolean; blocksProjectiles: boolean; bucketKeys: number[] }
 
 export class CollisionSystem implements VisionGrid {
   private readonly doors: DoorDefinition[];
@@ -40,6 +43,10 @@ export class CollisionSystem implements VisionGrid {
   private readonly visionWidthCells: number;
   private readonly visionHeightCells: number;
   private readonly segmentColliders: SegmentCollider[] = [];
+  private readonly furnitureColliders = new Map<string, FurnitureCollider>();
+  private readonly furnitureBuckets: Array<Set<string>>;
+  private readonly furnitureQueryMarkers=new Map<string,number>();
+  private furnitureQueryGeneration=0;
   private readonly segmentBuckets: number[][];
   private segmentMarkers = new Uint32Array(0);
   private segmentQueryGeneration = 0;
@@ -74,6 +81,7 @@ export class CollisionSystem implements VisionGrid {
     this.lowCoverCells = new Uint8Array(this.visionWidthCells * this.visionHeightCells);
     this.segmentVisionCounts = new Uint16Array(this.visionWidthCells * this.visionHeightCells);
     this.segmentBuckets = Array.from({ length: tileCount }, () => []);
+    this.furnitureBuckets = Array.from({ length: tileCount }, () => new Set());
     this.doorSegmentIndices = new Int32Array(doors.length).fill(-1);
     this.doorSegmentActive = new Uint8Array(doors.length);
     obstacles.forEach((obstacle) => {
@@ -126,6 +134,20 @@ export class CollisionSystem implements VisionGrid {
 
   get navigationRevision(): number { return this.navigationRevisionValue; }
   get projectileCollisionRevision(): number { return this.projectileCollisionRevisionValue; }
+
+  addDynamicFurniture(id: string, geometry: OrientedRectangle, options: { blocksMovement: boolean; blocksProjectiles: boolean }): void {
+    this.removeDynamicFurniture(id);
+    const bounds=getObbAabb(geometry),bucketKeys:number[]=[];
+    this.visitWorldAabbTiles(bounds,(tileX,tileY)=>{const key=this.index(tileX,tileY);this.furnitureBuckets[key]!.add(id);bucketKeys.push(key);if(options.blocksMovement)this.dynamicHardCounts[key]!+=1;});
+    this.furnitureColliders.set(id,{id,geometry:{...geometry},...options,bucketKeys});
+    if(options.blocksMovement)this.navigationRevisionValue+=1;if(options.blocksProjectiles)this.projectileCollisionRevisionValue+=1;
+  }
+
+  removeDynamicFurniture(id: string): boolean {
+    const collider=this.furnitureColliders.get(id);if(!collider)return false;
+    for(const key of collider.bucketKeys){this.furnitureBuckets[key]!.delete(id);if(collider.blocksMovement)this.dynamicHardCounts[key]=Math.max(0,this.dynamicHardCounts[key]!-1);}
+    this.furnitureColliders.delete(id);if(collider.blocksMovement)this.navigationRevisionValue+=1;if(collider.blocksProjectiles)this.projectileCollisionRevisionValue+=1;return true;
+  }
 
   addDynamicSegment(id: string, geometry: SegmentGeometry, options: { blocksMovement: boolean; blocksVision: boolean; blocksProjectiles: boolean }): void {
     this.removeDynamicSegment(id);
@@ -194,7 +216,8 @@ export class CollisionSystem implements VisionGrid {
         if (circleIntersectsTile(x, y, radius, tileX, tileY, this.tileSize)) return true;
       }
     }
-    return this.circleHitsIndexedSegment(x, y, radius, minTileX, minTileY, maxTileX, maxTileY, "movement");
+    return this.circleHitsIndexedSegment(x, y, radius, minTileX, minTileY, maxTileX, maxTileY, "movement")
+      || this.circleHitsIndexedFurniture(x,y,radius,minTileX,minTileY,maxTileX,maxTileY,"movement");
   }
 
   canOccupyCircle(x: number, y: number, radius: number): boolean {
@@ -267,7 +290,8 @@ export class CollisionSystem implements VisionGrid {
 
   blocksProjectilesWorld(x: number, y: number): boolean {
     if (this.gridValue(this.projectileGrid, x, y)) return true;
-    return this.pointHitsIndexedSegment(x, y, "projectile");
+    const tileX=Math.floor(x/this.tileSize),tileY=Math.floor(y/this.tileSize);
+    return this.pointHitsIndexedSegment(x, y, "projectile") || (this.inBounds(tileX,tileY)&&this.circleHitsIndexedFurniture(x,y,0.001,tileX,tileY,tileX,tileY,"projectile"));
   }
 
   hasLineOfSight(from: Point, to: Point, sampleStep = 6): boolean {
@@ -282,14 +306,15 @@ export class CollisionSystem implements VisionGrid {
   }
 
   firstProjectileCollision(from: Point, to: Point, sampleStep = 4): Point | null {
+    const furnitureHit=this.firstFurnitureIntersection(from,to,"projectile");
     const distance = Math.hypot(to.x - from.x, to.y - from.y);
     const steps = Math.max(1, Math.ceil(distance / Math.min(sampleStep, 2)));
     for (let step = 1; step <= steps; step += 1) {
       const amount = step / steps;
       const point = { x: from.x + (to.x - from.x) * amount, y: from.y + (to.y - from.y) * amount };
-      if (this.blocksProjectilesWorld(point.x, point.y)) return point;
+      if (this.blocksProjectilesWorld(point.x, point.y)) return furnitureHit&&furnitureHit.amount<amount?furnitureHit.point:point;
     }
-    return null;
+    return furnitureHit?.point??null;
   }
 
   isTileBlocked(tileX: number, tileY: number): boolean {
@@ -522,8 +547,22 @@ export class CollisionSystem implements VisionGrid {
         }
       }
     }
-    return false;
+    return mode==="movement"&&this.firstFurnitureIntersection(from,to,"movement",radius)!==null;
   }
+
+  private circleHitsIndexedFurniture(x:number,y:number,radius:number,minTileX:number,minTileY:number,maxTileX:number,maxTileY:number,mode:"movement"|"projectile"):boolean{
+    const generation=this.beginFurnitureQuery();for(let tileY=minTileY;tileY<=maxTileY;tileY+=1)for(let tileX=minTileX;tileX<=maxTileX;tileX+=1){if(!this.inBounds(tileX,tileY))continue;for(const id of this.furnitureBuckets[this.index(tileX,tileY)]!){if(this.furnitureQueryMarkers.get(id)===generation)continue;this.furnitureQueryMarkers.set(id,generation);const collider=this.furnitureColliders.get(id)!;if((mode==="movement"?collider.blocksMovement:collider.blocksProjectiles)&&circleIntersectsObb(x,y,radius,collider.geometry))return true;}}return false;
+  }
+
+  private firstFurnitureIntersection(from:Point,to:Point,mode:"movement"|"projectile",padding=0):{point:Point;amount:number}|null{
+    const minTileX=Math.max(0,Math.floor((Math.min(from.x,to.x)-padding)/this.tileSize)),minTileY=Math.max(0,Math.floor((Math.min(from.y,to.y)-padding)/this.tileSize)),maxTileX=Math.min(this.widthTiles-1,Math.floor((Math.max(from.x,to.x)+padding)/this.tileSize)),maxTileY=Math.min(this.heightTiles-1,Math.floor((Math.max(from.y,to.y)+padding)/this.tileSize));
+    const generation=this.beginFurnitureQuery();let first:{point:Point;amount:number}|null=null;for(let y=minTileY;y<=maxTileY;y+=1)for(let x=minTileX;x<=maxTileX;x+=1)for(const id of this.furnitureBuckets[this.index(x,y)]!){if(this.furnitureQueryMarkers.get(id)===generation)continue;this.furnitureQueryMarkers.set(id,generation);const collider=this.furnitureColliders.get(id)!;if(!(mode==="movement"?collider.blocksMovement:collider.blocksProjectiles))continue;const hit=segmentIntersectsObb(from,to,collider.geometry,padding);if(hit&&(!first||hit.amount<first.amount))first=hit;}return first;
+  }
+
+  private visitWorldAabbTiles(bounds:{minX:number;minY:number;maxX:number;maxY:number},visitor:(tileX:number,tileY:number)=>void):void{
+    const minX=Math.max(0,Math.floor(bounds.minX/this.tileSize)),minY=Math.max(0,Math.floor(bounds.minY/this.tileSize)),maxX=Math.min(this.widthTiles-1,Math.floor(bounds.maxX/this.tileSize)),maxY=Math.min(this.heightTiles-1,Math.floor(bounds.maxY/this.tileSize));for(let y=minY;y<=maxY;y+=1)for(let x=minX;x<=maxX;x+=1)visitor(x,y);
+  }
+  private beginFurnitureQuery():number{this.furnitureQueryGeneration+=1;if(this.furnitureQueryGeneration>=Number.MAX_SAFE_INTEGER){this.furnitureQueryMarkers.clear();this.furnitureQueryGeneration=1;}return this.furnitureQueryGeneration;}
 
   private isVisionCellInBounds(cellX: number, cellY: number): boolean {
     return cellX >= 0 && cellY >= 0 && cellX < this.visionWidthCells && cellY < this.visionHeightCells;

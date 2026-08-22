@@ -4,7 +4,7 @@ import { GameSettingsStore, type GameSettings } from "../core/game-settings";
 import { GameClock } from "../core/game-clock";
 import type { SaveGame, SavedBarricadeState } from "../core/save-state";
 import { SeededRng } from "../core/seeded-rng";
-import { createCityBlockMap, getTerrain, TerrainType, type ContainerDefinition, type DoorDefinition, type WorldObstacle } from "../data/map-definitions";
+import { createCityBlockMap, CURRENT_MAP_GENERATION_VERSION, getTerrain, TerrainType, type ContainerDefinition, type DoorDefinition, type WorldObstacle } from "../data/map-definitions";
 import { assertValidMap } from "../data/map-validation";
 import { getItemDefinition, type StorageSlot } from "../data/item-definitions";
 import { getInventoryObjectDefinition, isWeaponItemId } from "../data/inventory-object-definitions";
@@ -23,7 +23,7 @@ import { Companion, type CompanionCommand } from "../entities/companion";
 import { DestructibleObstacleSystem, getZombieStructureDamage } from "../entities/destructible-obstacle";
 import { ItemDrop } from "../entities/item-drop";
 import { Player } from "../entities/player";
-import { createPlacedSegment, createPlacedStructure, getPlacedStructureCenter, normalizePlacedStructure, type PlacedStructureState, type SavedStructureState } from "../entities/placed-structure";
+import { createPlacedFurniture, createPlacedSegment, createPlacedStructure, getPlacedStructureCenter, normalizePlacedStructure, type PlacedStructureState, type SavedStructureState } from "../entities/placed-structure";
 import type { InteractionContext, WorldObject, WorldObjectKind } from "../entities/world-object";
 import { Zombie } from "../entities/zombie";
 import { FogRenderer } from "../rendering/fog-renderer";
@@ -84,8 +84,10 @@ import { StructureDurabilitySystem, getDemolitionRefund, getRepairCost } from ".
 import { deterministicStorageDropOffsets, WorldStorageContainer } from "../systems/world-storage-container";
 import { chooseBlockingStructure, getStructureAttackSlot, ZOMBIE_STRUCTURE_DAMAGE } from "../systems/zombie-structure-attack";
 import { WorldStoragePanel } from "../ui/world-storage-panel";
-import { BUILD_PREVIEW_ALPHA, INVALID_BUILD_PREVIEW_ALPHA, confirmPendingBuildPlacement, createPendingBuildPlacement, getItemBuildableId, rotatePendingBuildPlacement, shouldReportBuildPlacementFailure, updatePendingBuildPlacement, type BuildPlacementSource, type PendingBuildPlacement } from "../systems/build-placement-flow";
+import { BUILD_PREVIEW_ALPHA, INVALID_BUILD_PREVIEW_ALPHA, confirmPendingBuildPlacement, createPendingBuildPlacement, getFurniturePlacement, getItemBuildableId, rotatePendingBuildPlacement, shouldReportBuildPlacementFailure, toggleFurniturePlacementMode, updatePendingBuildPlacement, type BuildPlacementSource, type PendingBuildPlacement } from "../systems/build-placement-flow";
 import { createStructureRenderModel, drawStructureRenderModel } from "../rendering/structure-render-model";
+import { OccluderSurfaceRenderer } from "../rendering/occluder-surface-renderer";
+import { circleIntersectsObb, getObbAabb, obbIntersectsObb, type OrientedRectangle } from "../systems/oriented-furniture-collision";
 
 interface WorldSceneData {
   load?: boolean;
@@ -110,6 +112,7 @@ interface WorldKeys {
   quick4: Phaser.Input.Keyboard.Key;
   quick5: Phaser.Input.Keyboard.Key;
   build: Phaser.Input.Keyboard.Key;
+  buildGrid: Phaser.Input.Keyboard.Key;
 }
 
 interface FireRuntime extends ActiveFire {
@@ -140,6 +143,7 @@ export class WorldScene extends Phaser.Scene {
   private clock!: GameClock;
   private fog!: FogOfWarSystem;
   private fogRenderer!: FogRenderer;
+  private occluderSurfaceRenderer!:OccluderSurfaceRenderer;
   private cameraController!: CameraController;
   private mapViews!: MapViews;
   private readonly barricadeViews = new Map<string, BarricadeView>();
@@ -270,7 +274,7 @@ export class WorldScene extends Phaser.Scene {
     const mapReset = this.saveSystem.consumeIncompatibleMapReset();
     this.seed = saved?.seed ?? ((Date.now() ^ 0x5f3759df) >>> 0);
     this.rng = new SeededRng(saved?.rngState ?? this.seed);
-    this.map = createCityBlockMap(saved?.mapSeed ?? (this.seed ^ 0x6d617032));
+    this.map = createCityBlockMap(saved?.mapSeed ?? (this.seed ^ 0x6d617032),saved?.mapGenerationVersion??CURRENT_MAP_GENERATION_VERSION);
     if ((import.meta as ImportMeta & { env?: { DEV?: boolean } }).env?.DEV) assertValidMap(this.map);
     if (saved) this.restoreDoorStates(saved);
     this.collision = new CollisionSystem(
@@ -338,6 +342,7 @@ export class WorldScene extends Phaser.Scene {
     this.fog = new FogOfWarSystem(WORLD_WIDTH, WORLD_HEIGHT, FOG_CELL_SIZE, this.seed);
     if (saved) this.fog.importExplored(saved.exploredFog);
     this.fogRenderer = new FogRenderer(this, this.fog);
+    this.occluderSurfaceRenderer=new OccluderSurfaceRenderer(this,this.map);
     this.effects = new PixelEffectSystem(this, (x, y) => this.fog.getStateAtWorld(x, y) === VisibilityState.Visible);
     this.attackEffects = new AttackEffectController(this.effects);
     this.projectiles = new ProjectileSystem(this, (x, y) => this.fog.getStateAtWorld(x, y) === VisibilityState.Visible);
@@ -679,7 +684,11 @@ export class WorldScene extends Phaser.Scene {
   private restoreStructure(state: SavedStructureState | PlacedStructureState): void {
     if (!BUILDABLE_DEFINITIONS[state.kind]) return;
     const normalized = normalizePlacedStructure({ ...state, powered: false }); const definition = BUILDABLE_DEFINITIONS[normalized.kind];
-    if (normalized.placement.kind === "footprint") {
+    if (normalized.placement.kind === "furniture") {
+      const size=definition.furnitureSize!;const bounds=getObbAabb({x:normalized.placement.x,y:normalized.placement.y,angle:normalized.placement.angle,halfWidth:size.width/2,halfHeight:size.height/2});
+      if(bounds.minX<0||bounds.minY<0||bounds.maxX>WORLD_WIDTH||bounds.maxY>WORLD_HEIGHT)return;
+      this.collision.addDynamicFurniture(normalized.id,{x:normalized.placement.x,y:normalized.placement.y,angle:normalized.placement.angle,halfWidth:size.width/2,halfHeight:size.height/2},{blocksMovement:definition.blocksMovement,blocksProjectiles:definition.blocksProjectiles});
+    } else if (normalized.placement.kind === "footprint") {
       const footprint = getRotatedStructureFootprint(normalized.kind, normalized.placement.rotation);
       if (normalized.tileX < 0 || normalized.tileY < 0 || normalized.tileX + footprint.width > this.map.widthTiles || normalized.tileY + footprint.height > this.map.heightTiles) return;
       this.collision.addDynamicObstacle({ id: normalized.id, tileX: normalized.tileX, tileY: normalized.tileY, widthTiles: footprint.width, heightTiles: footprint.height, blocksMovement: definition.blocksMovement, blocksVision: definition.blocksVision, blocksProjectiles: definition.blocksProjectiles, coverHeight: normalized.kind === "wood-crate" ? "low" : "low", kind: "furniture" });
@@ -754,6 +763,7 @@ export class WorldScene extends Phaser.Scene {
       inventory: "TAB", map: "M", pause: "ESC",
       quick1: "ONE", quick2: "TWO", quick3: "THREE", quick4: "FOUR", quick5: "FIVE",
       build: "B",
+      buildGrid: "G",
     }) as unknown as WorldKeys;
     this.input.on("pointerdown", (pointer: Phaser.Input.Pointer) => {
       this.audio.unlockAndStartBgm();
@@ -843,7 +853,7 @@ export class WorldScene extends Phaser.Scene {
       onUiSound:()=>this.audio.play("ui"),
     });
     this.pauseMenu.setDeveloperMode(this.settings.developerMode);
-    this.buildCatalog = new BuildCatalogPanel(this.uiRoot, (kind) => { this.beginBuildPlacement(kind,{kind:"materials"});this.buildCatalog.update((id) => this.inventory.count(id)); });
+    this.buildCatalog = new BuildCatalogPanel(this.uiRoot, (kind) => { this.beginBuildPlacement(kind,this.settings.developerMode?{kind:"developer"}:{kind:"materials"});this.buildCatalog.update((id) => this.inventory.count(id),this.settings.developerMode); },()=>this.settings.developerMode);
     this.worldStoragePanel = new WorldStoragePanel(this.uiRoot,this.inventory,()=>{this.refreshInventoryPanel();this.saveGame(false);});
     this.buildPreview = this.add.graphics().setDepth(DEPTH.effectWorld - 10);
   }
@@ -856,6 +866,7 @@ export class WorldScene extends Phaser.Scene {
       this.buildCatalog.toggle((id) => this.inventory.count(id));
     }
     if (this.pendingBuildPlacement && Phaser.Input.Keyboard.JustDown(this.keys.reload)) rotatePendingBuildPlacement(this.pendingBuildPlacement);
+    if(this.pendingBuildPlacement&&Phaser.Input.Keyboard.JustDown(this.keys.buildGrid)){if(toggleFurniturePlacementMode(this.pendingBuildPlacement))this.hud.showMessage(`가구 배치: ${this.pendingBuildPlacement.placementMode==="free"?"자유":"격자"}`);else this.hud.showMessage("구조물은 격자 배치만 지원합니다.");}
     if (this.minimap.isVisible()) {
       if (Phaser.Input.Keyboard.JustDown(this.keys.pause)) {
         this.minimap.hide();
@@ -1321,6 +1332,7 @@ export class WorldScene extends Phaser.Scene {
         const previousState = zombie.mind.state;
         if (zombie.mind.visualLock) {
           zombie.organic.reaction = undefined;
+          const wasVisuallyLocked=zombie.mind.visualLock,lockedDistanceSquared=lockedTarget?squaredDistance(zombie.position,lockedTarget.position):Number.POSITIVE_INFINITY;
           zombie.mind = updateZombieMind(zombie.mind, {
             canSeeTarget: Boolean(sightTarget),
             targetPosition: sightTarget?.position ?? lockedTarget?.position,
@@ -1328,8 +1340,9 @@ export class WorldScene extends Phaser.Scene {
             inAttackRange: sightTarget ? distance(zombie.position, sightTarget.position) <= 17 : lockedTarget ? distance(zombie.position, lockedTarget.position) <= 17 : false,
             nowMs: this.simulationTime,
             targetAlive: lockedTarget?.alive ?? false,
-            targetDistance: lockedTarget ? distance(zombie.position, lockedTarget.position) : undefined,
+            targetDistanceSquared:lockedDistanceSquared,zombieKind:zombie.kind,zombiePosition:zombie.position,lastDamagedAt:zombie.lastDamagedAt,
           });
+          if(wasVisuallyLocked&&!zombie.mind.visualLock){zombie.path.length=0;zombie.pathIndex=0;zombie.nextPathAt=0;zombie.wanderTarget={...zombie.position};if(zombie.obstacleTargetId)this.cancelZombieObstacleTarget(zombie);zombie.organic.reaction=undefined;}
         } else if (sightTarget) {
           beginVisualReaction(
             zombie.organic,
@@ -2230,17 +2243,31 @@ export class WorldScene extends Phaser.Scene {
     this.fogInvalidation.invalidate();
   }
 
-  private manageStructure(state:PlacedStructureState):void{if(state.health<state.maximumHealth){const costs=getRepairCost(state);if(this.structureDurability.repair(state,this.inventory)){this.structureViews.get(state.id)?.refresh?.();this.hud.showMessage(`${BUILDABLE_DEFINITIONS[state.kind].name} 수리 완료 · ${costs.map((cost)=>`${getItemDefinition(cost.itemId).name} ${cost.quantity}`).join(" · ")}`);this.buildCatalog.update((id)=>this.inventory.count(id));}else this.hud.showMessage("수리 재료가 부족하거나 수리가 필요하지 않습니다.");return;}const storage=this.structureStorage.get(state.id);if(storage&&!storage.isEmpty()){this.hud.showMessage("보관함을 비운 뒤 철거할 수 있습니다.");return;}if((this.demolitionConfirmUntil.get(state.id)??0)<this.simulationTime){this.demolitionConfirmUntil.set(state.id,this.simulationTime+2_000);this.hud.showMessage("2초 안에 Shift+E를 다시 눌러 철거를 확인하세요.");return;}const refund=getDemolitionRefund(state);this.destroyPlayerStructure(state.id,false);for(const item of refund){const added=this.inventory.add(item.itemId,item.quantity);if(added<item.quantity)this.spawnDrop(item.itemId,item.quantity-added,this.player.position.x,this.player.position.y);}this.hud.showMessage(`${BUILDABLE_DEFINITIONS[state.kind].name} 철거 완료`);}
+  private manageStructure(state:PlacedStructureState):void{if(state.health<state.maximumHealth){const costs=getRepairCost(state);if(this.structureDurability.repair(state,this.inventory)){this.structureViews.get(state.id)?.refresh?.();this.hud.showMessage(`${BUILDABLE_DEFINITIONS[state.kind].name} 수리 완료 · ${costs.map((cost)=>`${getItemDefinition(cost.itemId).name} ${cost.quantity}`).join(" · ")}`);this.buildCatalog.update((id)=>this.inventory.count(id),this.settings.developerMode);}else this.hud.showMessage("수리 재료가 부족하거나 수리가 필요하지 않습니다.");return;}const storage=this.structureStorage.get(state.id);if(storage&&!storage.isEmpty()){this.hud.showMessage("보관함을 비운 뒤 철거할 수 있습니다.");return;}if((this.demolitionConfirmUntil.get(state.id)??0)<this.simulationTime){this.demolitionConfirmUntil.set(state.id,this.simulationTime+2_000);this.hud.showMessage("2초 안에 Shift+E를 다시 눌러 철거를 확인하세요.");return;}const refund=getDemolitionRefund(state);this.destroyPlayerStructure(state.id,false);for(const item of refund){const added=this.inventory.add(item.itemId,item.quantity);if(added<item.quantity)this.spawnDrop(item.itemId,item.quantity-added,this.player.position.x,this.player.position.y);}this.hud.showMessage(`${BUILDABLE_DEFINITIONS[state.kind].name} 철거 완료`);}
 
   private beginBuildPlacement(buildableId:BuildableKind,source:BuildPlacementSource):void{if(!BUILDABLE_DEFINITIONS[buildableId])return;this.pendingBuildPlacement=createPendingBuildPlacement(buildableId,source);this.buildStartAnchor=undefined;this.commandPanel.hide();this.pendingCompanionCommand=undefined;this.cancelMeleeAction();}
 
-  private isBuildPlacementSourceValid(pending:PendingBuildPlacement):boolean{if(!BUILDABLE_DEFINITIONS[pending.buildableId])return false;if(pending.source.kind==="materials")return true;const item=this.inventory.getItem(pending.source.instanceId);return Boolean(item&&item.itemId===pending.source.itemId&&item.quantity>0&&getItemBuildableId(item.itemId)===pending.buildableId);}
-  private hasBuildPlacementCost(pending:PendingBuildPlacement,quantity=1):boolean{if(!this.isBuildPlacementSourceValid(pending))return false;if(pending.source.kind==="item")return true;return getBuildCostItems(BUILDABLE_DEFINITIONS[pending.buildableId]).every((cost)=>this.inventory.count(cost.itemId)>=cost.quantity*quantity);}
+  private isBuildPlacementSourceValid(pending:PendingBuildPlacement):boolean{if(!BUILDABLE_DEFINITIONS[pending.buildableId])return false;if(pending.source.kind==="developer")return this.settings.developerMode;if(pending.source.kind==="materials")return true;const item=this.inventory.getItem(pending.source.instanceId);return Boolean(item&&item.itemId===pending.source.itemId&&item.quantity>0&&getItemBuildableId(item.itemId)===pending.buildableId);}
+  private hasBuildPlacementCost(pending:PendingBuildPlacement,quantity=1):boolean{if(!this.isBuildPlacementSourceValid(pending))return false;if(pending.source.kind==="item"||pending.source.kind==="developer")return true;return getBuildCostItems(BUILDABLE_DEFINITIONS[pending.buildableId]).every((cost)=>this.inventory.count(cost.itemId)>=cost.quantity*quantity);}
 
-  private confirmBuildPlacement(world:Point):void{const pending=this.pendingBuildPlacement;if(!pending)return;const definition=BUILDABLE_DEFINITIONS[pending.buildableId];if(definition.placementKind==="segment"&&!this.buildStartAnchor){this.buildStartAnchor=snapStructureAnchor(world);pending.snappedX=Number.NaN;pending.snappedY=Number.NaN;this.hud.showMessage("끝 anchor를 선택하세요. 취소: 우클릭/ESC");return;}
-    const footprint=definition.placementKind==="footprint"?getRotatedStructureFootprint(pending.buildableId,pending.rotation):undefined;const tileX=Math.floor(world.x/TILE_SIZE),tileY=Math.floor(world.y/TILE_SIZE);const segments=definition.placementKind==="segment"?createOrientedSegmentChain(pending.buildableId as SegmentBuildableKind,this.buildStartAnchor!,world,pending.rotation):[];const quantity=Math.max(1,segments.length);const placementFailure=()=>!this.hasBuildPlacementCost(pending,quantity)?"missing-source":definition.placementKind==="footprint"?this.validateFootprintPlacement(pending.buildableId,tileX,tileY,footprint!.width,footprint!.height):segments.length>0&&this.validateSegmentChain(segments)?null:"invalid-placement";const validate=()=>placementFailure()===null;updatePendingBuildPlacement(pending,definition.placementKind==="footprint"?tileX:Math.round(world.x),definition.placementKind==="footprint"?tileY:Math.round(world.y),placementFailure,true);
-    const inventoryBefore=this.inventory.snapshot(),createdIds:string[]=[];const success=confirmPendingBuildPlacement(pending,{validateSource:()=>this.hasBuildPlacementCost(pending,quantity),validatePlacement:validate,consumeSource:()=>{if(pending.source.kind==="item")return this.inventory.dropInstance(pending.source.instanceId,1)?.quantity===1;for(const cost of getBuildCostItems(definition)){if(this.inventory.count(cost.itemId)<cost.quantity*quantity)return false;}for(const cost of getBuildCostItems(definition))if(!this.inventory.remove(cost.itemId,cost.quantity*quantity))return false;return true;},restoreSource:()=>this.inventory.restore(inventoryBefore),create:()=>{if(definition.placementKind==="footprint"){const id=this.reserveStructureId();createdIds.push(id);const state=createPlacedStructure(id,pending.buildableId,tileX,tileY,pending.rotation,this.structureCounter);this.restoreStructure(state);if(!this.structureRegistry.get(id))throw new Error("structure registration failed");this.registerStructureObject(this.structureRegistry.get(id)!);}else for(const segment of segments){const id=this.reserveStructureId();createdIds.push(id);const state=createPlacedSegment(id,pending.buildableId as SegmentBuildableKind,segment.startX,segment.startY,segment.endX,segment.endY,this.structureCounter,pending.hingeSide);this.restoreStructure(state);if(!this.structureRegistry.get(id))throw new Error("segment registration failed");this.registerStructureObject(this.structureRegistry.get(id)!);}},rollbackCreate:()=>{for(const id of createdIds)this.removeStructureRuntime(id);}});
-    if(!success){this.reportBuildPlacementFailure(pending.invalidReason??(this.hasBuildPlacementCost(pending,quantity)?"invalid-placement":"missing-source"));return;}this.afterStructureTopologyChange();const built=this.structureRegistry.get(createdIds[0]!);if(built){const center=getPlacedStructureCenter(built);this.effects.emitFootstepDust(center.x,center.y,0,false,"ground",++this.ambientEffectSequence,this.simulationTime);}this.audio.play("craft");this.hud.showMessage(`${definition.name} 설치 완료`);this.closeBuildMode();this.refreshInventoryPanel();}
+  private confirmBuildPlacement(world:Point):void{const pending=this.pendingBuildPlacement;if(!pending)return;const definition=BUILDABLE_DEFINITIONS[pending.buildableId];if(definition.placementClass==="furniture"){this.confirmFurniturePlacement(pending,world);return;}if(definition.placementKind==="segment"&&!this.buildStartAnchor){this.buildStartAnchor=snapStructureAnchor(world);pending.snappedX=Number.NaN;pending.snappedY=Number.NaN;this.hud.showMessage("끝 anchor를 선택하세요. 취소: 우클릭/ESC");return;}
+    const footprint=definition.placementKind==="footprint"?getRotatedStructureFootprint(pending.buildableId,pending.rotation):undefined;const tileX=Math.floor(world.x/TILE_SIZE),tileY=Math.floor(world.y/TILE_SIZE);const generatedSegments=definition.placementKind==="segment"?createOrientedSegmentChain(pending.buildableId as SegmentBuildableKind,this.buildStartAnchor!,world,pending.rotation):[],segments=pending.source.kind==="developer"?generatedSegments.slice(0,1):generatedSegments;const quantity=Math.max(1,segments.length);const placementFailure=()=>!this.hasBuildPlacementCost(pending,quantity)?"missing-source":definition.placementKind==="footprint"?this.validateFootprintPlacement(pending.buildableId,tileX,tileY,footprint!.width,footprint!.height):segments.length>0&&this.validateSegmentChain(segments)?null:"invalid-placement";const validate=()=>placementFailure()===null;updatePendingBuildPlacement(pending,definition.placementKind==="footprint"?tileX:Math.round(world.x),definition.placementKind==="footprint"?tileY:Math.round(world.y),placementFailure,true);
+    const inventoryBefore=this.inventory.snapshot(),createdIds:string[]=[];const success=confirmPendingBuildPlacement(pending,{validateSource:()=>this.hasBuildPlacementCost(pending,quantity),validatePlacement:validate,consumeSource:()=>{if(pending.source.kind==="developer")return true;if(pending.source.kind==="item")return this.inventory.dropInstance(pending.source.instanceId,1)?.quantity===1;for(const cost of getBuildCostItems(definition)){if(this.inventory.count(cost.itemId)<cost.quantity*quantity)return false;}for(const cost of getBuildCostItems(definition))if(!this.inventory.remove(cost.itemId,cost.quantity*quantity))return false;return true;},restoreSource:()=>this.inventory.restore(inventoryBefore),create:()=>{if(definition.placementKind==="footprint"){const id=this.reserveStructureId();createdIds.push(id);const state=createPlacedStructure(id,pending.buildableId,tileX,tileY,pending.rotation,this.structureCounter);this.restoreStructure(state);if(!this.structureRegistry.get(id))throw new Error("structure registration failed");this.registerStructureObject(this.structureRegistry.get(id)!);}else for(const segment of segments){const id=this.reserveStructureId();createdIds.push(id);const state=createPlacedSegment(id,pending.buildableId as SegmentBuildableKind,segment.startX,segment.startY,segment.endX,segment.endY,this.structureCounter,pending.hingeSide);this.restoreStructure(state);if(!this.structureRegistry.get(id))throw new Error("segment registration failed");this.registerStructureObject(this.structureRegistry.get(id)!);}},rollbackCreate:()=>{for(const id of createdIds)this.removeStructureRuntime(id);}});
+    if(!success){this.reportBuildPlacementFailure(pending.invalidReason??(this.hasBuildPlacementCost(pending,quantity)?"invalid-placement":"missing-source"));return;}this.afterStructureTopologyChange();const built=this.structureRegistry.get(createdIds[0]!);if(built){const center=getPlacedStructureCenter(built);this.effects.emitFootstepDust(center.x,center.y,0,false,"ground",++this.ambientEffectSequence,this.simulationTime);}this.audio.play("craft");this.hud.showMessage(`${definition.name} 설치 완료`);if(pending.source.kind==="developer"){this.buildStartAnchor=undefined;pending.snappedX=Number.NaN;pending.snappedY=Number.NaN;}else this.closeBuildMode();this.refreshInventoryPanel();}
+
+  private confirmFurniturePlacement(pending:PendingBuildPlacement,world:Point):void{
+    const definition=BUILDABLE_DEFINITIONS[pending.buildableId],placement=getFurniturePlacement(world,this.player.position,pending.placementMode,pending.angle,TILE_SIZE);pending.x=placement.x;pending.y=placement.y;pending.angle=placement.angle;
+    const placementFailure=()=>!this.hasBuildPlacementCost(pending)?"missing-source":this.validateFurniturePlacement(pending.buildableId,placement.x,placement.y,placement.angle);updatePendingBuildPlacement(pending,placement.x,placement.y,placementFailure,true);
+    const inventoryBefore=this.inventory.snapshot();let createdId:string|undefined;const success=confirmPendingBuildPlacement(pending,{validateSource:()=>this.hasBuildPlacementCost(pending),validatePlacement:()=>placementFailure()===null,consumeSource:()=>{if(pending.source.kind==="developer")return true;if(pending.source.kind==="item")return this.inventory.dropInstance(pending.source.instanceId,1)?.quantity===1;const costs=getBuildCostItems(definition);if(costs.some((cost)=>this.inventory.count(cost.itemId)<cost.quantity))return false;for(const cost of costs)this.inventory.remove(cost.itemId,cost.quantity);return true;},restoreSource:()=>this.inventory.restore(inventoryBefore),create:()=>{createdId=this.reserveStructureId();const state=createPlacedFurniture(createdId,pending.buildableId,placement.x,placement.y,placement.angle,this.structureCounter);this.restoreStructure(state);const built=this.structureRegistry.get(createdId);if(!built)throw new Error("furniture registration failed");this.registerStructureObject(built);},rollbackCreate:()=>{if(createdId)this.removeStructureRuntime(createdId);}});
+    if(!success){this.reportBuildPlacementFailure(pending.invalidReason??"invalid-placement");return;}this.afterStructureTopologyChange();this.effects.emitFootstepDust(placement.x,placement.y,0,false,"ground",++this.ambientEffectSequence,this.simulationTime);this.audio.play("craft");this.hud.showMessage(`${definition.name} 설치 완료`);if(pending.source.kind!=="developer")this.closeBuildMode();else{pending.snappedX=Number.NaN;pending.snappedY=Number.NaN;}this.refreshInventoryPanel();
+  }
+
+  private validateFurniturePlacement(kind:BuildableKind,x:number,y:number,angle:number):string|null{
+    const definition=BUILDABLE_DEFINITIONS[kind],size=definition.furnitureSize!,obb:OrientedRectangle={x,y,angle,halfWidth:size.width/2,halfHeight:size.height/2},bounds=getObbAabb(obb),minTileX=Math.floor(bounds.minX/TILE_SIZE),minTileY=Math.floor(bounds.minY/TILE_SIZE),maxTileX=Math.floor(bounds.maxX/TILE_SIZE),maxTileY=Math.floor(bounds.maxY/TILE_SIZE);
+    const nearby=this.structureRegistry.queryTiles(minTileX,minTileY,maxTileX,maxTileY),occupied=nearby.some((state)=>{if(state.placement.kind==="furniture"){const otherSize=BUILDABLE_DEFINITIONS[state.kind].furnitureSize!;return obbIntersectsObb(obb,{x:state.placement.x,y:state.placement.y,angle:state.placement.angle,halfWidth:otherSize.width/2,halfHeight:otherSize.height/2});}if(state.placement.kind==="segment")return circleIntersectsThickSegment(x,y,Math.max(size.width,size.height)/2,{...state.placement,thickness:BUILDABLE_DEFINITIONS[state.kind].segment!.thickness});return false;});
+    const covered:Array<{x:number;y:number}>=[];for(let tileY=minTileY;tileY<=maxTileY;tileY+=1)for(let tileX=minTileX;tileX<=maxTileX;tileX+=1)covered.push({x:tileX,y:tileY});
+    return getBuildablePlacementFailure(kind,{inBounds:bounds.minX>=0&&bounds.minY>=0&&bounds.maxX<=WORLD_WIDTH&&bounds.maxY<=WORLD_HEIGHT,blocked:covered.some((tile)=>this.collision.isTileBlocked(tile.x,tile.y)),occupiedByStructure:occupied,doorway:this.map.doors.some((door)=>circleIntersectsObb((door.tileX+.5)*TILE_SIZE,(door.tileY+.5)*TILE_SIZE,6,obb)),objective:this.map.containers.some((container)=>Boolean(container.part)&&circleIntersectsObb((container.tileX+.5)*TILE_SIZE,(container.tileY+.5)*TILE_SIZE,7,obb)),extraction:squaredDistance({x,y},this.map.extractionZone)<=(this.map.extractionZone.radius+Math.max(size.width,size.height)/2)**2,actorOccupied:[this.player,...this.companions.filter((actor)=>actor.alive),...this.zombies.filter((actor)=>actor.isAlive())].some((actor)=>circleIntersectsObb(actor.position.x,actor.position.y,7,obb)),indoor:covered.some((tile)=>this.indoorTiles[tile.y*this.map.widthTiles+tile.x]===1),roadLane:false,withinRange:isWithinBuildRange(this.player.position,{x,y}),visible:this.fog.getStateAtWorld(x,y)===VisibilityState.Visible,lineOfSight:this.collision.hasLineOfSight(this.player.position,{x,y})});
+  }
 
   private validateFootprintPlacement(kind: BuildableKind, tileX: number, tileY: number, width: number, height: number): string | null {
     const center={x:(tileX+width/2)*TILE_SIZE,y:(tileY+height/2)*TILE_SIZE}; const covered: Array<{x:number;y:number}>=[];
@@ -2262,15 +2289,16 @@ export class WorldScene extends Phaser.Scene {
   private updateBuildPreview(): void {
     const graphics=this.buildPreview,pending=this.pendingBuildPlacement;if(!graphics)return;graphics.clear();if(!pending)return;if(!this.isBuildPlacementSourceValid(pending)){this.cancelBuildPlacement();this.hud.showMessage("배치할 아이템이 없어 건축을 취소했습니다.");return;}const definition=BUILDABLE_DEFINITIONS[pending.buildableId];
     if(definition.placementKind==="segment"){const snapped=snapStructureAnchor(this.pointerWorldSnapshot);let chain:StructureSegment[];if(this.buildStartAnchor)chain=createOrientedSegmentChain(pending.buildableId as SegmentBuildableKind,this.buildStartAnchor,snapped,pending.rotation);else{const length=definition.segment!.length,directions=[{x:length,y:0},{x:length,y:length},{x:0,y:length},{x:length,y:-length}],direction=directions[pending.rotation]!;chain=[{kind:pending.buildableId as SegmentBuildableKind,startX:snapped.x,startY:snapped.y,endX:snapped.x+direction.x,endY:snapped.y+direction.y,thickness:definition.segment!.thickness}];}updatePendingBuildPlacement(pending,snapped.x,snapped.y,()=>!this.hasBuildPlacementCost(pending,chain.length)?"missing-source":chain.length>0&&this.validateSegmentChain(chain)?null:"invalid-placement");for(const segment of chain)drawStructureRenderModel(graphics,createStructureRenderModel(pending.buildableId,{kind:"segment",startX:segment.startX,startY:segment.startY,endX:segment.endX,endY:segment.endY,hingeSide:pending.hingeSide},{alpha:pending.valid?BUILD_PREVIEW_ALPHA:INVALID_BUILD_PREVIEW_ALPHA,invalid:!pending.valid}));const anchor=this.buildStartAnchor??snapped;graphics.fillStyle(pending.valid?0x80d18b:0xd65d57,.9).fillRect(anchor.x-1,anchor.y-1,3,3);return;}
+    if(definition.placementClass==="furniture"){const previousAngleBucket=Math.round(pending.angle*180/Math.PI),placement=getFurniturePlacement(this.pointerWorldSnapshot,this.player.position,pending.placementMode,pending.angle,TILE_SIZE),structureChanged=pending.validatedStructureRevision!==this.structureRegistry.revision;pending.x=placement.x;pending.y=placement.y;pending.angle=placement.angle;updatePendingBuildPlacement(pending,placement.x,placement.y,()=>!this.hasBuildPlacementCost(pending)?"missing-source":this.validateFurniturePlacement(pending.buildableId,placement.x,placement.y,placement.angle),structureChanged||previousAngleBucket!==Math.round(placement.angle*180/Math.PI));pending.validatedStructureRevision=this.structureRegistry.revision;const color=pending.valid?0x80d18b:0xd65d57,alpha=pending.valid?BUILD_PREVIEW_ALPHA:INVALID_BUILD_PREVIEW_ALPHA;drawStructureRenderModel(graphics,createStructureRenderModel(pending.buildableId,{kind:"furniture",...placement},{alpha,invalid:!pending.valid}));const size=definition.furnitureSize!;graphics.lineStyle(1,color,.9);drawObbOutline(graphics,{x:placement.x,y:placement.y,angle:placement.angle,halfWidth:size.width/2,halfHeight:size.height/2});return;}
     const footprint=getRotatedStructureFootprint(pending.buildableId,pending.rotation),tileX=Math.floor(this.pointerWorldSnapshot.x/TILE_SIZE),tileY=Math.floor(this.pointerWorldSnapshot.y/TILE_SIZE);updatePendingBuildPlacement(pending,tileX,tileY,()=>!this.hasBuildPlacementCost(pending)?"missing-source":this.validateFootprintPlacement(pending.buildableId,tileX,tileY,footprint.width,footprint.height));const color=pending.valid?0x80d18b:0xd65d57,alpha=pending.valid?BUILD_PREVIEW_ALPHA:INVALID_BUILD_PREVIEW_ALPHA;drawStructureRenderModel(graphics,createStructureRenderModel(pending.buildableId,{kind:"footprint",tileX,tileY,rotation:pending.rotation},{alpha,invalid:!pending.valid}));graphics.lineStyle(1,color,.9).strokeRect(tileX*TILE_SIZE,tileY*TILE_SIZE,footprint.width*TILE_SIZE,footprint.height*TILE_SIZE);
   }
 
   private reserveStructureId(): string { let id:string; do id=`structure-${this.seed}-${++this.structureCounter}`;while(this.structureRegistry.get(id));return id; }
-  private afterStructureTopologyChange(): void { this.rebuildPowerTopology();this.fogInvalidation.invalidate();this.buildCatalog.update((id)=>this.inventory.count(id));this.noise.emit({x:this.player.position.x,y:this.player.position.y,intensity:24,category:"craft",createdAt:this.simulationTime}); }
+  private afterStructureTopologyChange(): void { this.rebuildPowerTopology();this.fogInvalidation.invalidate();this.buildCatalog.update((id)=>this.inventory.count(id),this.settings.developerMode);this.noise.emit({x:this.player.position.x,y:this.player.position.y,intensity:24,category:"craft",createdAt:this.simulationTime}); }
   private reportBuildPlacementFailure(reason:string):void{if(!shouldReportBuildPlacementFailure(this.simulationTime,this.lastBuildFailureMessageAt))return;this.lastBuildFailureMessageAt=this.simulationTime;this.audio.play("ui");const message:Record<string,string>={"out-of-bounds":"맵 밖에는 설치할 수 없습니다.",occupied:"다른 구조물과 겹칩니다.",actor:"생존자나 좀비와 겹칩니다.",unseen:"보이지 않는 위치에는 설치할 수 없습니다.","out-of-range":"너무 멀리 떨어져 있습니다.","line-of-sight":"벽 너머에는 설치할 수 없습니다.","missing-source":"배치할 아이템 또는 재료가 없습니다."};this.hud.showMessage(message[reason]??"이 위치에는 설치할 수 없습니다.");}
   private cancelBuildPlacement():void{this.pendingBuildPlacement=undefined;this.buildStartAnchor=undefined;this.buildPreview?.clear();}
   private closeBuildMode(): void { this.buildCatalog?.hide();this.cancelBuildPlacement(); }
-  private removeStructureRuntime(id:string):PlacedStructureState|undefined{const state=this.structureRegistry.remove(id);if(!state)return undefined;this.structures=this.structures.filter((candidate)=>candidate.id!==id);const markerIndex=this.minimapStructureSources.findIndex((marker)=>marker.id===id);if(markerIndex>=0)this.minimapStructureSources.splice(markerIndex,1);if(state.placement.kind==="segment")this.collision.removeDynamicSegment(id);else this.collision.removeDynamicObstacle(id);this.structureViews.get(id)?.destroy();this.structureViews.delete(id);this.worldObjects.unregister(id);this.craftingStations.unregister(id);this.turretRuntime.delete(id);this.structureStorage.delete(id);return state;}
+  private removeStructureRuntime(id:string):PlacedStructureState|undefined{const state=this.structureRegistry.remove(id);if(!state)return undefined;this.structures=this.structures.filter((candidate)=>candidate.id!==id);const markerIndex=this.minimapStructureSources.findIndex((marker)=>marker.id===id);if(markerIndex>=0)this.minimapStructureSources.splice(markerIndex,1);if(state.placement.kind==="segment")this.collision.removeDynamicSegment(id);else if(state.placement.kind==="furniture")this.collision.removeDynamicFurniture(id);else this.collision.removeDynamicObstacle(id);this.structureViews.get(id)?.destroy();this.structureViews.delete(id);this.worldObjects.unregister(id);this.craftingStations.unregister(id);this.turretRuntime.delete(id);this.structureStorage.delete(id);return state;}
   private destroyPlayerStructure(id:string,dropStorage:boolean):void{const state=this.structureRegistry.get(id);if(!state)return;const center=getPlacedStructureCenter(state);const storage=this.structureStorage.get(id);const items=dropStorage&&storage?storage.drainForDestruction():[];const offsets=deterministicStorageDropOffsets(items.length);this.removeStructureRuntime(id);items.forEach((item,index)=>{const offset=offsets[index]!;this.spawnDrop(item.itemId,item.quantity,Math.max(6,Math.min(WORLD_WIDTH-6,center.x+offset.x)),Math.max(6,Math.min(WORLD_HEIGHT-6,center.y+offset.y)));});this.cancelZombieObstacleTargets(id);this.rebuildPowerTopology();this.fogInvalidation.invalidate();this.interactionSystem.invalidate();this.demolitionConfirmUntil.delete(id);}
 
   private updateFires(deltaSeconds: number): void {
@@ -2405,6 +2433,8 @@ export class WorldScene extends Phaser.Scene {
   private setDeveloperMode(enabled: boolean): void {
     this.settings = this.settingsStore.setDeveloperMode(enabled);
     this.pauseMenu.setDeveloperMode(enabled);
+    if(!enabled&&this.pendingBuildPlacement?.source.kind==="developer"){const costs=getBuildCostItems(BUILDABLE_DEFINITIONS[this.pendingBuildPlacement.buildableId]);if(costs.every((cost)=>this.inventory.count(cost.itemId)>=cost.quantity))this.pendingBuildPlacement.source={kind:"materials"};else{this.cancelBuildPlacement();this.hud.showMessage("재료가 없어 개발자 건축 배치를 취소했습니다.");}}
+    this.buildCatalog.update((id)=>this.inventory.count(id),enabled);
     this.refreshInventoryPanel();
     this.minimap.invalidateMarkers();
     this.hud.showMessage(`개발자 모드 ${enabled ? "켜짐" : "꺼짐"}`);
@@ -2578,7 +2608,7 @@ export class WorldScene extends Phaser.Scene {
       if (turret.kind !== "turret") continue;
       const runtime = this.turretRuntime.get(turret.id)!;
       if (!turret.powered) { runtime.target = undefined; continue; }
-      const origin = { x: tileCenter(turret.tileX), y: tileCenter(turret.tileY) };
+      const origin = getPlacedStructureCenter(turret);
       if (this.simulationTime >= runtime.nextScanAt || !runtime.target?.isAlive()) {
         runtime.nextScanAt = this.simulationTime + TURRET_SCAN_INTERVAL_MS;
         this.turretTargetScratch.length = 0;
@@ -2631,11 +2661,12 @@ export class WorldScene extends Phaser.Scene {
       torchRemaining: this.player.torchRemaining,
     }, this.clock, this.fires, this.rescuedCompanions, this.visionSources);
     for (const turret of this.structures) if (turret.kind === "turret" && turret.powered) sources.push({
-      id: `turret:${turret.id}`, x: tileCenter(turret.tileX), y: tileCenter(turret.tileY), radius: TURRET_RANGE, intensity: 1, sourceType: "turret",
+      id: `turret:${turret.id}`, ...getPlacedStructureCenter(turret), radius: TURRET_RANGE, intensity: 1, sourceType: "turret",
     });
     this.fog.recompute(sources, this.collision);
     const calculationFinished = performance.now();
     this.fogRenderer.render();
+    this.occluderSurfaceRenderer.render(this.fog,sources,this.structures,this.structureRegistry.revision*1_000_000+this.collision.visionRevision);
     this.minimap.markFogDirty(this.fog.getChangedIndices());
     const textureFinished = performance.now();
     this.performanceMonitor.recordFog(calculationFinished - calculationStarted, textureFinished - calculationFinished);
@@ -2708,6 +2739,7 @@ export class WorldScene extends Phaser.Scene {
       version: SAVE_VERSION,
       mapId: MAP_ID,
       mapVersion: MAP_VERSION,
+      mapGenerationVersion:this.map.mapGenerationVersion,
       mapSeed: this.map.mapSeed,
       seed: this.seed,
       rngState: this.rng.getSeedState(),
@@ -2840,6 +2872,7 @@ export class WorldScene extends Phaser.Scene {
     this.projectiles?.destroy();
     this.effects?.destroy();
     this.fogRenderer?.destroy();
+    this.occluderSurfaceRenderer?.destroy();
     this.hud?.destroy();
     this.dayAnnouncement?.destroy();
     this.inventoryPanel?.destroy();
@@ -2875,10 +2908,12 @@ function angleDelta(a: number, b: number): number {
 }
 
 function structureFootprintsOverlap(tileX: number, tileY: number, width: number, height: number, state: PlacedStructureState): boolean {
-  if (state.placement.kind === "segment") return false;
+  if (state.placement.kind !== "footprint") return false;
   const footprint = getRotatedStructureFootprint(state.kind, state.placement.rotation);
   return tileX < state.tileX + footprint.width && tileX + width > state.tileX && tileY < state.tileY + footprint.height && tileY + height > state.tileY;
 }
+
+function drawObbOutline(graphics:Phaser.GameObjects.Graphics,obb:OrientedRectangle):void{const c=Math.cos(obb.angle),s=Math.sin(obb.angle),ux=c*obb.halfWidth,uy=s*obb.halfWidth,vx=-s*obb.halfHeight,vy=c*obb.halfHeight,corners=[{x:obb.x-ux-vx,y:obb.y-uy-vy},{x:obb.x+ux-vx,y:obb.y+uy-vy},{x:obb.x+ux+vx,y:obb.y+uy+vy},{x:obb.x-ux+vx,y:obb.y-uy+vy}];for(let index=0;index<4;index+=1){const a=corners[index]!,b=corners[(index+1)%4]!;graphics.lineBetween(a.x,a.y,b.x,b.y);}}
 
 function rotateAngleToward(current: number, target: number, maximumStep: number): number {
   const difference = angleDelta(target, current);
