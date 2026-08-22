@@ -36,7 +36,7 @@ import { CameraController, configurePaddedCameraBounds } from "../systems/camera
 import { CollisionSystem } from "../systems/collision-system";
 import { pointSegmentDistanceSquared, visibilityProbeTowardPoint } from "../systems/collision-geometry";
 import { angleDifference, distance, getFinalZombieKnockback, type ZombieKnockbackKind } from "../systems/combat-system";
-import { chooseLocalSteering, findNearestWalkableGoal, getCompanionCombatMovement, getCompanionFollowSpeed, getCompanionStuckDuration, getWorldTileIndex, markCompanionBlocked, markCompanionRepath, selectCompanionCombatTarget, shouldOverrideCompanionGoalForCombat, updateCatchUpMode, updateCompanionStuckState } from "../systems/companion-navigation";
+import { chooseLocalSteering, findNearestWalkableGoal, getCompanionFollowSpeed, getCompanionStuckDuration, getWorldTileIndex, isCompanionAimAligned, markCompanionBlocked, markCompanionRepath, shouldOverrideCompanionGoalForCombat, updateCatchUpMode, updateCompanionCombatMovement, updateCompanionStuckState } from "../systems/companion-navigation";
 import { createFormationState, getFormationSlot, updateFormationDirection, type FormationState } from "../systems/companion-system";
 import { CraftingSystem } from "../systems/crafting-system";
 import { CraftingStationSystem, type CraftingStationRegistration } from "../systems/crafting-station-system";
@@ -58,6 +58,9 @@ import { getBuildablePlacementFailure } from "../systems/buildable-placement";
 import { GENERATOR_FUEL_SECONDS, MAX_GENERATOR_FUEL_SECONDS, POWER_TICK_MS, PowerGridSystem } from "../systems/power-grid-system";
 import { rotateTurretToward, selectTurretTarget, TURRET_AIM_TOLERANCE, TURRET_COOLDOWN_MS, TURRET_DAMAGE, TURRET_RANGE, TURRET_SCAN_INTERVAL_MS, type TurretTarget } from "../systems/turret-system";
 import { updateZombieMind, ZOMBIE_CHASE_MULTIPLIER, type Point } from "../systems/zombie-ai-system";
+import { angleDifference as motionAngleDifference, COMPANION_MOTION_PROFILE, RUNNER_MOTION_PROFILE, updateActorMotionSmoothing, WALKER_MOTION_PROFILE } from "../systems/actor-motion-smoothing";
+import { beginNoiseReaction, beginVisualReaction, consumeReadyZombieReaction, updateZombieGait } from "../systems/zombie-organic-behavior";
+import { clearCompanionTargetCommitment, updateCompanionTargetCommitment } from "../systems/companion-target-commitment";
 import { canRun, createSurvivalNeeds, getRunSpeedMultiplier, updateSurvivalNeeds } from "../systems/survival-needs-system";
 import { getHordeActivationCount, getHordeActivationIntervalMs, HORDE_SPAWN_SCAN_BUDGET, isEligibleHordeSpawn } from "../systems/gunshot-horde-system";
 import { CompanionCommandPanel } from "../ui/companion-command-panel";
@@ -1198,9 +1201,45 @@ export class WorldScene extends Phaser.Scene {
       if (zombie.mind.state === "Stagger" && this.simulationTime >= zombie.staggerUntil) {
         zombie.mind = { ...zombie.mind, state: "Chase" };
       }
-      if (zombie.mind.state === "AttackObstacle" && this.updateZombieObstacleAttack(zombie)) {
+      if (zombie.mind.state === "AttackObstacle" && this.updateZombieObstacleAttack(zombie, deltaSeconds)) {
         zombie.updateView(time, this.fog.getStateAtWorld(zombie.position.x, zombie.position.y) === VisibilityState.Visible);
         return;
+      }
+      const gaitMultiplier = updateZombieGait(zombie.organic, zombie.id, zombie.kind, zombie.mind.state, this.simulationTime);
+      zombie.motion.desiredSpeed = 0;
+      let motionUpdated = false;
+      const readyReaction = zombie.mind.state !== "Stagger" ? consumeReadyZombieReaction(zombie.organic, this.simulationTime) : undefined;
+      if (readyReaction?.kind === "visual") {
+        const reactionTarget = targets.find((target) => target.id === readyReaction.targetId && target.alive);
+        const stillVisible = Boolean(reactionTarget && this.collision.hasLineOfSight(zombie.position, reactionTarget.position));
+        if (reactionTarget && stillVisible) zombie.mind = updateZombieMind(zombie.mind, {
+          canSeeTarget: true,
+          targetPosition: reactionTarget.position,
+          targetId: reactionTarget.id,
+          inAttackRange: distance(zombie.position, reactionTarget.position) <= 17,
+          nowMs: this.simulationTime,
+        });
+        else zombie.mind = {
+          ...zombie.mind,
+          state: "SearchLastKnownPosition",
+          lastSeenTargetPosition: { x: readyReaction.stimulusX, y: readyReaction.stimulusY },
+          searchTicks: 2,
+        };
+      } else if (readyReaction?.kind === "noise") {
+        zombie.mind = updateZombieMind(zombie.mind, {
+          canSeeTarget: false,
+          nowMs: this.simulationTime,
+          heardNoise: {
+            x: readyReaction.stimulusX,
+            y: readyReaction.stimulusY,
+            category: readyReaction.noiseCategory ?? "door",
+            perceivedIntensity: readyReaction.stimulusStrength,
+            intensity: readyReaction.stimulusStrength,
+            distance: readyReaction.stimulusDistance,
+            radius: Math.max(1, readyReaction.stimulusDistance * 2),
+            createdAt: readyReaction.startedAt,
+          },
+        });
       }
       let perceivedTarget = targets.find((target) => target.id === zombie.mind.currentTargetId);
       if (this.simulationTime >= zombie.nextThinkAt && zombie.mind.state !== "Stagger") {
@@ -1208,38 +1247,73 @@ export class WorldScene extends Phaser.Scene {
         zombie.nextThinkAt = this.simulationTime + 220 + (index % 5) * 47 + (farFromPlayer ? 380 : 0);
         const lockedTarget = zombie.mind.visualLock ? targets.find((target) => target.id === zombie.mind.currentTargetId) : undefined;
         const sightTarget = this.findVisibleZombieTarget(zombie, targets);
-        const heardNoise = sightTarget ? undefined : this.noise.loudestHeard(zombie.position.x, zombie.position.y, zombie.definition.hearingMultiplier, this.simulationTime);
+        const heardNoise = sightTarget || zombie.mind.visualLock ? undefined : this.noise.loudestHeard(zombie.position.x, zombie.position.y, zombie.definition.hearingMultiplier, this.simulationTime);
         const previousState = zombie.mind.state;
-        zombie.mind = updateZombieMind(zombie.mind, {
-          canSeeTarget: Boolean(sightTarget),
-          targetPosition: sightTarget?.position,
-          targetId: sightTarget?.id,
-          inAttackRange: sightTarget ? distance(zombie.position, sightTarget.position) <= 17 : lockedTarget ? distance(zombie.position, lockedTarget.position) <= 17 : false,
-          heardNoise,
-          nowMs: this.simulationTime,
-          targetAlive: zombie.mind.visualLock ? lockedTarget?.alive ?? false : undefined,
-          targetDistance: lockedTarget ? distance(zombie.position, lockedTarget.position) : undefined,
-          ...(sightTarget ? {} : lockedTarget ? { targetPosition: lockedTarget.position, targetId: lockedTarget.id } : {}),
-        });
+        if (zombie.mind.visualLock) {
+          zombie.organic.reaction = undefined;
+          zombie.mind = updateZombieMind(zombie.mind, {
+            canSeeTarget: Boolean(sightTarget),
+            targetPosition: sightTarget?.position ?? lockedTarget?.position,
+            targetId: sightTarget?.id ?? lockedTarget?.id,
+            inAttackRange: sightTarget ? distance(zombie.position, sightTarget.position) <= 17 : lockedTarget ? distance(zombie.position, lockedTarget.position) <= 17 : false,
+            nowMs: this.simulationTime,
+            targetAlive: lockedTarget?.alive ?? false,
+            targetDistance: lockedTarget ? distance(zombie.position, lockedTarget.position) : undefined,
+          });
+        } else if (sightTarget) {
+          beginVisualReaction(
+            zombie.organic,
+            zombie.id,
+            zombie.kind,
+            this.simulationTime,
+            sightTarget.id,
+            sightTarget.position.x,
+            sightTarget.position.y,
+            distance(zombie.position, sightTarget.position),
+            17,
+          );
+        } else if (heardNoise) {
+          beginNoiseReaction(zombie.organic, zombie.id, this.simulationTime, heardNoise);
+        } else if (!zombie.organic.reaction) {
+          zombie.mind = updateZombieMind(zombie.mind, { canSeeTarget: false, nowMs: this.simulationTime });
+        }
         perceivedTarget = sightTarget ?? targets.find((target) => target.id === zombie.mind.currentTargetId);
-        if (zombie.kind === "runner" && sightTarget && previousState !== "Chase" && previousState !== "Attack") {
+        if (zombie.kind === "runner" && zombie.mind.visualLock && previousState !== "Chase" && previousState !== "Attack") {
           zombie.chargeReadyAt = this.simulationTime + 360;
         }
       }
 
       const attackTarget = perceivedTarget ?? targets.find((target) => target.id === zombie.mind.currentTargetId);
-      if (zombie.mind.state === "Attack" && attackTarget) this.updateZombieAttack(zombie, attackTarget);
+      const reaction = zombie.organic.reaction;
+      if (attackTarget) zombie.motion.desiredHeadAngle = Math.atan2(attackTarget.position.y - zombie.position.y, attackTarget.position.x - zombie.position.x);
+      else if (reaction) zombie.motion.desiredHeadAngle = Math.atan2(reaction.stimulusY - zombie.position.y, reaction.stimulusX - zombie.position.x);
+      if (reaction) {
+        zombie.motion.desiredSpeed = zombie.definition.speed * 0.15;
+      } else if (zombie.mind.state === "Attack" && attackTarget) this.updateZombieAttack(zombie, attackTarget);
       else {
         zombie.biteCompletesAt = 0;
         const goal = this.getZombieGoal(zombie, attackTarget);
         if (goal && this.simulationTime >= zombie.chargeReadyAt && zombie.mind.state !== "Stagger") {
-          this.moveZombieToward(zombie, goal, deltaSeconds, index);
+          this.moveZombieToward(zombie, goal, deltaSeconds, index, gaitMultiplier);
+          motionUpdated = true;
+        }
+      }
+      if (!motionUpdated) {
+        const profile = zombie.kind === "runner" ? RUNNER_MOTION_PROFILE : WALKER_MOTION_PROFILE;
+        updateActorMotionSmoothing(zombie.motion, profile, deltaSeconds, zombie.organic.blockedSince > 0 ? 1.5 : 1);
+        if (reaction && zombie.motion.currentSpeed > 0.5) {
+          zombie.position = this.collision.moveCircle(
+            zombie.position,
+            Math.cos(zombie.motion.currentMoveAngle) * zombie.motion.currentSpeed * deltaSeconds,
+            Math.sin(zombie.motion.currentMoveAngle) * zombie.motion.currentSpeed * deltaSeconds,
+            BALANCE.zombieRadius,
+          );
         }
       }
       if (zombie.chargeReadyAt > this.simulationTime && this.fog.getStateAtWorld(zombie.position.x, zombie.position.y) === VisibilityState.Visible) {
         drawPixelRing(this.telegraphGraphics, zombie.position.x, zombie.position.y, 11, 0xb74f43, 0.85, 2);
       }
-      zombie.aimAngle = attackTarget ? Math.atan2(attackTarget.position.y - zombie.position.y, attackTarget.position.x - zombie.position.x) : zombie.aimAngle;
+      zombie.aimAngle = zombie.motion.headAngle;
       zombie.updateView(time, this.fog.getStateAtWorld(zombie.position.x, zombie.position.y) === VisibilityState.Visible);
     });
   }
@@ -1291,7 +1365,7 @@ export class WorldScene extends Phaser.Scene {
     return undefined;
   }
 
-  private moveZombieToward(zombie: Zombie, goal: Point, deltaSeconds: number, zombieIndex: number): void {
+  private moveZombieToward(zombie: Zombie, goal: Point, deltaSeconds: number, zombieIndex: number, gaitMultiplier: number): void {
     if (zombie.pathNavigationRevision !== this.collision.navigationRevision) {
       zombie.path = []; zombie.pathIndex = 0; zombie.pathNavigationRevision = this.collision.navigationRevision;
       zombie.nextPathAt = Math.min(zombie.nextPathAt, this.simulationTime + (zombieIndex % 4) * 20);
@@ -1322,19 +1396,38 @@ export class WorldScene extends Phaser.Scene {
     );
     if (obstacle) {
       const obstaclePosition = { x: tileCenter(obstacle.tileX), y: tileCenter(obstacle.tileY) };
-      zombie.aimAngle = Math.atan2(obstaclePosition.y - zombie.position.y, obstaclePosition.x - zombie.position.x);
+      zombie.motion.desiredHeadAngle = Math.atan2(obstaclePosition.y - zombie.position.y, obstaclePosition.x - zombie.position.x);
       if (distance(zombie.position, obstaclePosition) <= OBSTACLE_BALANCE.attackRange) {
         zombie.obstacleTargetId = obstacle.id;
         zombie.mind = { ...zombie.mind, state: "AttackObstacle" };
-        this.updateZombieObstacleAttack(zombie);
+        this.updateZombieObstacleAttack(zombie, deltaSeconds);
         return;
       }
     }
-    const direction = normalize({ x: currentTarget.x - zombie.position.x, y: currentTarget.y - zombie.position.y });
+    const desiredMoveAngle = Math.atan2(currentTarget.y - zombie.position.y, currentTarget.x - zombie.position.x);
+    zombie.motion.desiredMoveAngle = desiredMoveAngle;
+    if (!zombie.mind.currentTargetId) zombie.motion.desiredHeadAngle = desiredMoveAngle;
     const chaseMultiplier = zombie.mind.state === "Chase" || zombie.mind.visualLock ? ZOMBIE_CHASE_MULTIPLIER[zombie.kind] : 1;
-    const speed = zombie.definition.speed * chaseMultiplier * this.clock.getZombieActivityMultiplier();
-    zombie.position = this.collision.moveCircle(zombie.position, direction.x * speed * deltaSeconds, direction.y * speed * deltaSeconds, BALANCE.zombieRadius);
-    zombie.aimAngle = Math.atan2(direction.y, direction.x);
+    const sharpCornerScale = Math.abs(motionAngleDifference(desiredMoveAngle, zombie.motion.currentMoveAngle)) >= Math.PI / 2 ? 0.78 : 1;
+    zombie.motion.desiredSpeed = zombie.definition.speed * chaseMultiplier * gaitMultiplier * sharpCornerScale * this.clock.getZombieActivityMultiplier();
+    const profile = zombie.kind === "runner" ? RUNNER_MOTION_PROFILE : WALKER_MOTION_PROFILE;
+    const stuckTurnMultiplier = zombie.organic.blockedSince > 0 && this.simulationTime - zombie.organic.blockedSince >= 180 ? 1.75 : 1;
+    updateActorMotionSmoothing(zombie.motion, profile, deltaSeconds, stuckTurnMultiplier);
+    const previousX = zombie.position.x;
+    const previousY = zombie.position.y;
+    const stepDistance = zombie.motion.currentSpeed * deltaSeconds;
+    zombie.position = this.collision.moveCircle(
+      zombie.position,
+      Math.cos(zombie.motion.currentMoveAngle) * stepDistance,
+      Math.sin(zombie.motion.currentMoveAngle) * stepDistance,
+      BALANCE.zombieRadius,
+    );
+    const actualDistance = Math.hypot(zombie.position.x - previousX, zombie.position.y - previousY);
+    if (stepDistance > 0.2 && actualDistance < stepDistance * 0.15) {
+      if (zombie.organic.blockedSince === 0) zombie.organic.blockedSince = this.simulationTime;
+      zombie.nextPathAt = Math.min(zombie.nextPathAt, this.simulationTime + 80);
+    } else zombie.organic.blockedSince = 0;
+    zombie.aimAngle = zombie.motion.headAngle;
     if (distance(zombie.position, goal) < 10 && (zombie.mind.state === "InvestigateNoise" || zombie.mind.state === "SearchLastKnownPosition")) {
       zombie.mind = updateZombieMind(zombie.mind, { canSeeTarget: false, reachedDestination: true, nowMs: this.simulationTime });
       zombie.path = [];
@@ -1355,7 +1448,7 @@ export class WorldScene extends Phaser.Scene {
     return findAnyAnglePath(start, goal, this.zombieNavigationQuery, maxVisited);
   }
 
-  private updateZombieObstacleAttack(zombie: Zombie): boolean {
+  private updateZombieObstacleAttack(zombie: Zombie, deltaSeconds: number): boolean {
     const id = zombie.obstacleTargetId;
     const obstacle = id ? this.destructibles.get(id) : undefined;
     if (!obstacle || obstacle.destroyed
@@ -1369,7 +1462,10 @@ export class WorldScene extends Phaser.Scene {
       this.cancelZombieObstacleTarget(zombie);
       return false;
     }
-    zombie.aimAngle = Math.atan2(position.y - zombie.position.y, position.x - zombie.position.x);
+    zombie.motion.desiredSpeed = 0;
+    zombie.motion.desiredHeadAngle = Math.atan2(position.y - zombie.position.y, position.x - zombie.position.x);
+    updateActorMotionSmoothing(zombie.motion, zombie.kind === "runner" ? RUNNER_MOTION_PROFILE : WALKER_MOTION_PROFILE, deltaSeconds, 1.75);
+    zombie.aimAngle = zombie.motion.headAngle;
     if (this.simulationTime < zombie.nextObstacleAttackAt) return true;
     const windup = Math.max(220, Math.round(zombie.definition.biteWindupMs * 0.75));
     if (zombie.obstacleAttackCompletesAt === 0) zombie.obstacleAttackCompletesAt = this.simulationTime + windup;
@@ -1577,49 +1673,54 @@ export class WorldScene extends Phaser.Scene {
     let focusTarget = explicitFocus
       ? this.zombies.find((zombie) => zombie.id === this.companion.focusTargetId && zombie.isAlive())
       : undefined;
-    if (focusTarget && this.teamVisibleZombies.includes(focusTarget)) this.companion.combatTargetLastVisibleAt = this.simulationTime;
-    if (focusTarget && this.simulationTime - this.companion.combatTargetLastVisibleAt > 1_500) focusTarget = undefined;
     if (explicitFocus && !focusTarget) {
       this.companion.command = "follow";
       this.companion.focusTargetId = undefined;
-      this.companion.combatTargetId = undefined;
+      clearCompanionTargetCommitment(this.companion.targetCommitment);
       this.companion.navigation.catchUpMode = updateCatchUpMode(false, distanceToPlayer, "follow");
       explicitFocus = false;
     }
     const automaticTargetDistance = this.companion.navigation.catchUpMode || this.companion.command === "move"
       ? COMPANION_MOVEMENT.immediateThreatDistance
       : companionWeapon.range;
-    let combatTarget = selectCompanionCombatTarget(
-      this.teamVisibleZombies,
-      this.companion.position,
-      this.companion.combatTargetId,
-      focusTarget,
-      automaticTargetDistance,
-    );
-    if (combatTarget && this.teamVisibleZombies.includes(combatTarget)) {
-      this.companion.combatTargetId = combatTarget.id;
-      this.companion.combatTargetLastVisibleAt = this.simulationTime;
-    } else if (!combatTarget && this.companion.combatTargetId
-      && this.simulationTime - this.companion.combatTargetLastVisibleAt <= 900) {
-      combatTarget = this.zombies.find((zombie) => zombie.id === this.companion.combatTargetId && zombie.isAlive());
-    }
-    if (!combatTarget) this.companion.combatTargetId = undefined;
+    const committedTarget = this.companion.targetCommitment.currentTargetId
+      ? this.zombies.find((zombie) => zombie.id === this.companion.targetCommitment.currentTargetId && zombie.isAlive())
+      : undefined;
+    const targetUpdate = this.companion.targetCommitmentUpdate;
+    targetUpdate.now = this.simulationTime;
+    targetUpdate.origin = this.companion.position;
+    targetUpdate.command = this.companion.command;
+    targetUpdate.candidates = this.teamVisibleZombies;
+    targetUpdate.currentTarget = committedTarget;
+    targetUpdate.focusTarget = focusTarget;
+    targetUpdate.maximumDistance = explicitFocus ? Number.POSITIVE_INFINITY : automaticTargetDistance;
+    targetUpdate.immediateThreatDistance = COMPANION_MOVEMENT.immediateThreatDistance;
+    const combatTargetId = updateCompanionTargetCommitment(this.companion.targetCommitment, targetUpdate);
+    const combatTarget = combatTargetId
+      ? this.zombies.find((zombie) => zombie.id === combatTargetId && zombie.isAlive())
+      : undefined;
 
     const combatDistance = combatTarget ? distance(this.companion.position, combatTarget.position) : Number.POSITIVE_INFINITY;
     const combatHasLineOfSight = Boolean(combatTarget && this.collision.hasLineOfSight(this.companion.position, combatTarget.position));
+    if (combatTarget) this.companion.motion.desiredHeadAngle = Math.atan2(
+      combatTarget.position.y - this.companion.position.y,
+      combatTarget.position.x - this.companion.position.x,
+    );
     if (combatTarget && combatHasLineOfSight && combatDistance <= companionWeapon.range) {
-      this.companion.aimAngle = Math.atan2(combatTarget.position.y - this.companion.position.y, combatTarget.position.x - this.companion.position.x);
-      if (this.simulationTime >= this.companion.nextAttackAt) {
+      const targetAngle = Math.atan2(combatTarget.position.y - this.companion.position.y, combatTarget.position.x - this.companion.position.x);
+      this.companion.motion.desiredHeadAngle = targetAngle;
+      if (this.simulationTime >= this.companion.nextAttackAt
+        && isCompanionAimAligned(this.companion.motion.headAngle, targetAngle, companionWeapon)) {
         this.companion.nextAttackAt = this.simulationTime + companionWeapon.cooldownMs;
         const shot = this.attackEffects.play({
           weapon: "pistol",
           originX: this.companion.position.x,
           originY: this.companion.position.y,
-          angle: this.companion.aimAngle,
+          angle: this.companion.motion.headAngle,
           startedAt: this.simulationTime,
           impacts: [],
         });
-        const angle = deterministicProjectileAngle(this.companion.aimAngle, companionWeapon.spreadRadians ?? 0, shot.sequence, 0, 1);
+        const angle = deterministicProjectileAngle(this.companion.motion.headAngle, companionWeapon.spreadRadians ?? 0, shot.sequence, 0, 1);
         this.spawnProjectile("ally", this.companion.id, "pistol", this.companion.position, angle, shot.sequence, 0);
         this.audio.play("remote-shot",{source:this.companion.position,listener:this.player.position});
         this.noise.emitGunshot("pistol", this.companion.position.x, this.companion.position.y, companionWeapon.noise, this.simulationTime);
@@ -1644,7 +1745,7 @@ export class WorldScene extends Phaser.Scene {
       );
       const combatMovement = !combatHasLineOfSight && shouldChase
         ? "approach"
-        : getCompanionCombatMovement(companionWeapon, combatDistance, this.companion.command, shouldChase);
+        : updateCompanionCombatMovement(this.companion.navigation, companionWeapon, combatDistance, this.companion.command, shouldChase, this.simulationTime);
       if (combatMovement === "approach") {
         requestedGoal = combatTarget.position;
       } else if (combatMovement === "retreat") {
@@ -1673,6 +1774,8 @@ export class WorldScene extends Phaser.Scene {
       : undefined;
 
     let moving = false;
+    let motionUpdated = false;
+    this.companion.motion.desiredSpeed = 0;
     if (goal && distance(this.companion.position, goal) > 10 && !(this.companion.command === "hold" && combatTarget)) {
       const goalTile = getWorldTileIndex(goal);
       if (goalTile !== this.companion.navigation.lastGoalTile) {
@@ -1737,21 +1840,34 @@ export class WorldScene extends Phaser.Scene {
           : COMPANION_MOVEMENT.baseSpeed;
         const targetDistance = distance(this.companion.position, target);
         const arrivalScale = Math.max(0.35, Math.min(1, targetDistance / 18));
-        const stepDistance = Math.min(followSpeed * arrivalScale * deltaSeconds, 7);
+        const probeDistance = Math.min(Math.max(this.companion.motion.currentSpeed, followSpeed * 0.5) * deltaSeconds, 7);
         const direction = chooseLocalSteering(
           this.companion.position,
           target,
-          stepDistance,
+          probeDistance,
           (x, y) => this.collision.canOccupyCircle(x, y, BALANCE.companionRadius),
           this.companion.steeringScratch,
         );
         if (direction) {
+          const desiredMoveAngle = Math.atan2(direction.y, direction.x);
+          this.companion.motion.desiredMoveAngle = desiredMoveAngle;
+          if (!combatTarget) this.companion.motion.desiredHeadAngle = desiredMoveAngle;
+          const cornerScale = Math.abs(motionAngleDifference(desiredMoveAngle, this.companion.motion.currentMoveAngle)) >= Math.PI / 2 ? 0.8 : 1;
+          this.companion.motion.desiredSpeed = followSpeed * arrivalScale * cornerScale;
+          updateActorMotionSmoothing(
+            this.companion.motion,
+            COMPANION_MOTION_PROFILE,
+            deltaSeconds,
+            stuckDuration >= COMPANION_MOVEMENT.stuckThresholdMs ? 1.6 : 1,
+          );
+          motionUpdated = true;
+          const stepDistance = Math.min(this.companion.motion.currentSpeed * deltaSeconds, 7);
           const previousX = this.companion.position.x;
           const previousY = this.companion.position.y;
           this.companion.position = this.collision.moveCircle(
             this.companion.position,
-            direction.x * stepDistance,
-            direction.y * stepDistance,
+            Math.cos(this.companion.motion.currentMoveAngle) * stepDistance,
+            Math.sin(this.companion.motion.currentMoveAngle) * stepDistance,
             BALANCE.companionRadius,
           );
           moving = Math.hypot(this.companion.position.x - previousX, this.companion.position.y - previousY) >= 0.05;
@@ -1759,7 +1875,6 @@ export class WorldScene extends Phaser.Scene {
             markCompanionBlocked(this.companion.navigation);
             this.companion.nextPathAt = Math.min(this.companion.nextPathAt, this.simulationTime + 60);
           }
-          if (!combatTarget) this.companion.aimAngle = Math.atan2(direction.y, direction.x);
         } else {
           markCompanionBlocked(this.companion.navigation);
           this.companion.nextPathAt = Math.min(this.companion.nextPathAt, this.simulationTime + 60);
@@ -1778,6 +1893,8 @@ export class WorldScene extends Phaser.Scene {
     } else {
       updateCompanionStuckState(this.companion.navigation, this.companion.position, this.simulationTime, false);
     }
+    if (!motionUpdated) updateActorMotionSmoothing(this.companion.motion, COMPANION_MOTION_PROFILE, deltaSeconds);
+    this.companion.aimAngle = this.companion.motion.headAngle;
     this.companion.updateView(time, this.fog.getStateAtWorld(this.companion.position.x, this.companion.position.y) === VisibilityState.Visible, moving);
   }
 
@@ -1787,6 +1904,7 @@ export class WorldScene extends Phaser.Scene {
         companion.command = "follow";
         companion.focusTargetId = undefined;
         companion.commandTarget = undefined;
+        clearCompanionTargetCommitment(companion.targetCommitment);
       }
       this.commandPanel.hide();
       this.hud.showMessage("동료 전체: 따라오겠습니다.");
@@ -1797,6 +1915,7 @@ export class WorldScene extends Phaser.Scene {
         companion.command = "hold";
         companion.focusTargetId = undefined;
         companion.commandTarget = { ...companion.position };
+        clearCompanionTargetCommitment(companion.targetCommitment);
       }
       this.commandPanel.hide();
       this.hud.showMessage("동료 전체: 각자 현재 위치를 지킵니다.");
@@ -1812,6 +1931,7 @@ export class WorldScene extends Phaser.Scene {
         companion.command = "move";
         companion.commandTarget = getFormationSlot(point, this.formation, 28, companion.formationSlotIndex);
         companion.focusTargetId = undefined;
+        clearCompanionTargetCommitment(companion.targetCommitment);
       }
       this.hud.showMessage("동료 전체: 지정 위치 대형으로 이동합니다.");
     } else {
@@ -1831,8 +1951,16 @@ export class WorldScene extends Phaser.Scene {
       for (const companion of this.rescuedCompanions) {
         companion.command = "focus";
         companion.focusTargetId = target.id;
-        companion.combatTargetId = target.id;
-        companion.combatTargetLastVisibleAt = this.simulationTime;
+        const targetUpdate = companion.targetCommitmentUpdate;
+        targetUpdate.now = this.simulationTime;
+        targetUpdate.origin = companion.position;
+        targetUpdate.command = "focus";
+        targetUpdate.candidates = this.teamVisibleZombies;
+        targetUpdate.currentTarget = undefined;
+        targetUpdate.focusTarget = target;
+        targetUpdate.maximumDistance = Number.POSITIVE_INFINITY;
+        targetUpdate.immediateThreatDistance = COMPANION_MOVEMENT.immediateThreatDistance;
+        updateCompanionTargetCommitment(companion.targetCommitment, targetUpdate);
       }
       this.hud.showMessage("동료 전체: 저 적을 집중 공격합니다.");
     }

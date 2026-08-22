@@ -203,7 +203,7 @@ export class TopDownActorView implements OutlineableEntityView {
       this.visual.rotation = visualRotation;
       this.lastVisualRotation = visualRotation;
     }
-    const poseStep = customAttacking ? Math.PI / 32 : Math.PI / 8;
+    const poseStep = customAttacking ? Math.PI / 32 : Math.PI / 16;
     const snappedPose = Math.round(poseAngle / poseStep) * poseStep;
     if (snappedPose !== this.lastAim) {
       this.aimLayer.rotation = snappedPose;
