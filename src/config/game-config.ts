@@ -57,7 +57,7 @@ export const MINIMAP = {
   localSize: 192,
   fullSize: 512,
   fullPixelsPerTile: 4,
-  updateIntervalMs: 100,
+  updateIntervalMs: 200,
 } as const;
 
 export const ENTITY_OUTLINE = {

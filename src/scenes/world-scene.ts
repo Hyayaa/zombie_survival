@@ -93,6 +93,12 @@ import { circleIntersectsObb, getObbAabb, obbIntersectsObb, type OrientedRectang
 
 interface WorldSceneData {
   load?: boolean;
+  seed?: number;
+  mapSeed?: number;
+  zombieSpawningEnabled?: boolean;
+  runtimeProfile?: boolean;
+  autoMove?: boolean;
+  mapMode?: "local" | "full";
 }
 
 interface WorldKeys {
@@ -193,6 +199,15 @@ export class WorldScene extends Phaser.Scene {
   private zombieSpawnToggle: ZombieSpawnToggleState = createZombieSpawnToggleState();
   private rng!: SeededRng;
   private seed = 0;
+  private profileSeed?: number;
+  private profileMapSeed?: number;
+  private profileZombieSpawningEnabled?: boolean;
+  private runtimeProfile = false;
+  private runtimeProfileAutoMove = false;
+  private runtimeProfileMapMode?: "local" | "full";
+  private generatedWallCount = 0;
+  private staticPropCount = 0;
+  private interactivePropCount = 0;
   private quickslots: Array<string | null> = ["bandage", "medicine", "torch", "molotov", "barricade"];
   private collectedParts = new Set<string>();
   private searchedContainers = new Set<string>();
@@ -268,6 +283,12 @@ export class WorldScene extends Phaser.Scene {
 
   init(data: WorldSceneData = {}): void {
     this.loadRequested = Boolean(data.load);
+    this.profileSeed = data.seed;
+    this.profileMapSeed = data.mapSeed;
+    this.profileZombieSpawningEnabled = data.zombieSpawningEnabled;
+    this.runtimeProfile = Boolean(data.runtimeProfile);
+    this.runtimeProfileAutoMove = Boolean(data.autoMove);
+    this.runtimeProfileMapMode = data.mapMode;
   }
 
   create(): void {
@@ -275,12 +296,15 @@ export class WorldScene extends Phaser.Scene {
     this.saveSystem = new SaveSystem(window.localStorage, SAVE_KEY);
     this.settingsStore = new GameSettingsStore(window.localStorage);
     this.settings = this.settingsStore.load();
-    this.zombieSpawnToggle = createZombieSpawnToggleState(this.settings.zombieSpawningEnabled);
+    this.zombieSpawnToggle = createZombieSpawnToggleState(this.profileZombieSpawningEnabled ?? this.settings.zombieSpawningEnabled);
     const saved = this.loadRequested ? this.saveSystem.load() : null;
     const mapReset = this.saveSystem.consumeIncompatibleMapReset();
-    this.seed = saved?.seed ?? ((Date.now() ^ 0x5f3759df) >>> 0);
+    this.seed = this.profileSeed ?? saved?.seed ?? ((Date.now() ^ 0x5f3759df) >>> 0);
     this.rng = new SeededRng(saved?.rngState ?? this.seed);
-    this.map = createCityBlockMap(saved?.mapSeed ?? (this.seed ^ 0x6d617032),saved?.mapGenerationVersion??CURRENT_MAP_GENERATION_VERSION);
+    this.map = createCityBlockMap(this.profileMapSeed ?? saved?.mapSeed ?? (this.seed ^ 0x6d617032),saved?.mapGenerationVersion??CURRENT_MAP_GENERATION_VERSION);
+    this.generatedWallCount = this.map.generatedStructures.reduce((count, structure) => count + Number(structure.buildableId === "wood-wall"), 0);
+    this.staticPropCount = this.map.districtProps?.reduce((count, prop) => count + Number(prop.placement !== "interactive-furniture"), 0) ?? 0;
+    this.interactivePropCount = this.map.districtProps?.reduce((count, prop) => count + Number(prop.placement === "interactive-furniture"), 0) ?? 0;
     if ((import.meta as ImportMeta & { env?: { DEV?: boolean } }).env?.DEV) assertValidMap(this.map);
     if (saved) this.restoreDoorStates(saved);
     this.collision = new CollisionSystem(
@@ -329,7 +353,9 @@ export class WorldScene extends Phaser.Scene {
     this.defenseActive = saved?.extraction.active ?? false;
     this.defenseRemaining = saved?.extraction.remainingSeconds ?? BALANCE.defenseSeconds;
 
-    const playerPosition = saved?.player ?? this.map.playerSpawn;
+    let playerPosition = saved?.player ?? this.map.playerSpawn;
+    const profileRoadNode = this.runtimeProfileAutoMove ? this.map.roadGraph?.nodes[0] : undefined;
+    if (profileRoadNode) playerPosition = { x: profileRoadNode.x * TILE_SIZE, y: profileRoadNode.y * TILE_SIZE };
     this.player = new Player(this, playerPosition);
     if (saved) {
       this.restorePlayer(saved);
@@ -360,12 +386,15 @@ export class WorldScene extends Phaser.Scene {
     this.telegraphGraphics = this.add.graphics().setDepth(DEPTH.propFront + 500);
 
     this.configureCamera();
+    this.mapViews.updateStaticChunks(this.cameras.main.worldView);
+    this.structureChunks.updateViewport(this.cameras.main.worldView);
     this.configureInput();
     this.createUi();
+    if (this.runtimeProfileMapMode) this.minimap.setMode(this.runtimeProfileMapMode);
     const initialDay = getInitialDayAnnouncement(Boolean(saved), this.clock.getDayNumber());
     if (initialDay !== undefined && this.dayAnnouncement.show(initialDay)) this.audio.requestDayStart();
     for (const state of this.destructibles.barricadeStates()) this.minimap.markBarricadeTile(state.tileX, state.tileY, true);
-    this.performanceMonitor = new PerformanceMonitor(this, this.uiRoot);
+    this.performanceMonitor = new PerformanceMonitor(this, this.uiRoot, this.settings.developerMode || this.runtimeProfile);
     this.recomputeFog(true);
     this.updateHud();
     this.wasInSafehouse = this.isInsideSafehouse(this.player.position);
@@ -385,7 +414,9 @@ export class WorldScene extends Phaser.Scene {
       this.updateWeaponCrosshair(true);
       this.minimap.update(time, this.getMinimapDynamicState());
       this.recordNavigationDiagnostics();
+      this.recordRuntimePerformanceCounts();
       this.performanceMonitor.update(time, this.activeZombieCount);
+      this.performanceMonitor.endFrame();
       return;
     }
     if (this.commandPanel.isOpen()) this.cancelMeleeAction();
@@ -394,8 +425,13 @@ export class WorldScene extends Phaser.Scene {
       this.updateWeaponCrosshair(true);
       this.player.updateView(this.simulationTime);
       this.updateCamera(rawDelta, false);
+      this.mapViews.updateStaticChunks(this.cameras.main.worldView);
+      this.structureChunks.updateViewport(this.cameras.main.worldView);
+      this.fogRenderer.updateViewport();
       this.recordNavigationDiagnostics();
+      this.recordRuntimePerformanceCounts();
       this.performanceMonitor.update(time, this.activeZombieCount);
+      this.performanceMonitor.endFrame();
       return;
     }
 
@@ -409,27 +445,48 @@ export class WorldScene extends Phaser.Scene {
     this.audio.updateBgm(this.noise.getGunshotPressure().value, deltaSeconds);
     this.telegraphGraphics.clear();
 
+    let sectionStarted = this.performanceMonitor.startSection();
     this.updatePlayer(deltaSeconds);
+    this.performanceMonitor.endSection("player", sectionStarted, 1);
     this.updateAutoPickup();
     this.updateFires(deltaSeconds);
     this.refreshTeamVisibleZombies();
+    sectionStarted = this.performanceMonitor.startSection();
     this.updateCompanions(time, deltaSeconds);
+    this.performanceMonitor.endSection("companion AI", sectionStarted, this.rescuedCompanions.length);
+    sectionStarted = this.performanceMonitor.startSection();
     this.updateZombies(time, deltaSeconds);
+    this.performanceMonitor.endSection("zombie AI", sectionStarted, this.activeZombieCount);
     this.updateZombieAudio();
     this.updatePowerAndTurrets(deltaSeconds);
+    sectionStarted = this.performanceMonitor.startSection();
     this.updateProjectiles(deltaSeconds);
+    this.performanceMonitor.endSection("projectiles", sectionStarted, this.projectiles.activeCount);
     this.updateObstacleViews();
     this.performanceMonitor.recordSeparationCandidates(this.applyZombieSeparation());
     this.updateSpawning();
     this.updateExtraction(deltaSeconds);
+    sectionStarted = this.performanceMonitor.startSection();
     this.effects.update(this.simulationTime, deltaSeconds);
+    this.performanceMonitor.endSection("pixel effects", sectionStarted);
     this.noise.prune(this.simulationTime);
     this.updateWorldTint();
+    sectionStarted = this.performanceMonitor.startSection();
     this.recomputeFog(false);
+    this.performanceMonitor.endSection("fog", sectionStarted, this.visionSources.length);
     this.updateCamera(rawDelta, this.pointerInsideGame);
+    sectionStarted = this.performanceMonitor.startSection();
+    this.mapViews.updateStaticChunks(this.cameras.main.worldView);
+    this.structureChunks.updateViewport(this.cameras.main.worldView);
+    this.fogRenderer.updateViewport();
+    this.performanceMonitor.endSection("map culling", sectionStarted, this.mapViews.getStaticChunkMetrics().visibleChunks);
     this.cameraFeedback.flush(this.game.loop.frame, (duration, intensity) => this.cameras.main.shake(duration, intensity));
+    sectionStarted = this.performanceMonitor.startSection();
     if (this.minimap.isVisible()) this.minimap.update(time, this.getMinimapDynamicState());
+    this.performanceMonitor.endSection("minimap", sectionStarted);
+    sectionStarted = this.performanceMonitor.startSection();
     this.updateInteractionPrompt();
+    this.performanceMonitor.endSection("world objects", sectionStarted);
     this.updateWeaponCrosshair(false);
 
     if (this.simulationTime >= this.nextHudAt) {
@@ -440,7 +497,9 @@ export class WorldScene extends Phaser.Scene {
       this.finishGame(false, this.player.vitals.infection >= 100 ? "감염이 전신으로 퍼졌습니다." : "도시에서 쓰러졌습니다.");
     }
     this.recordNavigationDiagnostics();
+    this.recordRuntimePerformanceCounts();
     this.performanceMonitor.update(time, this.activeZombieCount);
+    this.performanceMonitor.endFrame();
   }
 
   private capturePointerWorldSnapshot(): void {
@@ -959,6 +1018,11 @@ export class WorldScene extends Phaser.Scene {
 
     let moveX = Number(this.keys.right.isDown) - Number(this.keys.left.isDown);
     let moveY = Number(this.keys.down.isDown) - Number(this.keys.up.isDown);
+    if (this.runtimeProfileAutoMove) {
+      const direction = Math.floor(this.simulationTime / 4_000) % 4;
+      moveX = direction === 0 ? 1 : direction === 2 ? -1 : 0;
+      moveY = direction === 1 ? 1 : direction === 3 ? -1 : 0;
+    }
     const length = Math.hypot(moveX, moveY);
     if (length > 0) { moveX /= length; moveY /= length; }
     const wantsToRun = this.keys.run.isDown && length > 0;
@@ -2279,6 +2343,14 @@ export class WorldScene extends Phaser.Scene {
     const anchor=snapStructureAnchor(world);beginWallDrag(this.wallDrag,pending.buildableId as WallBuildableKind,anchor,pending.rotation);this.refreshWallDragPreview(anchor);
   }
 
+  private recordRuntimePerformanceCounts(): void {
+    this.performanceMonitor.recordWorldCounts(
+      this.mapViews.getStaticChunkMetrics(), this.fogRenderer.metrics(), this.generatedWallCount, this.map.doors.length,
+      this.staticPropCount, this.interactivePropCount, this.worldObjects.size, this.rescuedCompanions.length,
+      this.projectiles.activeCount, this.map.widthTiles * TILE_SIZE, this.map.heightTiles * TILE_SIZE, this.fog.widthCells, this.fog.heightCells,
+    );
+  }
+
   private refreshWallDragPreview(end:Point):void{
     const pending=this.pendingBuildPlacement;if(!pending||!this.wallDrag.active||!this.wallDrag.startAnchor||!this.wallDrag.buildableId)return;
     const snapped=snapStructureAnchor(end),chain=createOrientedSegmentChain(this.wallDrag.buildableId,this.wallDrag.startAnchor,snapped,pending.rotation);
@@ -2486,6 +2558,7 @@ export class WorldScene extends Phaser.Scene {
   private setDeveloperMode(enabled: boolean): void {
     this.settings = this.settingsStore.setDeveloperMode(enabled);
     this.pauseMenu.setDeveloperMode(enabled);
+    this.performanceMonitor.setEnabled(enabled || this.runtimeProfile);
     if(!enabled&&this.pendingBuildPlacement?.source.kind==="developer"){const costs=getBuildCostItems(BUILDABLE_DEFINITIONS[this.pendingBuildPlacement.buildableId]);if(costs.every((cost)=>this.inventory.count(cost.itemId)>=cost.quantity))this.pendingBuildPlacement.source={kind:"materials"};else{this.cancelBuildPlacement();this.hud.showMessage("재료가 없어 개발자 건축 배치를 취소했습니다.");}}
     this.refreshInventoryPanel();
     this.refreshInventoryPanel();

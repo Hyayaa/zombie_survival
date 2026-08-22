@@ -9,6 +9,12 @@ export class TitleScene extends Phaser.Scene {
   }
 
   create(): void {
+    const profile = readRuntimeProfileQuery();
+    if (profile) {
+      new SaveSystem(window.localStorage, SAVE_KEY).clear();
+      this.scene.start("world", { load: false, ...profile });
+      return;
+    }
     this.cameras.main.setBackgroundColor(0x080b0d);
     this.add.rectangle(240, 135, 470, 260, 0x12191a).setStrokeStyle(2, 0x52605b);
     this.add.text(28, 24, "LAST BLOCK", { fontFamily: "monospace", fontSize: "30px", color: "#d8e0d6", fontStyle: "bold" });
@@ -34,5 +40,22 @@ export class TitleScene extends Phaser.Scene {
     background.on("pointerout", () => { background.setFillStyle(0x273331); text.setColor("#e1e6df"); });
     background.on("pointerdown", action);
   }
+}
+
+function readRuntimeProfileQuery(): { seed: number; mapSeed: number; zombieSpawningEnabled: boolean; runtimeProfile: true; autoMove: boolean; mapMode?: "local" | "full" } | undefined {
+  if (!(import.meta as ImportMeta & { env?: { DEV?: boolean } }).env?.DEV) return undefined;
+  const query = new URLSearchParams(window.location.search);
+  if (query.get("runtimeProfile") !== "1") return undefined;
+  const seed = parseProfileSeed(query.get("seed"), 0x5a17c1);
+  const mapSeed = parseProfileSeed(query.get("mapSeed"), seed ^ 0x6d617032);
+  const requestedMap = query.get("map");
+  const mapMode = requestedMap === "local" || requestedMap === "full" ? requestedMap : undefined;
+  return { seed, mapSeed, zombieSpawningEnabled: query.get("zombies") !== "0", runtimeProfile: true, autoMove: query.get("move") === "1", mapMode };
+}
+
+function parseProfileSeed(value: string | null, fallback: number): number {
+  if (!value) return fallback >>> 0;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed >>> 0 : fallback >>> 0;
 }
 

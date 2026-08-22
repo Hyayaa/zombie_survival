@@ -145,7 +145,7 @@ describe("local and full map data", () => {
 
   it("skips updates while hidden and caps markers at 10Hz", () => {
     expect(shouldUpdateMinimap(false, 1_000, 0)).toBe(false);
-    expect(shouldUpdateMinimap(true, 99, 0)).toBe(false);
-    expect(shouldUpdateMinimap(true, 100, 0)).toBe(true);
+    expect(shouldUpdateMinimap(true, 199, 0)).toBe(false);
+    expect(shouldUpdateMinimap(true, 200, 0)).toBe(true);
   });
 });

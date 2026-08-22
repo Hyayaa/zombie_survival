@@ -4,6 +4,7 @@ import { getTerrain, TerrainType, type DoorDefinition, type MapDefinition, type 
 import { EntityOutlineController, type EntityOutlineState, type OutlineableEntityView } from "./entity-outline";
 import { DoorView } from "./obstacle-views";
 import { createStructureRenderModel,drawStructureRenderModel } from "./structure-render-model";
+import { collectVisibleChunkIndices, getCameraChunkKey, type WorldViewRect } from "./world-chunk-visibility";
 
 export class ContainerView implements OutlineableEntityView {
   private readonly outline: EntityOutlineController;
@@ -41,11 +42,22 @@ export interface MapViews {
   extractionView: ExtractionView;
   survivorMarkers: Map<string, Phaser.GameObjects.Graphics>;
   staticChunkCount: number;
+  updateStaticChunks(worldView: WorldViewRect): boolean;
+  getStaticChunkMetrics(): StaticChunkMetrics;
+}
+
+export interface StaticChunkMetrics {
+  visibleChunks: number;
+  renderedChunks: number;
+  terrainChunks: number;
+  structureChunks: number;
+  decorationChunks: number;
 }
 
 const CHUNK_TILES = 16;
 
 export function createMapRendering(scene: Phaser.Scene, map: MapDefinition): MapViews {
+  const staticChunks = new StaticWorldChunkController(map.widthTiles, map.heightTiles);
   const obstacleGrid: Array<WorldObstacle | undefined> = new Array(map.widthTiles * map.heightTiles);
   for (const obstacle of map.obstacles) {
     for (let y = obstacle.tileY; y < obstacle.tileY + obstacle.heightTiles; y += 1) {
@@ -63,8 +75,9 @@ export function createMapRendering(scene: Phaser.Scene, map: MapDefinition): Map
   for (let chunkY = 0; chunkY < map.heightTiles; chunkY += CHUNK_TILES) {
     for (let chunkX = 0; chunkX < map.widthTiles; chunkX += CHUNK_TILES) {
       const ground = scene.add.graphics().setDepth(DEPTH.ground);
-      const props = scene.add.graphics().setDepth(DEPTH.propBack + chunkY * TILE_SIZE);
-      staticChunkCount += 2;
+      let props: Phaser.GameObjects.Graphics | undefined;
+      staticChunks.add(chunkX / CHUNK_TILES, chunkY / CHUNK_TILES, ground, "terrain");
+      staticChunkCount += 1;
       const maxY = Math.min(map.heightTiles, chunkY + CHUNK_TILES);
       const maxX = Math.min(map.widthTiles, chunkX + CHUNK_TILES);
       for (let y = chunkY; y < maxY; y += 1) {
@@ -85,6 +98,11 @@ export function createMapRendering(scene: Phaser.Scene, map: MapDefinition): Map
           }
           const obstacle = obstacleGrid[index];
           if (!obstacle || obstacle.kind === "water") continue;
+          if (!props) {
+            props = scene.add.graphics().setDepth(DEPTH.propBack + chunkY * TILE_SIZE);
+            staticChunks.add(chunkX / CHUNK_TILES, chunkY / CHUNK_TILES, props, "decoration");
+            staticChunkCount += 1;
+          }
           if (obstacle.kind === "wall") {
             props.fillStyle(COLORS.wall, 1).fillRect(worldX, worldY, TILE_SIZE, TILE_SIZE);
             props.fillStyle(COLORS.wallTop, 1).fillRect(worldX, worldY, TILE_SIZE, 5);
@@ -104,7 +122,7 @@ export function createMapRendering(scene: Phaser.Scene, map: MapDefinition): Map
   }
 
   const generatedWalls=map.generatedStructures.filter((structure)=>structure.buildableId==="wood-wall");
-  if(generatedWalls.length>0){const chunks=new Map<string,Phaser.GameObjects.Graphics>();for(const structure of generatedWalls){const segment=structure.placement,midX=(segment.startX+segment.endX)/2,midY=(segment.startY+segment.endY)/2,key=`${Math.floor(midX/(CHUNK_TILES*TILE_SIZE))},${Math.floor(midY/(CHUNK_TILES*TILE_SIZE))}`;let graphics=chunks.get(key);if(!graphics){graphics=scene.add.graphics().setDepth(DEPTH.propBack);chunks.set(key,graphics);staticChunkCount+=1;}drawStructureRenderModel(graphics,createStructureRenderModel("wood-wall",{kind:"segment",...segment}));}}
+  if(generatedWalls.length>0){const chunks=new Map<string,Phaser.GameObjects.Graphics>();for(const structure of generatedWalls){const segment=structure.placement,midX=(segment.startX+segment.endX)/2,midY=(segment.startY+segment.endY)/2,chunkX=Math.floor(midX/(CHUNK_TILES*TILE_SIZE)),chunkY=Math.floor(midY/(CHUNK_TILES*TILE_SIZE)),key=`${chunkX},${chunkY}`;let graphics=chunks.get(key);if(!graphics){graphics=scene.add.graphics().setDepth(DEPTH.propBack);chunks.set(key,graphics);staticChunks.add(chunkX,chunkY,graphics,"structure");staticChunkCount+=1;}drawStructureRenderModel(graphics,createStructureRenderModel("wood-wall",{kind:"segment",...segment}));}}
   else if (map.wallSegments.length > 0) {
     const diagonalWalls = scene.add.graphics().setDepth(DEPTH.propBack);
     staticChunkCount += 1;
@@ -149,7 +167,7 @@ export function createMapRendering(scene: Phaser.Scene, map: MapDefinition): Map
 
   if(map.districtProps?.length){
     const chunks=new Map<string,Phaser.GameObjects.Graphics>();
-    for(const prop of map.districtProps){if(prop.placement==="interactive-furniture")continue;const key=`${Math.floor(prop.tileX/CHUNK_TILES)},${Math.floor(prop.tileY/CHUNK_TILES)}`;let graphics=chunks.get(key);if(!graphics){graphics=scene.add.graphics().setDepth(DEPTH.propBack+prop.tileY*TILE_SIZE);chunks.set(key,graphics);staticChunkCount+=1;}const x=prop.tileX*TILE_SIZE,y=prop.tileY*TILE_SIZE,color=prop.district==="military"?0x68735f:prop.district==="industrial"?0x766b59:prop.district==="commercial"?0x755f76:0x68716a;graphics.fillStyle(0x222827,1).fillRect(x+8,y+14,8,5);graphics.fillStyle(color,1).fillRect(x+6,y+7,12,9);}
+    for(const prop of map.districtProps){if(prop.placement==="interactive-furniture")continue;const chunkX=Math.floor(prop.tileX/CHUNK_TILES),chunkY=Math.floor(prop.tileY/CHUNK_TILES),key=`${chunkX},${chunkY}`;let graphics=chunks.get(key);if(!graphics){graphics=scene.add.graphics().setDepth(DEPTH.propBack+prop.tileY*TILE_SIZE);chunks.set(key,graphics);staticChunks.add(chunkX,chunkY,graphics,"decoration");staticChunkCount+=1;}const x=prop.tileX*TILE_SIZE,y=prop.tileY*TILE_SIZE,color=prop.district==="military"?0x68735f:prop.district==="industrial"?0x766b59:prop.district==="commercial"?0x755f76:0x68716a;graphics.fillStyle(0x222827,1).fillRect(x+8,y+14,8,5);graphics.fillStyle(color,1).fillRect(x+6,y+7,12,9);}
   }
 
   const doorViews = new Map<string, DoorView>();
@@ -177,7 +195,80 @@ export function createMapRendering(scene: Phaser.Scene, map: MapDefinition): Map
     marker.lineStyle(1, 0xd0b86d, 0.8).strokeCircle(x, y, 12);
     survivorMarkers.set(spawn.id, marker);
   }
-  return { doorViews, containerViews, extractionView, survivorMarkers, staticChunkCount };
+  return {
+    doorViews, containerViews, extractionView, survivorMarkers, staticChunkCount,
+    updateStaticChunks: (worldView) => staticChunks.update(worldView),
+    getStaticChunkMetrics: () => staticChunks.metrics(),
+  };
+}
+
+type StaticChunkLayer = "terrain" | "structure" | "decoration";
+interface StaticChunkEntry { terrain: Phaser.GameObjects.Graphics[]; structure: Phaser.GameObjects.Graphics[]; decoration: Phaser.GameObjects.Graphics[] }
+
+class StaticWorldChunkController {
+  private readonly columns: number;
+  private readonly rows: number;
+  private readonly entries: Array<StaticChunkEntry | undefined>;
+  private readonly visibleIndices: number[] = [];
+  private readonly nextVisibleIndices: number[] = [];
+  private lastCameraChunkKey = Number.NaN;
+  private renderedChunks = 0;
+  private terrainChunks = 0;
+  private structureChunks = 0;
+  private decorationChunks = 0;
+
+  constructor(private readonly widthTiles: number, private readonly heightTiles: number) {
+    this.columns = Math.ceil(widthTiles / CHUNK_TILES);
+    this.rows = Math.ceil(heightTiles / CHUNK_TILES);
+    this.entries = new Array(this.columns * this.rows);
+  }
+
+  add(chunkX: number, chunkY: number, graphics: Phaser.GameObjects.Graphics, layer: StaticChunkLayer): void {
+    if (chunkX < 0 || chunkY < 0 || chunkX >= this.columns || chunkY >= this.rows) return;
+    const index = chunkY * this.columns + chunkX;
+    const entry = this.entries[index] ?? { terrain: [], structure: [], decoration: [] };
+    this.entries[index] = entry;
+    entry[layer].push(graphics.setVisible(false));
+  }
+
+  update(worldView: WorldViewRect): boolean {
+    const cameraChunkKey = getCameraChunkKey(worldView, CHUNK_TILES, TILE_SIZE);
+    if (cameraChunkKey === this.lastCameraChunkKey) return false;
+    this.lastCameraChunkKey = cameraChunkKey;
+    for (const index of this.visibleIndices) this.setEntryVisible(index, false);
+    collectVisibleChunkIndices(worldView, {
+      worldWidthTiles: this.widthTiles, worldHeightTiles: this.heightTiles,
+      chunkTiles: CHUNK_TILES, tileSize: TILE_SIZE, marginChunks: 1,
+    }, this.nextVisibleIndices);
+    this.renderedChunks = 0;
+    this.terrainChunks = 0;
+    this.structureChunks = 0;
+    this.decorationChunks = 0;
+    for (const index of this.nextVisibleIndices) this.setEntryVisible(index, true);
+    const swap = this.visibleIndices;
+    this.visibleIndices.length = 0;
+    this.visibleIndices.push(...this.nextVisibleIndices);
+    this.nextVisibleIndices.length = 0;
+    void swap;
+    return true;
+  }
+
+  metrics(): StaticChunkMetrics {
+    return { visibleChunks: this.visibleIndices.length, renderedChunks: this.renderedChunks, terrainChunks: this.terrainChunks, structureChunks: this.structureChunks, decorationChunks: this.decorationChunks };
+  }
+
+  private setEntryVisible(index: number, visible: boolean): void {
+    const entry = this.entries[index];
+    if (!entry) return;
+    for (const graphics of entry.terrain) graphics.setVisible(visible);
+    for (const graphics of entry.structure) graphics.setVisible(visible);
+    for (const graphics of entry.decoration) graphics.setVisible(visible);
+    if (!visible) return;
+    this.terrainChunks += entry.terrain.length;
+    this.structureChunks += entry.structure.length;
+    this.decorationChunks += entry.decoration.length;
+    this.renderedChunks += entry.terrain.length + entry.structure.length + entry.decoration.length;
+  }
 }
 
 function terrainColor(terrain:TerrainType,x:number,y:number,floorColor:number):number{return terrain===TerrainType.Water?0x173747:terrain===TerrainType.RiverBank?0x59604b:terrain===TerrainType.BridgeRoad?0x4b4a45:terrain===TerrainType.Road?COLORS.road:terrain===TerrainType.Sidewalk?0x3c4240:terrain===TerrainType.Floor?(floorColor||((x+y)%2===0?COLORS.floor:COLORS.floorAlt)):((x+y)%3===0?COLORS.groundAlt:COLORS.ground);}

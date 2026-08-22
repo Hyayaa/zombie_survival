@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { TILE_SIZE } from "../config/game-config";
-import { findTilePath, findWeightedTilePath } from "../systems/pathfinding-system";
+import { findAnyAnglePath, findTilePath, findWeightedTilePath, getPathfindingWorkspaceDiagnostics } from "../systems/pathfinding-system";
 
 const center = (tile: number): number => tile * TILE_SIZE + TILE_SIZE / 2;
 
@@ -36,6 +36,19 @@ describe("findTilePath", () => {
       (fromX, fromY, toX, toY) => !(fromY === 2 && toY === 2 && ((fromX === 2 && toX === 3) || (fromX === 3 && toX === 2))),
     );
     expect(path.some((point) => Math.floor(point.y / TILE_SIZE) !== 2)).toBe(true);
+  });
+});
+
+describe("multi-city pathfinding workspace", () => {
+  it("grows generation-marked scratch arrays once instead of clearing a fixed 128x128 grid", () => {
+    expect(findTilePath({ x: center(200), y: center(200) }, { x: center(201), y: center(200) }, () => false, 10, 282, 282)).toHaveLength(1);
+    findAnyAnglePath({ x: center(200), y: center(200) }, { x: center(201), y: center(200) }, {
+      widthTiles: 282, heightTiles: 282, tileSize: TILE_SIZE, navigationRevision: 0,
+      getTraversalCost: () => 1, canTraverse: () => false, canTraverseEdge: () => false,
+    }, 1);
+    const diagnostics = getPathfindingWorkspaceDiagnostics();
+    expect(diagnostics.tileCapacity).toBeGreaterThanOrEqual(282 * 282);
+    expect(diagnostics.anyAngleCapacity).toBeGreaterThanOrEqual(282 * 282);
   });
 });
 

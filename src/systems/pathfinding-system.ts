@@ -10,9 +10,9 @@ interface Node {
 }
 
 const CELL_COUNT = MAP_WIDTH_TILES * MAP_HEIGHT_TILES;
-const bestCosts = new Uint32Array(CELL_COUNT);
-const bestGenerations = new Uint32Array(CELL_COUNT);
-const closedGenerations = new Uint32Array(CELL_COUNT);
+let bestCosts = new Uint32Array(CELL_COUNT);
+let bestGenerations = new Uint32Array(CELL_COUNT);
+let closedGenerations = new Uint32Array(CELL_COUNT);
 let pathGeneration = 0;
 
 export function findTilePath(
@@ -36,6 +36,7 @@ export function findWeightedTilePath(
   heightTiles = MAP_HEIGHT_TILES,
   canTraverseEdge?: (fromX: number, fromY: number, toX: number, toY: number) => boolean,
 ): Point[] {
+  ensureTileWorkspace(widthTiles * heightTiles);
   const startX = Math.floor(start.x / TILE_SIZE);
   const startY = Math.floor(start.y / TILE_SIZE);
   if (startX < 0 || startY < 0 || startX >= widthTiles || startY >= heightTiles) return [];
@@ -145,15 +146,16 @@ export interface NavigationQuery {
   canTraverseEdge(fromTileX: number, fromTileY: number, toTileX: number, toTileY: number): boolean;
 }
 
-const anyAngleCosts = new Float64Array(CELL_COUNT);
-const anyAngleParents = new Int32Array(CELL_COUNT);
-const anyAngleGenerations = new Uint32Array(CELL_COUNT);
-const anyAngleClosedGenerations = new Uint32Array(CELL_COUNT);
+let anyAngleCosts = new Float64Array(CELL_COUNT);
+let anyAngleParents = new Int32Array(CELL_COUNT);
+let anyAngleGenerations = new Uint32Array(CELL_COUNT);
+let anyAngleClosedGenerations = new Uint32Array(CELL_COUNT);
 let anyAngleGeneration = 0;
 
 /** Direct-line first, eight-direction Theta* with a final visibility string pull. */
 export function findAnyAnglePath(start: Point, goal: Point, query: NavigationQuery, maxVisited = 800): Point[] {
   if (query.canTraverse(start, goal)) return [{ x: goal.x, y: goal.y }];
+  ensureAnyAngleWorkspace(query.widthTiles * query.heightTiles);
   const startX = Math.floor(start.x / query.tileSize);
   const startY = Math.floor(start.y / query.tileSize);
   const goalX = Math.max(0, Math.min(query.widthTiles - 1, Math.floor(goal.x / query.tileSize)));
@@ -210,6 +212,35 @@ export function findAnyAnglePath(start: Point, goal: Point, query: NavigationQue
     }
   }
   return [];
+}
+
+export function getPathfindingWorkspaceDiagnostics(): { tileCapacity: number; anyAngleCapacity: number } {
+  return { tileCapacity: bestCosts.length, anyAngleCapacity: anyAngleCosts.length };
+}
+
+function ensureTileWorkspace(required: number): void {
+  if (required <= bestCosts.length) return;
+  const capacity = nextWorkspaceCapacity(required);
+  bestCosts = new Uint32Array(capacity);
+  bestGenerations = new Uint32Array(capacity);
+  closedGenerations = new Uint32Array(capacity);
+  pathGeneration = 0;
+}
+
+function ensureAnyAngleWorkspace(required: number): void {
+  if (required <= anyAngleCosts.length) return;
+  const capacity = nextWorkspaceCapacity(required);
+  anyAngleCosts = new Float64Array(capacity);
+  anyAngleParents = new Int32Array(capacity);
+  anyAngleGenerations = new Uint32Array(capacity);
+  anyAngleClosedGenerations = new Uint32Array(capacity);
+  anyAngleGeneration = 0;
+}
+
+function nextWorkspaceCapacity(required: number): number {
+  let capacity = CELL_COUNT;
+  while (capacity < required) capacity *= 2;
+  return capacity;
 }
 
 class IndexHeap {

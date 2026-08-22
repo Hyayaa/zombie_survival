@@ -16,6 +16,26 @@ const LEGACY_ROAD_WIDTH_TILES = 7;
 const CONNECTOR_ROAD_WIDTH_TILES = 10;
 const BRIDGE_APPROACH_TILES = 8;
 
+export interface MultiCityGenerationProfile {
+  mapSeed: number;
+  totalMs: number;
+  cityContentMs: number;
+  roadPlanningMs: number;
+  buildingRelocationMs: number;
+  riverSetupMs: number;
+  roadRasterMs: number;
+  buildingGeometryMs: number;
+  doorAccessMs: number;
+  districtPropsMs: number;
+  runtimeConversionMs: number;
+}
+
+let lastMultiCityGenerationProfile: MultiCityGenerationProfile | undefined;
+
+export function getLastMultiCityGenerationProfile(): Readonly<MultiCityGenerationProfile> | undefined {
+  return lastMultiCityGenerationProfile;
+}
+
 export function createMultiCityWorld(mapSeed: number, createSingleCity: (seed: number,kind:CityKind) => MapDefinition,mapGenerationVersion=5): MapDefinition {
   if(mapGenerationVersion>=6)return createRoadFirstMultiCityWorld(mapSeed,createSingleCity);
   return createLegacyMultiCityWorld(mapSeed,createSingleCity,mapGenerationVersion);
@@ -84,20 +104,26 @@ function createLegacyMultiCityWorld(mapSeed: number, createSingleCity: (seed: nu
 }
 
 function createRoadFirstMultiCityWorld(mapSeed:number,createSingleCity:(seed:number,kind:CityKind)=>MapDefinition):MapDefinition{
+  const totalStarted=nowMs();let stageStarted=totalStarted;
   const content=createLegacyMultiCityWorld(mapSeed,createSingleCity,6);
+  const cityContentMs=nowMs()-stageStarted;stageStarted=nowMs();
   const cities=content.worldPlan!.cities;
   const bridges=createBridgePlans(6);
   const roadSources=cities.map((city)=>({city,roads:content.roadSegments.filter((road)=>road.id.startsWith(`${city.id}:`)).map((road)=>({
     ...road,id:road.id.slice(city.id.length+1),startX:road.startX-city.originX,startY:road.startY-city.originY,endX:road.endX-city.originX,endY:road.endY-city.originY,
   }))}));
   const roadGraph=createRoadGraph(roadSources,bridges);
+  const roadPlanningMs=nowMs()-stageStarted;stageStarted=nowMs();
   nudgeBuildingsOffCorridors(content,roadGraph.edges,cities);
+  const buildingRelocationMs=nowMs()-stageStarted;stageStarted=nowMs();
   const baseTerrain=new Uint8Array(MULTI_CITY_WIDTH_TILES*MULTI_CITY_HEIGHT_TILES);
   paintRiversAndBanks(baseTerrain);
   const riverBanks=createRiverBankPolygons();
+  const riverSetupMs=nowMs()-stageStarted;stageStarted=nowMs();
   const rasterized=rasterizeRoadGraph(baseTerrain,MULTI_CITY_WIDTH_TILES,MULTI_CITY_HEIGHT_TILES,roadGraph,{
     ground:TerrainType.Ground,road:TerrainType.Road,sidewalk:TerrainType.Sidewalk,water:TerrainType.Water,riverBank:TerrainType.RiverBank,bridgeRoad:TerrainType.BridgeRoad,
   },riverBanks);
+  const roadRasterMs=nowMs()-stageStarted;stageStarted=nowMs();
   const terrain=rasterized.terrain;
   const minimapWallCoverage=new Uint8Array(terrain.length);
   for(const building of content.buildings){
@@ -114,16 +140,23 @@ function createRoadFirstMultiCityWorld(mapSeed:number,createSingleCity:(seed:num
     const measured=buildingEnvelopes.find((candidate)=>candidate.buildingId===building.id)!.clearanceTiles;
     return createBuildingLot(building,city.id,edge,Math.max(range[0],Math.min(range[1],measured)));
   });
+  const buildingGeometryMs=nowMs()-stageStarted;stageStarted=nowMs();
   const doorAccessPlans=content.doors.flatMap((door)=>{const building=door.buildingId?content.buildings.find((candidate)=>candidate.id===door.buildingId):undefined;return building?[createDoorAccessPlan(door,building,edgeByBuilding.get(building.id)!)]:[];});
   paintDoorAccessPaths(terrain,MULTI_CITY_WIDTH_TILES,MULTI_CITY_HEIGHT_TILES,doorAccessPlans,TerrainType.Road,TerrainType.Sidewalk,TerrainType.BridgeRoad);
+  const doorAccessMs=nowMs()-stageStarted;stageStarted=nowMs();
   const districtProps=createDistrictProps(cities,content.buildings,terrain,doorAccessPlans,mapSeed);
+  const districtPropsMs=nowMs()-stageStarted;stageStarted=nowMs();
   for(const prop of districtProps)if(prop.placement==="interactive-furniture")content.containers.push({id:`prop-container:${prop.id}`,tileX:prop.tileX,tileY:prop.tileY,kind:prop.district==="military"||prop.district==="industrial"?"crate":"drawer",loot:districtPropLoot(prop.district)});
   const propObstacles:WorldObstacle[]=districtProps.filter((prop)=>prop.placement==="static-obstacle").map((prop)=>({id:`prop-obstacle:${prop.id}`,tileX:prop.tileX,tileY:prop.tileY,widthTiles:1,heightTiles:1,blocksMovement:true,blocksVision:false,blocksProjectiles:true,coverHeight:"low",kind:"furniture"}));
   const obstacles=[...content.obstacles.filter((obstacle)=>obstacle.kind!=="water"),...createRiverCollisionStrips(CONNECTOR_ROAD_WIDTH_TILES),...propObstacles];
   const roadSegments=roadGraph.edges.map(edgeToRoadSegment);
   const worldPlan={...content.worldPlan!,bridges};
-  return {...content,mapId:"multi-city-v3-road-first",mapGenerationVersion:6,terrain,minimapWallCoverage,roadSegments,obstacles,worldPlan,roadGraph,reservedCorridors:rasterized.reserved,roadRenderData:rasterized.renderData,buildingLots,buildingEnvelopes,doorAccessPlans,districtProps};
+  const result={...content,mapId:"multi-city-v3-road-first",mapGenerationVersion:6,terrain,minimapWallCoverage,roadSegments,obstacles,worldPlan,roadGraph,reservedCorridors:rasterized.reserved,roadRenderData:rasterized.renderData,buildingLots,buildingEnvelopes,doorAccessPlans,districtProps};
+  const finished=nowMs();lastMultiCityGenerationProfile={mapSeed,totalMs:finished-totalStarted,cityContentMs,roadPlanningMs,buildingRelocationMs,riverSetupMs,roadRasterMs,buildingGeometryMs,doorAccessMs,districtPropsMs,runtimeConversionMs:finished-stageStarted};
+  return result;
 }
+
+function nowMs():number{return globalThis.performance?.now()??Date.now();}
 
 function edgeToRoadSegment(edge:RoadEdge):RoadSegment{const start=edge.centerline[0]!,end=edge.centerline.at(-1)!,section=ROAD_PROFILES[edge.profileId].crossSection;return{id:edge.id,kind:edge.roadClass==="connector"?"arterial":Math.abs(end.x-start.x)>0.01&&Math.abs(end.y-start.y)>0.01?"diagonal":edge.roadClass==="arterial"?"arterial":"street",startX:start.x,startY:start.y,endX:end.x,endY:end.y,widthTiles:section.roadWidthTiles,sidewalkTiles:Math.max(section.leftSidewalkTiles,section.rightSidewalkTiles),laneMarking:edge.laneMarking};}
 function nearestRoadEdge(edges:readonly RoadEdge[],x:number,y:number):RoadEdge{let best=edges[0]!,distance=Number.POSITIVE_INFINITY;for(const edge of edges){const start=edge.centerline[0]!,end=edge.centerline.at(-1)!,candidate=pointSegmentDistanceTiles(x,y,start.x,start.y,end.x,end.y);if(candidate<distance){distance=candidate;best=edge;}}return best;}
