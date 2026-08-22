@@ -23,7 +23,7 @@ import { Companion, type CompanionCommand } from "../entities/companion";
 import { DestructibleObstacleSystem, getZombieStructureDamage } from "../entities/destructible-obstacle";
 import { ItemDrop } from "../entities/item-drop";
 import { Player } from "../entities/player";
-import { createPlacedStructure, getPlacedStructureCenter, type PlacedStructureState } from "../entities/placed-structure";
+import { createPlacedSegment, createPlacedStructure, getPlacedStructureCenter, normalizePlacedStructure, type PlacedStructureState, type SavedStructureState } from "../entities/placed-structure";
 import type { InteractionContext, WorldObject, WorldObjectKind } from "../entities/world-object";
 import { Zombie } from "../entities/zombie";
 import { FogRenderer } from "../rendering/fog-renderer";
@@ -31,10 +31,11 @@ import { createMapRendering, updateDoorView, type MapViews } from "../rendering/
 import { BarricadeView } from "../rendering/obstacle-views";
 import { createPowerWirePolyline } from "../rendering/power-wire-geometry";
 import { StructureView } from "../rendering/structure-view";
+import { StructureChunkRenderer, type StructureRuntimeView } from "../rendering/structure-chunk-renderer";
 import { AudioSystem,playFirearmShotForEvent } from "../systems/audio-system";
 import { CameraController, configurePaddedCameraBounds } from "../systems/camera-controller";
 import { CollisionSystem } from "../systems/collision-system";
-import { pointSegmentDistanceSquared, visibilityProbeTowardPoint } from "../systems/collision-geometry";
+import { circleIntersectsThickSegment, pointSegmentDistanceSquared, visibilityProbeTowardPoint, type SegmentGeometry } from "../systems/collision-geometry";
 import { angleDifference, distance, getFinalZombieKnockback, type ZombieKnockbackKind } from "../systems/combat-system";
 import { chooseLocalSteering, findNearestWalkableGoal, getCompanionFollowSpeed, getCompanionStuckDuration, getWorldTileIndex, isCompanionAimAligned, markCompanionBlocked, markCompanionRepath, shouldOverrideCompanionGoalForCombat, updateCatchUpMode, updateCompanionCombatMovement, updateCompanionStuckState } from "../systems/companion-navigation";
 import { createFormationState, getFormationSlot, updateFormationDirection, type FormationState } from "../systems/companion-system";
@@ -76,6 +77,14 @@ import { HitStopSystem } from "../systems/hit-stop-system";
 import { ProjectileSystem, type ProjectileImpact, type ProjectileTarget, type ProjectileTeam, type ProjectileWeaponId } from "../systems/projectile-system";
 import { createWeaponAccuracyState, deterministicProjectileAngle, getEffectiveWeaponSpread, recordWeaponShot, recoverWeaponBloom, type WeaponMovementAccuracy } from "../systems/weapon-accuracy-system";
 import { WeaponCrosshair } from "../ui/weapon-crosshair";
+import { BuildCatalogPanel } from "../ui/build-catalog-panel";
+import { performBuildTransaction } from "../systems/build-transaction";
+import { createSegmentChain, isWithinBuildRange, segmentConflicts, snapStructureAnchor, type SegmentBuildableKind, type StructureSegment } from "../systems/structure-segment-placement";
+import { PlacedStructureRegistry } from "../systems/placed-structure-registry";
+import { StructureDurabilitySystem, getDemolitionRefund, getRepairCost } from "../systems/structure-durability-system";
+import { deterministicStorageDropOffsets, WorldStorageContainer } from "../systems/world-storage-container";
+import { chooseBlockingStructure, getStructureAttackSlot, ZOMBIE_STRUCTURE_DAMAGE } from "../systems/zombie-structure-attack";
+import { WorldStoragePanel } from "../ui/world-storage-panel";
 
 interface WorldSceneData {
   load?: boolean;
@@ -99,6 +108,7 @@ interface WorldKeys {
   quick3: Phaser.Input.Keyboard.Key;
   quick4: Phaser.Input.Keyboard.Key;
   quick5: Phaser.Input.Keyboard.Key;
+  build: Phaser.Input.Keyboard.Key;
 }
 
 interface FireRuntime extends ActiveFire {
@@ -133,7 +143,12 @@ export class WorldScene extends Phaser.Scene {
   private mapViews!: MapViews;
   private readonly barricadeViews = new Map<string, BarricadeView>();
   private structures: PlacedStructureState[] = [];
-  private readonly structureViews = new Map<string, StructureView>();
+  private readonly structureRegistry = new PlacedStructureRegistry();
+  private readonly structureDurability = new StructureDurabilitySystem();
+  private readonly structureStorage = new Map<string, WorldStorageContainer>();
+  private readonly minimapStructureSources: Array<{ id:string; position:Point; kind:string }> = [];
+  private readonly structureViews = new Map<string, StructureRuntimeView>();
+  private structureChunks!: StructureChunkRenderer;
   private readonly turretRuntime = new Map<string, { target?: Zombie; nextScanAt: number; nextFireAt: number }>();
   private readonly turretTargetScratch: TurretTarget[] = [];
   private readonly powerGrid = new PowerGridSystem();
@@ -142,6 +157,14 @@ export class WorldScene extends Phaser.Scene {
   private powerWireGraphics?: Phaser.GameObjects.Graphics;
   private indoorTiles = new Uint8Array(0);
   private structureCounter = 0;
+  private buildCatalog!: BuildCatalogPanel;
+  private buildPreview?: Phaser.GameObjects.Graphics;
+  private selectedBuildable?: BuildableKind;
+  private buildStartAnchor?: Point;
+  private buildRotation = 0;
+  private buildHingeSide: -1 | 1 = 1;
+  private readonly demolitionConfirmUntil = new Map<string, number>();
+  private worldStoragePanel!: WorldStoragePanel;
   private nextPowerTickAt = 0;
   private player!: Player;
   private companions: Companion[] = [];
@@ -281,7 +304,9 @@ export class WorldScene extends Phaser.Scene {
     this.indoorTiles = new Uint8Array(this.map.widthTiles * this.map.heightTiles);
     for (const building of this.map.buildings) for (const index of building.floorTiles) this.indoorTiles[index] = 1;
     this.powerWireGraphics = this.add.graphics().setDepth(DEPTH.propBack + 1);
-    for (const structure of saved?.structures ?? []) this.restoreStructure({ ...structure, powered: false });
+    this.structureChunks = new StructureChunkRenderer(this);
+    for (const structure of saved?.structures ?? []) this.restoreStructure(structure);
+    this.structureCounter = Math.max(this.structureCounter, saved?.nextStructureId ?? 0);
     this.rebuildPowerTopology();
 
     this.inventory = new InventorySystem(BALANCE.inventorySlots, saved?.inventory);
@@ -343,6 +368,7 @@ export class WorldScene extends Phaser.Scene {
     this.pathfindingWorkThisFrame = 0;
     this.handlePanelKeys();
     this.capturePointerWorldSnapshot();
+    this.updateBuildPreview();
     if (shouldPauseSimulationForMap(this.minimap.getMode())) {
       this.cancelMeleeAction();
       this.updateWeaponCrosshair(true);
@@ -352,7 +378,7 @@ export class WorldScene extends Phaser.Scene {
       return;
     }
     if (this.commandPanel.isOpen()) this.cancelMeleeAction();
-    if (this.inventoryPanel.isOpen() || this.pauseMenu.isOpen()) {
+    if (this.inventoryPanel.isOpen() || this.pauseMenu.isOpen() || this.worldStoragePanel.isOpen()) {
       this.cancelMeleeAction();
       this.updateWeaponCrosshair(true);
       this.player.updateView(this.simulationTime);
@@ -441,6 +467,8 @@ export class WorldScene extends Phaser.Scene {
       defenseActive: this.defenseActive,
       developerMode: this.settings.developerMode,
       cameraWorldView: this.cameras.main.worldView,
+      structures: this.minimapStructureSources,
+      structureRevision: this.structureRegistry.revision,
     };
   }
 
@@ -485,11 +513,17 @@ export class WorldScene extends Phaser.Scene {
     this.barricadeCounter = 0;
     this.barricadeViews.clear();
     this.structures = [];
+    this.structureRegistry.clear();
+    this.structureStorage.clear();
+    this.minimapStructureSources.length=0;
+    this.demolitionConfirmUntil.clear();
     this.structureViews.clear();
     this.turretRuntime.clear();
     this.turretTargetScratch.length = 0;
     this.craftingStations.clear();
     this.activeCraftingStationId = undefined;
+    this.selectedBuildable = undefined;
+    this.buildStartAnchor = undefined;
     this.indoorTiles = new Uint8Array(0);
     this.structureCounter = 0;
     this.nextPowerTickAt = 0;
@@ -642,15 +676,26 @@ export class WorldScene extends Phaser.Scene {
     this.barricadeCounter += 1;
   }
 
-  private restoreStructure(state: PlacedStructureState): void {
-    const definition = BUILDABLE_DEFINITIONS[state.kind];
-    if (state.tileX < 0 || state.tileY < 0 || state.tileX + definition.footprint.width > this.map.widthTiles || state.tileY + definition.footprint.height > this.map.heightTiles) return;
-    state.powered = false;
-    this.structures.push(state);
-    this.structureViews.set(state.id, new StructureView(this, state));
-    this.collision.addDynamicObstacle({ id: state.id, tileX: state.tileX, tileY: state.tileY, widthTiles: definition.footprint.width, heightTiles: definition.footprint.height, blocksMovement: definition.blocksMovement, blocksVision: definition.blocksVision, blocksProjectiles: definition.blocksProjectiles, coverHeight: "low", kind: "furniture" });
-    if (definition.craftingStationKind) { const position = getPlacedStructureCenter(state); this.craftingStations.register({ id: state.id, kind: definition.craftingStationKind, ...position }); }
-    if (state.kind === "turret") this.turretRuntime.set(state.id, { nextScanAt: 0, nextFireAt: 0 });
+  private restoreStructure(state: SavedStructureState | PlacedStructureState): void {
+    if (!BUILDABLE_DEFINITIONS[state.kind]) return;
+    const normalized = normalizePlacedStructure({ ...state, powered: false }); const definition = BUILDABLE_DEFINITIONS[normalized.kind];
+    if (normalized.placement.kind === "footprint") {
+      const footprint = definition.footprint!;
+      if (normalized.tileX < 0 || normalized.tileY < 0 || normalized.tileX + footprint.width > this.map.widthTiles || normalized.tileY + footprint.height > this.map.heightTiles) return;
+      this.collision.addDynamicObstacle({ id: normalized.id, tileX: normalized.tileX, tileY: normalized.tileY, widthTiles: footprint.width, heightTiles: footprint.height, blocksMovement: definition.blocksMovement, blocksVision: definition.blocksVision, blocksProjectiles: definition.blocksProjectiles, coverHeight: normalized.kind === "wood-crate" ? "low" : "low", kind: "furniture" });
+    } else {
+      const placement = normalized.placement; const segment = definition.segment!;
+      if ([placement.startX, placement.startY, placement.endX, placement.endY].some((value) => value < 0) || Math.max(placement.startX, placement.endX) > WORLD_WIDTH || Math.max(placement.startY, placement.endY) > WORLD_HEIGHT) return;
+      this.collision.addDynamicSegment(normalized.id, { ...placement, thickness: segment.thickness }, { blocksMovement: definition.blocksMovement, blocksVision: definition.blocksVision, blocksProjectiles: definition.blocksProjectiles });
+      if (normalized.kind === "wood-door" && normalized.doorOpen) this.collision.setDynamicSegmentActive(normalized.id, false);
+    }
+    normalized.powered = false;
+    this.structures.push(normalized); this.structureRegistry.register(normalized);
+    this.structureViews.set(normalized.id, normalized.kind === "wood-wall" || normalized.kind === "metal-wall" ? this.structureChunks.add(normalized) : new StructureView(this, normalized));
+    this.minimapStructureSources.push({id:normalized.id,position:getPlacedStructureCenter(normalized),kind:normalized.kind});
+    if (normalized.kind === "wood-crate") this.structureStorage.set(normalized.id, new WorldStorageContainer(`structure:${normalized.id}:storage`, 8, 6, normalized.storage));
+    if (definition.craftingStationKind) { const position = getPlacedStructureCenter(normalized); this.craftingStations.register({ id: normalized.id, kind: definition.craftingStationKind, ...position }); }
+    if (normalized.kind === "turret") this.turretRuntime.set(normalized.id, { nextScanAt: 0, nextFireAt: 0 });
     this.structureCounter += 1;
   }
 
@@ -659,13 +704,16 @@ export class WorldScene extends Phaser.Scene {
     if (!view || this.worldObjects.get(state.id)) return;
     const definition = BUILDABLE_DEFINITIONS[state.kind]; const position = getPlacedStructureCenter(state);
     const isCraftingStation = Boolean(definition.craftingStationKind);
-    this.worldObjects.register(this.makeWorldObject(state.id, isCraftingStation ? "crafting-station" : "power-structure", view, () => position, () => true, {
-      range: isCraftingStation ? 72 : 34, requiresLineOfSight: true, selectionPriority: isCraftingStation ? 16 : 10, isEnabled: () => true,
-      getPrompt: () => isCraftingStation ? `[E] ${definition.name}에서 제작` : `[E] ${definition.name} 상태 확인`, execute: () => isCraftingStation ? this.openCraftingAtStation(state.id) : this.interactWithStructure(state),
+    this.worldObjects.register(this.makeWorldObject(state.id, isCraftingStation ? "crafting-station" : state.kind === "wood-crate" ? "container" : "power-structure", view, () => position, () => true, {
+      range: definition.interactionRange, requiresLineOfSight: true, selectionPriority: isCraftingStation || state.kind === "wood-door" || state.kind === "wood-crate" ? 16 : 10, isEnabled: () => true,
+      getPrompt: () => isCraftingStation ? `[E] ${definition.name}에서 제작 · [Shift+E] 관리` : state.kind === "wood-door" ? `[E] 목재 문 ${state.doorOpen ? "닫기" : "열기"} · [Shift+E] 관리` : state.kind === "wood-crate" ? `[E] 목재 보관함 · [Shift+E] 관리` : `[E] ${definition.name} 상태 · [Shift+E] 관리`, execute: () => isCraftingStation && !this.keys.run.isDown ? this.openCraftingAtStation(state.id) : this.interactWithStructure(state),
     }));
   }
 
   private interactWithStructure(state: PlacedStructureState): void {
+    if (this.keys.run.isDown) { this.manageStructure(state); return; }
+    if (state.kind === "wood-door") { state.doorOpen = !state.doorOpen; this.collision.setDynamicSegmentActive(state.id, !state.doorOpen); this.structureViews.get(state.id)?.refresh?.(); this.fogInvalidation.invalidate(); this.hud.showMessage(`목재 문을 ${state.doorOpen ? "열었습니다" : "닫았습니다"}.`); return; }
+    if (state.kind === "wood-crate") { const storage=this.structureStorage.get(state.id);if(storage){this.closeBuildMode();this.worldStoragePanel.show(storage);} return; }
     if (state.kind === "fuel-generator" && this.inventory.count("generator_fuel") > 0 && (state.fuelSeconds ?? 0) < MAX_GENERATOR_FUEL_SECONDS) {
       this.inventory.remove("generator_fuel", 1);
       state.fuelSeconds = Math.min(MAX_GENERATOR_FUEL_SECONDS, (state.fuelSeconds ?? 0) + GENERATOR_FUEL_SECONDS);
@@ -704,12 +752,22 @@ export class WorldScene extends Phaser.Scene {
       interact: "E", reload: "R", flashlight: "F", command: "Q",
       inventory: "TAB", map: "M", pause: "ESC",
       quick1: "ONE", quick2: "TWO", quick3: "THREE", quick4: "FOUR", quick5: "FIVE",
+      build: "B",
     }) as unknown as WorldKeys;
     this.input.on("pointerdown", (pointer: Phaser.Input.Pointer) => {
       this.audio.unlockAndStartBgm();
-      if ((pointer.button !== 0 && pointer.button !== 2) || this.inventoryPanel?.isOpen() || this.pauseMenu?.isOpen() || this.minimap?.isFull()) return;
+      if ((pointer.button !== 0 && pointer.button !== 2) || this.inventoryPanel?.isOpen() || this.worldStoragePanel?.isOpen() || this.pauseMenu?.isOpen() || this.minimap?.isFull()) return;
       const world = this.cameras.main.getWorldPoint(pointer.x, pointer.y, this.pointerWorldSnapshot);
       this.player.aimAngle = Math.atan2(world.y - this.player.position.y, world.x - this.player.position.x);
+      if (this.buildCatalog?.isOpen()) {
+        if (pointer.button === 2) { this.cancelBuildSelection(); return; }
+        if (pointer.button === 0 && this.selectedBuildable) {
+          const definition = BUILDABLE_DEFINITIONS[this.selectedBuildable];
+          if (definition.placementKind === "segment") this.buildStartAnchor = snapStructureAnchor(world);
+          else this.placeBuildableFromCatalog(this.selectedBuildable, world);
+        }
+        return;
+      }
       if (pointer.button === 0 && this.pendingCompanionCommand) {
         this.applyPendingCompanionCommand(world);
         return;
@@ -721,6 +779,12 @@ export class WorldScene extends Phaser.Scene {
       } else if (pointer.button === 0) this.tryPlayerAttack();
     });
     this.input.on("pointerup", (pointer: Phaser.Input.Pointer) => {
+      if (pointer.button === 0 && this.buildCatalog?.isOpen() && this.selectedBuildable && this.buildStartAnchor) {
+        const world = this.cameras.main.getWorldPoint(pointer.x, pointer.y, this.pointerWorldSnapshot);
+        this.placeSegmentChain(this.selectedBuildable as SegmentBuildableKind, this.buildStartAnchor, world);
+        this.buildStartAnchor = undefined;
+        return;
+      }
       if (pointer.button !== 0 || !isMeleeWeaponId(this.player.equippedWeapon)) return;
       if (this.meleeAction.state.phase !== "charging") return;
       const mode = this.simulationTime - this.meleeAction.state.pressedAt >= MELEE_INPUT_BALANCE.heavyThresholdMs ? "heavy" : "stab";
@@ -788,9 +852,19 @@ export class WorldScene extends Phaser.Scene {
       onUiSound:()=>this.audio.play("ui"),
     });
     this.pauseMenu.setDeveloperMode(this.settings.developerMode);
+    this.buildCatalog = new BuildCatalogPanel(this.uiRoot, (kind) => { this.selectedBuildable = kind; this.buildStartAnchor = undefined; this.buildCatalog.update((id) => this.inventory.count(id)); });
+    this.worldStoragePanel = new WorldStoragePanel(this.uiRoot,this.inventory,()=>{this.refreshInventoryPanel();this.saveGame(false);});
+    this.buildPreview = this.add.graphics().setDepth(DEPTH.effectWorld - 10);
   }
 
   private handlePanelKeys(): void {
+    if(this.worldStoragePanel?.isOpen()){if(Phaser.Input.Keyboard.JustDown(this.keys.pause)||Phaser.Input.Keyboard.JustDown(this.keys.inventory))this.worldStoragePanel.hide();return;}
+    if (Phaser.Input.Keyboard.JustDown(this.keys.build) && !this.inventoryPanel.isOpen() && !this.pauseMenu.isOpen() && !this.minimap.isFull()) {
+      this.commandPanel.hide(); this.pendingCompanionCommand = undefined;
+      this.buildCatalog.toggle((id) => this.inventory.count(id));
+      if (!this.buildCatalog.isOpen()) this.cancelBuildSelection();
+    }
+    if (this.buildCatalog.isOpen() && Phaser.Input.Keyboard.JustDown(this.keys.reload)) { this.buildRotation = (this.buildRotation + 1) % 4; this.buildHingeSide = this.buildHingeSide === 1 ? -1 : 1; }
     if (this.minimap.isVisible()) {
       if (Phaser.Input.Keyboard.JustDown(this.keys.pause)) {
         this.minimap.hide();
@@ -803,6 +877,7 @@ export class WorldScene extends Phaser.Scene {
       if (this.minimap.isFull()) return;
     }
     if (Phaser.Input.Keyboard.JustDown(this.keys.inventory) && !this.pauseMenu.isOpen()) {
+      this.closeBuildMode();
       if (this.inventoryPanel.isOpen()) this.inventoryPanel.hide();
       else {
         this.minimap.hide();
@@ -817,6 +892,7 @@ export class WorldScene extends Phaser.Scene {
       this.audio.play("ui");
       this.commandPanel.hide();
       this.pendingCompanionCommand = undefined;
+      this.closeBuildMode();
       if (this.pauseMenu.isOpen()) this.pauseMenu.handleEscape();
       else this.pauseMenu.toggle();
     }
@@ -850,7 +926,7 @@ export class WorldScene extends Phaser.Scene {
 
     if (this.player.reloadingUntil > 0 && this.simulationTime >= this.player.reloadingUntil) this.finishReload();
     if (Phaser.Input.Keyboard.JustDown(this.keys.reload)) this.startReload();
-    if (this.player.equippedWeapon && this.input.activePointer.isDown && this.pointerInsideGame && WEAPON_DEFINITIONS[this.player.equippedWeapon].fireMode === "auto") this.tryPlayerAttack();
+    if (!this.buildCatalog.isOpen() && this.player.equippedWeapon && this.input.activePointer.isDown && this.pointerInsideGame && WEAPON_DEFINITIONS[this.player.equippedWeapon].fireMode === "auto") this.tryPlayerAttack();
     if (Phaser.Input.Keyboard.JustDown(this.keys.flashlight)) this.toggleFlashlight();
     if (Phaser.Input.Keyboard.JustDown(this.keys.interact)) {
       const target = this.interactionSystem.refreshNow(this.getInteractionContext());
@@ -1100,7 +1176,7 @@ export class WorldScene extends Phaser.Scene {
     this.crosshair.update({
       x, y, spreadRadians: spread, ranged, pointerInsideGame: this.pointerInsideGame,
       windowFocused: document.hasFocus(),
-      blocked: forceBlocked || this.gameEnded || this.inventoryPanel.isOpen() || this.pauseMenu.isOpen() || this.commandPanel.isOpen() || this.minimap.isFull(),
+      blocked: forceBlocked || this.gameEnded || this.buildCatalog.isOpen() || this.inventoryPanel.isOpen() || this.worldStoragePanel.isOpen() || this.pauseMenu.isOpen() || this.commandPanel.isOpen() || this.minimap.isFull(),
       now: this.simulationTime,
     });
   }
@@ -1389,7 +1465,10 @@ export class WorldScene extends Phaser.Scene {
     }
     const waypoint = zombie.path[zombie.pathIndex] ?? goal;
     if (distance(zombie.position, waypoint) < 7 && zombie.pathIndex < zombie.path.length - 1) zombie.pathIndex += 1;
-    const currentTarget = zombie.path[zombie.pathIndex] ?? goal;
+    let currentTarget = zombie.path[zombie.pathIndex] ?? goal;
+    const zombieTileX=Math.floor(zombie.position.x/TILE_SIZE),zombieTileY=Math.floor(zombie.position.y/TILE_SIZE);
+    const builtBlocker=chooseBlockingStructure(zombie.position,currentTarget,this.structureRegistry.queryTiles(zombieTileX-2,zombieTileY-2,zombieTileX+2,zombieTileY+2));
+    if(builtBlocker){const attackSlot=getStructureAttackSlot(builtBlocker,zombie.id);zombie.motion.desiredHeadAngle=Math.atan2(getPlacedStructureCenter(builtBlocker).y-zombie.position.y,getPlacedStructureCenter(builtBlocker).x-zombie.position.x);if(distance(zombie.position,attackSlot)<=OBSTACLE_BALANCE.attackRange){zombie.obstacleTargetId=builtBlocker.id;zombie.mind={...zombie.mind,state:"AttackObstacle"};this.updateZombieObstacleAttack(zombie,deltaSeconds);return;}currentTarget=attackSlot;}
     const obstacle = this.destructibles.getBlockingAtTile(
       Math.floor(currentTarget.x / TILE_SIZE),
       Math.floor(currentTarget.y / TILE_SIZE),
@@ -1450,6 +1529,8 @@ export class WorldScene extends Phaser.Scene {
 
   private updateZombieObstacleAttack(zombie: Zombie, deltaSeconds: number): boolean {
     const id = zombie.obstacleTargetId;
+    const structure=id?this.structureRegistry.get(id):undefined;
+    if(structure){if(structure.health<=0||(structure.kind==="wood-door"&&structure.doorOpen)){this.cancelZombieObstacleTarget(zombie);return false;}const position=getStructureAttackSlot(structure,zombie.id);const targetDistance=distance(zombie.position,position);if(targetDistance>OBSTACLE_BALANCE.attackRange+2){this.cancelZombieObstacleTarget(zombie);return false;}const center=getPlacedStructureCenter(structure);zombie.motion.desiredSpeed=0;zombie.motion.desiredHeadAngle=Math.atan2(center.y-zombie.position.y,center.x-zombie.position.x);updateActorMotionSmoothing(zombie.motion,zombie.kind==="runner"?RUNNER_MOTION_PROFILE:WALKER_MOTION_PROFILE,deltaSeconds,1.75);zombie.aimAngle=zombie.motion.headAngle;if(this.simulationTime<zombie.nextObstacleAttackAt)return true;const windup=Math.max(220,Math.round(zombie.definition.biteWindupMs*.75));if(zombie.obstacleAttackCompletesAt===0)zombie.obstacleAttackCompletesAt=this.simulationTime+windup;if(this.simulationTime<zombie.obstacleAttackCompletesAt)return true;const result=this.structureDurability.damage(structure,ZOMBIE_STRUCTURE_DAMAGE[zombie.kind]);this.effects.emitObstacleImpact(center.x,center.y,zombie.aimAngle,++this.ambientEffectSequence,this.simulationTime,result.destroyedNow);zombie.obstacleAttackCompletesAt=0;zombie.nextObstacleAttackAt=this.simulationTime+zombie.definition.attackCooldownMs;if(result.destroyedNow){this.destroyPlayerStructure(structure.id,true);this.cancelZombieObstacleTarget(zombie);return false;}this.structureViews.get(structure.id)?.refresh?.();return true;}
     const obstacle = id ? this.destructibles.get(id) : undefined;
     if (!obstacle || obstacle.destroyed
       || this.destructibles.getBlockingAtTile(obstacle.tileX, obstacle.tileY)?.id !== obstacle.id) {
@@ -2186,7 +2267,7 @@ export class WorldScene extends Phaser.Scene {
   private placeStructure(kind: BuildableKind): boolean {
     const worldX = this.player.position.x + Math.cos(this.player.aimAngle) * 34;
     const worldY = this.player.position.y + Math.sin(this.player.aimAngle) * 34;
-    const tileX = Math.floor(worldX / TILE_SIZE); const tileY = Math.floor(worldY / TILE_SIZE); const definition = BUILDABLE_DEFINITIONS[kind]; const footprint = definition.footprint;
+    const tileX = Math.floor(worldX / TILE_SIZE); const tileY = Math.floor(worldY / TILE_SIZE); const definition = BUILDABLE_DEFINITIONS[kind]; const footprint = definition.footprint!;
     const coveredTiles: Array<{ x: number; y: number }> = [];
     for (let y = tileY; y < tileY + footprint.height; y += 1) for (let x = tileX; x < tileX + footprint.width; x += 1) coveredTiles.push({ x, y });
     const actorOccupied = coveredTiles.some((tile) => squaredDistance({ x: tileCenter(tile.x), y: tileCenter(tile.y) }, this.player.position) < 18 * 18
@@ -2213,6 +2294,64 @@ export class WorldScene extends Phaser.Scene {
     this.noise.emit({ x: tileCenter(tileX), y: tileCenter(tileY), intensity: 24, category: "craft", createdAt: this.simulationTime });
     return true;
   }
+
+  private manageStructure(state:PlacedStructureState):void{if(state.health<state.maximumHealth){const costs=getRepairCost(state);if(this.structureDurability.repair(state,this.inventory)){this.structureViews.get(state.id)?.refresh?.();this.hud.showMessage(`${BUILDABLE_DEFINITIONS[state.kind].name} 수리 완료 · ${costs.map((cost)=>`${getItemDefinition(cost.itemId).name} ${cost.quantity}`).join(" · ")}`);this.buildCatalog.update((id)=>this.inventory.count(id));}else this.hud.showMessage("수리 재료가 부족하거나 수리가 필요하지 않습니다.");return;}const storage=this.structureStorage.get(state.id);if(storage&&!storage.isEmpty()){this.hud.showMessage("보관함을 비운 뒤 철거할 수 있습니다.");return;}if((this.demolitionConfirmUntil.get(state.id)??0)<this.simulationTime){this.demolitionConfirmUntil.set(state.id,this.simulationTime+2_000);this.hud.showMessage("2초 안에 Shift+E를 다시 눌러 철거를 확인하세요.");return;}const refund=getDemolitionRefund(state);this.destroyPlayerStructure(state.id,false);for(const item of refund){const added=this.inventory.add(item.itemId,item.quantity);if(added<item.quantity)this.spawnDrop(item.itemId,item.quantity-added,this.player.position.x,this.player.position.y);}this.hud.showMessage(`${BUILDABLE_DEFINITIONS[state.kind].name} 철거 완료`);}
+
+  private placeBuildableFromCatalog(kind: BuildableKind, world: Point): boolean {
+    const definition = BUILDABLE_DEFINITIONS[kind]; if (definition.placementKind !== "footprint") return false;
+    const base = definition.footprint!; const rotated = this.buildRotation % 2 === 1; const footprint = { width: rotated ? base.height : base.width, height: rotated ? base.width : base.height };
+    const tileX = Math.floor(world.x / TILE_SIZE); const tileY = Math.floor(world.y / TILE_SIZE);
+    const validate = () => this.validateFootprintPlacement(kind, tileX, tileY, footprint.width, footprint.height) === null;
+    let createdId: string | undefined;
+    const success = performBuildTransaction({ kind, inventory: this.inventory, validate, create: () => {
+      const id = this.reserveStructureId(); createdId = id; const state = createPlacedStructure(id, kind, tileX, tileY, this.buildRotation, this.structureCounter);
+      this.restoreStructure(state); if (!this.structureRegistry.get(id)) throw new Error("structure registration failed"); this.registerStructureObject(this.structureRegistry.get(id)!);
+    }, rollbackCreate: () => { if (createdId) this.removeStructureRuntime(createdId); } });
+    if (!success) { this.hud.showMessage(validate() ? "재료 또는 키트가 부족합니다." : "이 위치에는 설치할 수 없습니다."); return false; }
+    this.afterStructureTopologyChange(); return true;
+  }
+
+  private placeSegmentChain(kind: SegmentBuildableKind, start: Point, end: Point): boolean {
+    const segments = createSegmentChain(kind, start, end, kind === "wood-door" ? 1 : undefined); if (segments.length === 0) return false;
+    const validate = () => this.validateSegmentChain(segments);
+    const createdIds: string[] = [];
+    const success = performBuildTransaction({ kind, quantity: segments.length, inventory: this.inventory, validate, create: () => {
+      for (const segment of segments) { const id=this.reserveStructureId(); createdIds.push(id); const state=createPlacedSegment(id,kind,segment.startX,segment.startY,segment.endX,segment.endY,this.structureCounter,this.buildHingeSide); this.restoreStructure(state); if(!this.structureRegistry.get(id))throw new Error("segment registration failed"); this.registerStructureObject(this.structureRegistry.get(id)!); }
+    }, rollbackCreate: () => { for (const id of createdIds) this.removeStructureRuntime(id); } });
+    if (!success) { this.hud.showMessage(validate() ? "연속 설치에 필요한 재료가 부족합니다." : "벽 전체를 설치할 수 있는 공간이 아닙니다."); return false; }
+    this.afterStructureTopologyChange(); return true;
+  }
+
+  private validateFootprintPlacement(kind: BuildableKind, tileX: number, tileY: number, width: number, height: number): string | null {
+    const center={x:(tileX+width/2)*TILE_SIZE,y:(tileY+height/2)*TILE_SIZE}; const covered: Array<{x:number;y:number}>=[];
+    for(let y=tileY;y<tileY+height;y+=1)for(let x=tileX;x<tileX+width;x+=1)covered.push({x,y});
+    return getBuildablePlacementFailure(kind,{inBounds:tileX>=0&&tileY>=0&&tileX+width<=this.map.widthTiles&&tileY+height<=this.map.heightTiles,blocked:covered.some((tile)=>this.collision.isTileBlocked(tile.x,tile.y)),occupiedByStructure:this.structures.some((state)=>structureFootprintsOverlap(tileX,tileY,width,height,state)),doorway:covered.some((tile)=>this.map.doors.some((door)=>door.tileX===tile.x&&door.tileY===tile.y)),objective:covered.some((tile)=>this.map.containers.some((container)=>Boolean(container.part)&&container.tileX===tile.x&&container.tileY===tile.y)),extraction:squaredDistance(center,this.map.extractionZone)<=this.map.extractionZone.radius**2,actorOccupied:[this.player,...this.companions.filter((actor)=>actor.alive),...this.zombies.filter((actor)=>actor.isAlive())].some((actor)=>actor.position.x>=tileX*TILE_SIZE-5&&actor.position.x<=(tileX+width)*TILE_SIZE+5&&actor.position.y>=tileY*TILE_SIZE-5&&actor.position.y<=(tileY+height)*TILE_SIZE+5),indoor:covered.some((tile)=>this.indoorTiles[tile.y*this.map.widthTiles+tile.x]===1),roadLane:false,withinRange:isWithinBuildRange(this.player.position,center),visible:this.fog.getStateAtWorld(center.x,center.y)===VisibilityState.Visible,lineOfSight:this.collision.hasLineOfSight(this.player.position,center)});
+  }
+
+  private validateSegmentChain(segments: readonly StructureSegment[]): boolean {
+    const existing:SegmentGeometry[]=this.structures.flatMap((state)=>state.placement.kind==="segment"?[{startX:state.placement.startX,startY:state.placement.startY,endX:state.placement.endX,endY:state.placement.endY,thickness:BUILDABLE_DEFINITIONS[state.kind].segment!.thickness}]:[]);
+    for(const segment of segments){const midpoint={x:(segment.startX+segment.endX)/2,y:(segment.startY+segment.endY)/2};
+      if(!isWithinBuildRange(this.player.position,segment.startX===segments[0]!.startX&&segment.startY===segments[0]!.startY?{x:segment.startX,y:segment.startY}:midpoint)||!isWithinBuildRange(this.player.position,{x:segment.endX,y:segment.endY}))return false;
+      if(midpoint.x<0||midpoint.y<0||midpoint.x>WORLD_WIDTH||midpoint.y>WORLD_HEIGHT||this.fog.getStateAtWorld(midpoint.x,midpoint.y)!==VisibilityState.Visible||!this.collision.hasLineOfSight(this.player.position,midpoint)||segmentConflicts(segment,existing))return false;
+      if(this.collision.isMovementBlockedWorld(midpoint.x,midpoint.y,1))return false;
+      if([this.player,...this.companions.filter((actor)=>actor.alive),...this.zombies.filter((actor)=>actor.isAlive())].some((actor)=>circleIntersectsThickSegment(actor.position.x,actor.position.y,6,segment)))return false;
+      existing.push(segment);
+    } return true;
+  }
+
+  private updateBuildPreview(): void {
+    const graphics=this.buildPreview; if(!graphics)return; graphics.clear(); if(!this.buildCatalog?.isOpen()||!this.selectedBuildable)return;
+    const definition=BUILDABLE_DEFINITIONS[this.selectedBuildable]; const color=0x80d18b; const invalid=0xd65d57;
+    if(definition.placementKind==="segment"){const start=this.buildStartAnchor??snapStructureAnchor(this.pointerWorldSnapshot);const chain=createSegmentChain(this.selectedBuildable as SegmentBuildableKind,start,this.pointerWorldSnapshot,this.selectedBuildable==="wood-door"?1:undefined);const valid=chain.length>0&&this.validateSegmentChain(chain);graphics.lineStyle(definition.segment!.thickness,valid?color:invalid,.55);for(const segment of chain)graphics.lineBetween(segment.startX,segment.startY,segment.endX,segment.endY);if(chain.length)graphics.fillStyle(0x6eb6d8,.9).fillRect(chain[0]!.startX-1,chain[0]!.startY-1,3,3);return;}
+    const base=definition.footprint!;const rotated=this.buildRotation%2===1;const width=rotated?base.height:base.width,height=rotated?base.width:base.height;const tileX=Math.floor(this.pointerWorldSnapshot.x/TILE_SIZE),tileY=Math.floor(this.pointerWorldSnapshot.y/TILE_SIZE);const valid=this.validateFootprintPlacement(this.selectedBuildable,tileX,tileY,width,height)===null;graphics.fillStyle(valid?color:invalid,.35).fillRect(tileX*TILE_SIZE,tileY*TILE_SIZE,width*TILE_SIZE,height*TILE_SIZE).lineStyle(1,valid?color:invalid,.9).strokeRect(tileX*TILE_SIZE,tileY*TILE_SIZE,width*TILE_SIZE,height*TILE_SIZE);
+  }
+
+  private reserveStructureId(): string { let id:string; do id=`structure-${this.seed}-${++this.structureCounter}`;while(this.structureRegistry.get(id));return id; }
+  private afterStructureTopologyChange(): void { this.rebuildPowerTopology();this.fogInvalidation.invalidate();this.buildCatalog.update((id)=>this.inventory.count(id));this.noise.emit({x:this.player.position.x,y:this.player.position.y,intensity:24,category:"craft",createdAt:this.simulationTime}); }
+  private cancelBuildSelection(): void { this.selectedBuildable=undefined;this.buildStartAnchor=undefined;this.buildPreview?.clear(); }
+  private closeBuildMode(): void { if(!this.buildCatalog?.isOpen())return;this.buildCatalog.hide();this.cancelBuildSelection(); }
+  private removeStructureRuntime(id:string):PlacedStructureState|undefined{const state=this.structureRegistry.remove(id);if(!state)return undefined;this.structures=this.structures.filter((candidate)=>candidate.id!==id);const markerIndex=this.minimapStructureSources.findIndex((marker)=>marker.id===id);if(markerIndex>=0)this.minimapStructureSources.splice(markerIndex,1);if(state.placement.kind==="segment")this.collision.removeDynamicSegment(id);else this.collision.removeDynamicObstacle(id);this.structureViews.get(id)?.destroy();this.structureViews.delete(id);this.worldObjects.unregister(id);this.craftingStations.unregister(id);this.turretRuntime.delete(id);this.structureStorage.delete(id);return state;}
+  private destroyPlayerStructure(id:string,dropStorage:boolean):void{const state=this.structureRegistry.get(id);if(!state)return;const center=getPlacedStructureCenter(state);const storage=this.structureStorage.get(id);const items=dropStorage&&storage?storage.drainForDestruction():[];const offsets=deterministicStorageDropOffsets(items.length);this.removeStructureRuntime(id);items.forEach((item,index)=>{const offset=offsets[index]!;this.spawnDrop(item.itemId,item.quantity,Math.max(6,Math.min(WORLD_WIDTH-6,center.x+offset.x)),Math.max(6,Math.min(WORLD_HEIGHT-6,center.y+offset.y)));});this.cancelZombieObstacleTargets(id);this.rebuildPowerTopology();this.fogInvalidation.invalidate();this.interactionSystem.invalidate();this.demolitionConfirmUntil.delete(id);}
 
   private updateFires(deltaSeconds: number): void {
     let writeIndex = 0;
@@ -2511,7 +2650,7 @@ export class WorldScene extends Phaser.Scene {
       this.nextPowerTickAt = this.simulationTime + POWER_TICK_MS;
       const changed = this.powerGrid.tick(POWER_TICK_MS / 1_000, this.clock.getPhase() === "day");
       if (changed.length > 0) {
-        for (const id of changed) this.structureViews.get(id)?.updateStatus();
+        for (const id of changed) this.structureViews.get(id)?.updateStatus?.();
         this.fogInvalidation.invalidate();
       }
     }
@@ -2531,7 +2670,7 @@ export class WorldScene extends Phaser.Scene {
       if (!target?.isAlive()) continue;
       const targetAngle = Math.atan2(target.position.y - origin.y, target.position.x - origin.x);
       turret.aimAngle = rotateTurretToward(turret.aimAngle ?? 0, targetAngle, deltaSeconds);
-      this.structureViews.get(turret.id)?.setAim(turret.aimAngle);
+      this.structureViews.get(turret.id)?.setAim?.(turret.aimAngle);
       if (Math.abs(angleDifference(targetAngle, turret.aimAngle)) > TURRET_AIM_TOLERANCE || this.simulationTime < runtime.nextFireAt) continue;
       runtime.nextFireAt = this.simulationTime + TURRET_COOLDOWN_MS;
       this.noise.emitGunshot("turret", origin.x, origin.y, 72, this.simulationTime);
@@ -2686,7 +2825,8 @@ export class WorldScene extends Phaser.Scene {
       openedDoors: this.map.doors.filter((door) => door.open).map((door) => door.id),
       doorStates: this.destructibles.doorStates(),
       barricades: this.destructibles.barricadeStates(),
-      structures: this.structures.map(({ powered: _powered, ...state }) => ({ ...state })),
+      structures: this.structures.map(({ powered: _powered, ...state }) => ({ ...state, storage: this.structureStorage.get(state.id)?.snapshot() ?? state.storage })),
+      nextStructureId: this.structureCounter,
       consumedZombieSpawnIds: [...this.consumedZombieSpawnIds],
       zombies: this.zombies.filter((zombie) => zombie.isAlive()).map((zombie) => ({
         id: zombie.id,
@@ -2785,6 +2925,10 @@ export class WorldScene extends Phaser.Scene {
     this.pauseMenu?.destroy();
     this.minimap?.destroy();
     this.crosshair?.destroy();
+    this.buildCatalog?.destroy();
+    this.worldStoragePanel?.destroy();
+    this.buildPreview?.destroy();
+    this.structureChunks?.destroy();
     this.uiRoot?.remove();
   }
 }
@@ -2809,7 +2953,8 @@ function angleDelta(a: number, b: number): number {
 }
 
 function structureFootprintsOverlap(tileX: number, tileY: number, width: number, height: number, state: PlacedStructureState): boolean {
-  const footprint = BUILDABLE_DEFINITIONS[state.kind].footprint;
+  if (state.placement.kind === "segment") return false;
+  const footprint = BUILDABLE_DEFINITIONS[state.kind].footprint!;
   return tileX < state.tileX + footprint.width && tileX + width > state.tileX && tileY < state.tileY + footprint.height && tileY + height > state.tileY;
 }
 
