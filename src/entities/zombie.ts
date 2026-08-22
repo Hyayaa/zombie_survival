@@ -3,6 +3,8 @@ import { ZOMBIE_DEFINITIONS, type ZombieKind, type ZombieStateName } from "../da
 import { ACTOR_PALETTES, TopDownActorView } from "../rendering/generated-sprites";
 import { createZombieMind, type Point, type ZombieMind } from "../systems/zombie-ai-system";
 import { cancelZombieAttackWindups, createZombiePosture, damageZombiePosture, updateZombiePosture, type ZombiePostureDamageResult, type ZombiePostureState } from "../systems/zombie-posture-system";
+import { createActorMotionSmoothingState } from "../systems/actor-motion-smoothing";
+import { createZombieOrganicBehaviorState, type ZombieOrganicBehaviorState } from "../systems/zombie-organic-behavior";
 
 export class Zombie {
   readonly view: TopDownActorView;
@@ -25,12 +27,15 @@ export class Zombie {
   nextObstacleAttackAt = 0;
   wanderTarget?: Point;
   aimAngle = 0;
+  readonly motion = createActorMotionSmoothingState();
+  readonly organic: ZombieOrganicBehaviorState;
 
   constructor(scene: Phaser.Scene, readonly id: string, readonly kind: ZombieKind, position: Point, state: ZombieStateName = "Idle") {
     this.position = { ...position };
     this.definition = ZOMBIE_DEFINITIONS[kind];
     this.health = this.definition.health;
     this.posture = createZombiePosture(this.definition);
+    this.organic = createZombieOrganicBehaviorState(id);
     this.mind = { ...createZombieMind(), state };
     this.view = new TopDownActorView(scene, position.x, position.y, kind === "runner" ? ACTOR_PALETTES.runner : ACTOR_PALETTES.walker, false, false);
   }
@@ -81,7 +86,7 @@ export class Zombie {
     this.view.setVisible(visible);
     if (!visible) return;
     this.view.setPosition(this.position.x, this.position.y);
-    this.view.updateAnimation(time, this.isAlive() && this.mind.state !== "Idle", this.mind.state === "Attack", this.aimAngle);
+    this.view.updateAnimation(time, this.isAlive() && this.motion.currentSpeed > 0.5, this.mind.state === "Attack", this.motion.headAngle);
     if (!this.isAlive()) this.view.setDead(true);
   }
 }

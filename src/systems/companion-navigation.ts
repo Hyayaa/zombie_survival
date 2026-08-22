@@ -2,6 +2,7 @@ import { COMPANION_MOVEMENT, MAP_HEIGHT_TILES, MAP_WIDTH_TILES, TILE_SIZE } from
 import type { CompanionCommand } from "../entities/companion";
 import type { WeaponDefinition } from "../data/weapon-definitions";
 import type { Point } from "./zombie-ai-system";
+import { angleDifference } from "./actor-motion-smoothing";
 
 export interface CompanionNavigationState {
   lastProgressX: number;
@@ -12,6 +13,8 @@ export interface CompanionNavigationState {
   lastGoalTile: number;
   catchUpMode: boolean;
   repathCount: number;
+  combatMovement: CompanionCombatMovement;
+  combatMovementLockedUntil: number;
 }
 
 const STEERING_OFFSETS = [
@@ -36,6 +39,8 @@ export function createCompanionNavigationState(position: Point, now = 0): Compan
     lastGoalTile: -1,
     catchUpMode: false,
     repathCount: 0,
+    combatMovement: "hold",
+    combatMovementLockedUntil: 0,
   };
 }
 
@@ -232,6 +237,43 @@ export function getCompanionCombatMovement(
   if (command !== "hold" && targetDistance < weapon.range * 0.6) return "retreat";
   if (targetDistance > weapon.range * 0.82 && mayPursue && command !== "hold") return "approach";
   return "hold";
+}
+
+export const COMPANION_COMBAT_MOVEMENT_HOLD_MS = 480;
+export const COMPANION_RANGED_AIM_TOLERANCE = 0.13;
+export const COMPANION_MELEE_AIM_TOLERANCE = 0.23;
+
+export function isCompanionAimAligned(currentAngle: number, targetAngle: number, weapon: WeaponDefinition): boolean {
+  const tolerance = weapon.kind === "ranged" ? COMPANION_RANGED_AIM_TOLERANCE : COMPANION_MELEE_AIM_TOLERANCE;
+  return Math.abs(angleDifference(targetAngle, currentAngle)) <= tolerance;
+}
+
+export function updateCompanionCombatMovement(
+  state: CompanionNavigationState,
+  weapon: WeaponDefinition,
+  targetDistance: number,
+  command: CompanionCommand,
+  mayPursue: boolean,
+  now: number,
+): CompanionCombatMovement {
+  if (weapon.kind === "melee") {
+    state.combatMovement = targetDistance > weapon.range ? "approach" : "hold";
+    return state.combatMovement;
+  }
+  if (command === "hold") state.combatMovement = "hold";
+  else if (now >= state.combatMovementLockedUntil) {
+    const ratio = targetDistance / weapon.range;
+    let next = state.combatMovement;
+    if (state.combatMovement === "retreat") next = ratio >= 0.67 ? "hold" : "retreat";
+    else if (state.combatMovement === "approach") next = ratio <= 0.78 ? "hold" : "approach";
+    else if (ratio < 0.58) next = "retreat";
+    else if (ratio > 0.85 && mayPursue) next = "approach";
+    if (next !== state.combatMovement) {
+      state.combatMovement = next;
+      state.combatMovementLockedUntil = now + COMPANION_COMBAT_MOVEMENT_HOLD_MS;
+    }
+  }
+  return state.combatMovement;
 }
 
 function resetProgress(state: CompanionNavigationState, position: Point, now: number): void {
