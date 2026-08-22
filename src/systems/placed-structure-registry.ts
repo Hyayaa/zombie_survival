@@ -1,5 +1,5 @@
 import type { PlacedStructureState } from "../entities/placed-structure";
-import { BUILDABLE_DEFINITIONS } from "../data/buildable-definitions";
+import { BUILDABLE_DEFINITIONS, getRotatedStructureFootprint } from "../data/buildable-definitions";
 import { visitSegmentTiles, type SegmentGeometry } from "./collision-geometry";
 import { TILE_SIZE } from "../config/game-config";
 
@@ -36,7 +36,7 @@ export class PlacedStructureRegistry {
       visitSegmentTiles(geometry, TILE_SIZE, this.widthTiles, this.heightTiles, (x, y) => visitor(y * this.widthTiles + x), 6);
       return;
     }
-    const footprint = BUILDABLE_DEFINITIONS[state.kind].footprint!;
+    const footprint = getRotatedStructureFootprint(state.kind, state.placement.rotation);
     for (let y = state.tileY; y < state.tileY + footprint.height; y += 1) for (let x = state.tileX; x < state.tileX + footprint.width; x += 1) if (x >= 0 && y >= 0 && x < this.widthTiles && y < this.heightTiles) visitor(y * this.widthTiles + x);
   }
   private addToBucket(key: number, id: string): void { let bucket = this.buckets.get(key); if (!bucket) { bucket = new Set(); this.buckets.set(key, bucket); } bucket.add(id); }

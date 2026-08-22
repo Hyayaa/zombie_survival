@@ -1,4 +1,5 @@
 import type { AudioCue } from "./audio-definitions";
+import type { BuildableKind } from "./buildable-definitions";
 
 export type ItemCategory = "food" | "medical" | "material" | "ammo" | "tool" | "quest" | "equipment";
 export interface InventoryFootprint { width: number; height: number }
@@ -27,6 +28,7 @@ export interface ItemDefinition {
   useAudioId?: AudioCue;
   inventoryFootprint: InventoryFootprint;
   storageEquipment?: StorageEquipmentDefinition;
+  useAction?: { kind: "place-buildable"; buildableId: BuildableKind };
 }
 
 type ItemSource = Omit<ItemDefinition, "inventoryFootprint">;
@@ -66,14 +68,14 @@ const ITEM_SOURCES: ItemSource[] = [
   { id: "engine_part", name: "엔진 부품", category: "quest", maxStack: 1, iconColor: 0xb4b8ab, description: "탈출 차량 수리에 필요한 핵심 부품." },
   { id: "bandage", name: "붕대", category: "medical", maxStack: 5, iconColor: 0xe4ddd0, description: "체력을 28 회복한다." },
   { id: "torch", name: "횃불", category: "tool", maxStack: 3, iconColor: 0xe27d43, description: "90초 동안 주변 시야를 넓힌다." },
-  { id: "barricade", name: "간이 바리케이드", category: "tool", maxStack: 2, iconColor: 0x8d6745, description: "조준한 통로에 임시 장애물을 설치한다." },
-  { id: "turret_kit", name: "터렛 키트", category: "tool", maxStack: 3, iconColor: 0x71928f, description: "전력망에 연결할 자동 터렛." },
-  { id: "solar_generator_kit", name: "태양광 발전기 키트", category: "tool", maxStack: 3, iconColor: 0x456c8a, description: "실외에서 낮 동안 발전한다." },
-  { id: "fuel_generator_kit", name: "연료 발전기 키트", category: "tool", maxStack: 3, iconColor: 0x68745c, description: "발전기 연료로 안정적인 전력을 만든다." },
-  { id: "battery_bank_kit", name: "축전지 키트", category: "tool", maxStack: 3, iconColor: 0x59656b, description: "전력망의 남는 전력을 저장한다." },
-  { id: "makeshift_workbench_kit", name: "간이 제작대 키트", category: "tool", maxStack: 1, iconColor: 0x8d6f4a, description: "기초 탄약과 판자 제작대를 만들 수 있는 2×2 제작대." },
-  { id: "plank_workbench_kit", name: "판자 제작대 키트", category: "tool", maxStack: 1, iconColor: 0xa07b4f, description: "정교한 탄약과 전력 설비를 만들 수 있는 2×2 제작대." },
-  { id: "technical_workbench_kit", name: "기술 제작대 키트", category: "tool", maxStack: 1, iconColor: 0x557b78, description: "고급 기계 장비를 조립할 수 있는 3×2 제작대." },
+  { id: "barricade", name: "간이 바리케이드", category: "tool", maxStack: 2, iconColor: 0x8d6745, description: "조준한 통로에 임시 장애물을 설치한다.", useAction: { kind: "place-buildable", buildableId: "barricade" } },
+  { id: "turret_kit", name: "터렛 키트", category: "tool", maxStack: 3, iconColor: 0x71928f, description: "전력망에 연결할 자동 터렛.", useAction: { kind: "place-buildable", buildableId: "turret" } },
+  { id: "solar_generator_kit", name: "태양광 발전기 키트", category: "tool", maxStack: 3, iconColor: 0x456c8a, description: "실외에서 낮 동안 발전한다.", useAction: { kind: "place-buildable", buildableId: "solar-generator" } },
+  { id: "fuel_generator_kit", name: "연료 발전기 키트", category: "tool", maxStack: 3, iconColor: 0x68745c, description: "발전기 연료로 안정적인 전력을 만든다.", useAction: { kind: "place-buildable", buildableId: "fuel-generator" } },
+  { id: "battery_bank_kit", name: "축전지 키트", category: "tool", maxStack: 3, iconColor: 0x59656b, description: "전력망의 남는 전력을 저장한다.", useAction: { kind: "place-buildable", buildableId: "battery-bank" } },
+  { id: "makeshift_workbench_kit", name: "간이 제작대 키트", category: "tool", maxStack: 1, iconColor: 0x8d6f4a, description: "기초 탄약과 판자 제작대를 만들 수 있는 2×2 제작대.", useAction: { kind: "place-buildable", buildableId: "makeshift_workbench" } },
+  { id: "plank_workbench_kit", name: "판자 제작대 키트", category: "tool", maxStack: 1, iconColor: 0xa07b4f, description: "정교한 탄약과 전력 설비를 만들 수 있는 2×2 제작대.", useAction: { kind: "place-buildable", buildableId: "plank_workbench" } },
+  { id: "technical_workbench_kit", name: "기술 제작대 키트", category: "tool", maxStack: 1, iconColor: 0x557b78, description: "고급 기계 장비를 조립할 수 있는 3×2 제작대.", useAction: { kind: "place-buildable", buildableId: "technical_workbench" } },
   { id: "generator_fuel", name: "발전기 연료", category: "material", maxStack: 8, iconColor: 0xb37a3e, description: "연료 발전기 전용 연료. 탈출 연료와 별개다." },
   { id: "molotov", name: "화염병", category: "tool", maxStack: 2, iconColor: 0xcf5d42, description: "조준 지점에 짧은 범위 화염을 만든다." },
   { id: "scrap_cache", name: "잡동사니", category: "material", maxStack: 8, iconColor: 0x736d61, description: "분해해 쓸 수 있는 잡다한 생존 물자." },

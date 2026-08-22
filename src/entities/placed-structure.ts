@@ -1,4 +1,4 @@
-import { BUILDABLE_DEFINITIONS, type BuildableKind } from "../data/buildable-definitions";
+import { BUILDABLE_DEFINITIONS, getRotatedStructureFootprint, type BuildableKind } from "../data/buildable-definitions";
 import { TILE_SIZE } from "../config/game-config";
 import type { WorldStorageSnapshot } from "../systems/world-storage-container";
 
@@ -37,6 +37,6 @@ export function normalizePlacedStructure(state: Partial<PlacedStructureState> & 
 
 export function getPlacedStructureCenter(state: Pick<PlacedStructureState, "kind" | "tileX" | "tileY" | "placement">): { x: number; y: number } {
   if (state.placement.kind === "segment") return { x: (state.placement.startX + state.placement.endX) / 2, y: (state.placement.startY + state.placement.endY) / 2 };
-  const footprint = BUILDABLE_DEFINITIONS[state.kind].footprint!;
+  const footprint = getRotatedStructureFootprint(state.kind, state.placement.rotation);
   return { x: (state.tileX + footprint.width / 2) * TILE_SIZE, y: (state.tileY + footprint.height / 2) * TILE_SIZE };
 }

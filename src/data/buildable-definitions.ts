@@ -43,3 +43,8 @@ export const BUILDABLE_ITEM_KIND: Readonly<Record<string, BuildableKind>> = Obje
 export function getBuildCostItems(definition: BuildableDefinition): readonly { itemId: string; quantity: number }[] {
   return definition.cost.kind === "materials" ? definition.cost.items : [{ itemId: definition.cost.itemId, quantity: definition.cost.quantity }];
 }
+
+export function getRotatedStructureFootprint(kind: BuildableKind, rotation: number): { width: number; height: number } {
+  const footprint = BUILDABLE_DEFINITIONS[kind].footprint!;
+  return Math.abs(rotation) % 2 === 1 ? { width: footprint.height, height: footprint.width } : { ...footprint };
+}
