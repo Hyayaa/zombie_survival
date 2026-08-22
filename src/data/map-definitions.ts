@@ -4,6 +4,7 @@ import type { ZombieKind } from "./zombie-definitions";
 import type { WeaponId } from "./weapon-definitions";
 import { BUILDABLE_DEFINITIONS } from "./buildable-definitions";
 import type { StructureOwnership,StructureSource } from "../entities/placed-structure";
+import { createStructureSegmentGeometry, segmentKey, type WallAnchor } from "../systems/structure-segment-placement";
 
 export enum TerrainType { Ground = 0, Road = 1, Sidewalk = 2, Floor = 3 }
 export type RoadKind = "arterial" | "street" | "diagonal";
@@ -86,7 +87,7 @@ const ROAD_SEGMENTS: RoadSegment[] = [
 const KIND_CYCLE: BuildingKind[] = ["house", "house", "store", "office", "ruin", "house", "warehouse", "garage", "clinic"];
 const FLOOR_COLORS = [0x4c5148, 0x514a42, 0x4c4842, 0x4b514c, 0x484d4c, 0x504a46];
 
-export const CURRENT_MAP_GENERATION_VERSION=3;
+export const CURRENT_MAP_GENERATION_VERSION=4;
 export function createCityBlockMap(mapSeed = 0x51a7c1,mapGenerationVersion=CURRENT_MAP_GENERATION_VERSION): MapDefinition {
   const widthTiles = MAP_WIDTH_TILES;
   const heightTiles = MAP_HEIGHT_TILES;
@@ -147,18 +148,21 @@ export function createCityBlockMap(mapSeed = 0x51a7c1,mapGenerationVersion=CURRE
         const diagonalGeometry = orientation === 45 || orientation === 135
           ? createDiagonalBuildingGeometry(centerX, centerY, buildingWidth, buildingDepth, orientation, entrance, widthTiles, roadX, roadY)
           : undefined;
+        const anchoredGeometry = mapGenerationVersion >= 4
+          ? createGeneratedBuildingAnchorGeometry(footprint, entrances, orientation, widthTiles, roadX, roadY)
+          : undefined;
         const building: BuildingDefinition = {
           id, name: buildingName(kind, buildings.length), kind, centerTileX: centerX, centerTileY: centerY,
           widthTiles: buildingWidth, depthTiles: buildingDepth, orientation, roadId: road.id, roadSide: side,
           footprintTiles: footprint, floorTiles, wallTiles, entranceTiles: [entrance],
-          wallSegments: diagonalGeometry?.walls ?? [],
+          wallSegments: anchoredGeometry?.walls ?? diagonalGeometry?.walls ?? [],
           floorColor: FLOOR_COLORS[buildings.length % FLOOR_COLORS.length]!,
         };
         buildings.push(building);
         acceptedForRoad += 1;
         for (const index of footprint) { occupied[index] = 1; terrain[index] = TerrainType.Floor; }
         for (const index of wallTiles) minimapWallCoverage[index] = 1;
-        if(mapGenerationVersion>=3){const buildingWalls=diagonalGeometry?.walls??wallTiles.map((index)=>createTileWallSegment(index%widthTiles,Math.floor(index/widthTiles),doorOrientationForBoundary(index,footprintSet,widthTiles)));building.wallSegments=buildingWalls;buildingWalls.forEach((placement,wallIndex)=>{wallSegments.push(placement);generatedStructures.push({id:`generated:${id}:wall:${wallIndex}`,buildableId:"wood-wall",source:"generated",ownership:"world",placement,buildingId:id,wallIndex,demolishable:false,refund:false});});}
+        if(mapGenerationVersion>=3){const existingWallKeys=new Set(wallSegments.map(segmentKey));const candidateWalls=anchoredGeometry?.walls??diagonalGeometry?.walls??wallTiles.map((index)=>createTileWallSegment(index%widthTiles,Math.floor(index/widthTiles),doorOrientationForBoundary(index,footprintSet,widthTiles)));const buildingWalls=candidateWalls.filter((placement)=>!existingWallKeys.has(segmentKey(placement)));building.wallSegments=buildingWalls;buildingWalls.forEach((placement,wallIndex)=>{wallSegments.push(placement);generatedStructures.push({id:`generated:${id}:wall:${wallIndex}`,buildableId:"wood-wall",source:"generated",ownership:"world",placement,buildingId:id,wallIndex,demolishable:false,refund:false});});}
         else if (diagonalGeometry) wallSegments.push(...diagonalGeometry.walls);
         else for (const index of wallTiles) {
           const tileX = index % widthTiles;
@@ -166,7 +170,7 @@ export function createCityBlockMap(mapSeed = 0x51a7c1,mapGenerationVersion=CURRE
           obstacles.push(wall(`${id}-wall-${tileX}-${tileY}`, tileX, tileY));
         }
         const orientationValue = diagonalGeometry ? doorOrientationFromSegment(diagonalGeometry.door) : doorOrientation(orientation);
-        entrances.forEach((entranceIndex,doorIndex)=>{const doorX=entranceIndex%widthTiles,doorY=Math.floor(entranceIndex/widthTiles),doorId=mapGenerationVersion>=3?`generated:${id}:door:${doorIndex}`:doorIndex===0?`door-${id}`:`door-${id}-${doorIndex+1}`,candidateOrientation=diagonalGeometry?orientationValue:doorOrientationForBoundary(entranceIndex,footprintSet,widthTiles),segment=doorIndex===0&&diagonalGeometry?diagonalGeometry.door:createTileDoorSegment(doorX,doorY,candidateOrientation);doors.push({kind:"door",id:doorId,buildingId:id,tileX:doorX,tileY:doorY,orientation:candidateOrientation,segment,open:isDoorInitiallyOpen(mapSeed,doorId),health:OBSTACLE_BALANCE.doorHealth,maxHealth:OBSTACLE_BALANCE.doorHealth,destroyed:false,source:mapGenerationVersion>=3?"generated":undefined,ownership:mapGenerationVersion>=3?"world":undefined});if(mapGenerationVersion>=3)generatedStructures.push({id:doorId,buildableId:"wood-door",source:"generated",ownership:"world",placement:segment,buildingId:id,wallIndex:doorIndex,demolishable:false,refund:false});});
+        entrances.forEach((entranceIndex,doorIndex)=>{const doorX=entranceIndex%widthTiles,doorY=Math.floor(entranceIndex/widthTiles),doorId=mapGenerationVersion>=3?`generated:${id}:door:${doorIndex}`:doorIndex===0?`door-${id}`:`door-${id}-${doorIndex+1}`,candidateOrientation=anchoredGeometry?doorOrientationFromSegment(anchoredGeometry.doors[doorIndex]??anchoredGeometry.doors[0]!):diagonalGeometry?orientationValue:doorOrientationForBoundary(entranceIndex,footprintSet,widthTiles),segment=anchoredGeometry?.doors[doorIndex]??anchoredGeometry?.doors[0]??(doorIndex===0&&diagonalGeometry?diagonalGeometry.door:createTileDoorSegment(doorX,doorY,candidateOrientation));doors.push({kind:"door",id:doorId,buildingId:id,tileX:doorX,tileY:doorY,orientation:candidateOrientation,segment,open:isDoorInitiallyOpen(mapSeed,doorId),health:OBSTACLE_BALANCE.doorHealth,maxHealth:OBSTACLE_BALANCE.doorHealth,destroyed:false,source:mapGenerationVersion>=3?"generated":undefined,ownership:mapGenerationVersion>=3?"world":undefined});if(mapGenerationVersion>=3)generatedStructures.push({id:doorId,buildableId:"wood-door",source:"generated",ownership:"world",placement:segment,buildingId:id,wallIndex:doorIndex,demolishable:false,refund:false});});
         const doorX = entrance % widthTiles;
         const doorY = Math.floor(entrance / widthTiles);
         rasterizeWalkway(terrain, occupied, widthTiles, heightTiles, doorX, doorY, Math.round(roadX), Math.round(roadY));
@@ -237,7 +241,7 @@ function selectBuildingEntrances(boundary:readonly number[],primary:number,width
 function stableUnit(seed:number,key:string):number{let hash=(seed^0x85ebca6b)>>>0;for(let index=0;index<key.length;index+=1){hash^=key.charCodeAt(index);hash=Math.imul(hash,0x01000193)>>>0;}hash^=hash>>>16;return(hash>>>0)/0x1_0000_0000;}
 function doorOrientationForBoundary(index:number,footprint:ReadonlySet<number>,width:number):DoorOrientation{const left=footprint.has(index-1),right=footprint.has(index+1),up=footprint.has(index-width),down=footprint.has(index+width);return(!left||!right)&&(up||down)?"vertical":"horizontal";}
 function restorePresetPrimaryDoor(building:BuildingDefinition,doors:DoorDefinition[],obstacles:WorldObstacle[],minimapWallCoverage:Uint8Array,width:number):void{for(let index=doors.length-1;index>=0;index-=1){const door=doors[index]!;if(door.buildingId!==building.id||door.id===`door-${building.id}`)continue;doors.splice(index,1);const tileIndex=door.tileY*width+door.tileX;if(!building.wallTiles.includes(tileIndex))building.wallTiles.push(tileIndex);const floorIndex=building.floorTiles.indexOf(tileIndex);if(floorIndex>=0)building.floorTiles.splice(floorIndex,1);minimapWallCoverage[tileIndex]=1;if(building.orientation!==45&&building.orientation!==135)obstacles.push(wall(`${building.id}-wall-${door.tileX}-${door.tileY}`,door.tileX,door.tileY));}}
-function restoreGeneratedPresetPrimaryDoor(building:BuildingDefinition,doors:DoorDefinition[],generated:GeneratedBuildingStructure[],walls:SegmentGeometry[],minimapWallCoverage:Uint8Array,width:number):void{for(let index=doors.length-1;index>=0;index-=1){const door=doors[index]!;if(door.buildingId!==building.id||door.id===`generated:${building.id}:door:0`)continue;doors.splice(index,1);const generatedIndex=generated.findIndex((structure)=>structure.id===door.id);if(generatedIndex>=0)generated.splice(generatedIndex,1);const tileIndex=door.tileY*width+door.tileX;if(!building.wallTiles.includes(tileIndex))building.wallTiles.push(tileIndex);const floorIndex=building.floorTiles.indexOf(tileIndex);if(floorIndex>=0)building.floorTiles.splice(floorIndex,1);minimapWallCoverage[tileIndex]=1;const placement=createTileWallSegment(door.tileX,door.tileY,door.orientation),wallIndex=building.wallSegments.length;building.wallSegments.push(placement);walls.push(placement);generated.push({id:`generated:${building.id}:wall:${wallIndex}`,buildableId:"wood-wall",source:"generated",ownership:"world",placement,buildingId:building.id,wallIndex,demolishable:false,refund:false});}}
+function restoreGeneratedPresetPrimaryDoor(building:BuildingDefinition,doors:DoorDefinition[],generated:GeneratedBuildingStructure[],walls:SegmentGeometry[],minimapWallCoverage:Uint8Array,width:number):void{for(let index=doors.length-1;index>=0;index-=1){const door=doors[index]!;if(door.buildingId!==building.id||door.id===`generated:${building.id}:door:0`)continue;doors.splice(index,1);const generatedIndex=generated.findIndex((structure)=>structure.id===door.id);if(generatedIndex>=0)generated.splice(generatedIndex,1);const tileIndex=door.tileY*width+door.tileX;if(!building.wallTiles.includes(tileIndex))building.wallTiles.push(tileIndex);const floorIndex=building.floorTiles.indexOf(tileIndex);if(floorIndex>=0)building.floorTiles.splice(floorIndex,1);minimapWallCoverage[tileIndex]=1;const placement=door.segment?{...door.segment,thickness:BUILDABLE_DEFINITIONS["wood-wall"].segment!.thickness}:createTileWallSegment(door.tileX,door.tileY,door.orientation),wallIndex=building.wallSegments.length;building.wallSegments.push(placement);walls.push(placement);generated.push({id:`generated:${building.id}:wall:${wallIndex}`,buildableId:"wood-wall",source:"generated",ownership:"world",placement,buildingId:building.id,wallIndex,demolishable:false,refund:false});}}
 
 export function isDoorInitiallyOpen(mapSeed: number, doorId: string): boolean {
   let hash = (mapSeed ^ 0x9e3779b9) >>> 0;
@@ -287,6 +291,61 @@ function rasterizeBuildingFootprint(centerX: number, centerY: number, buildingWi
 const DIAGONAL_WALL_THICKNESS = 6;
 const DOOR_THICKNESS = 5;
 const DOOR_LENGTH = TILE_SIZE - 5;
+
+function createGeneratedBuildingAnchorGeometry(
+  footprint: readonly number[], entrances: readonly number[], orientation: BuildingOrientation,
+  mapWidth: number, roadTileX: number, roadTileY: number,
+): { walls: SegmentGeometry[]; doors: SegmentGeometry[] } {
+  const edges: Array<{ start: WallAnchor; end: WallAnchor }> = [];
+  if (orientation === 45 || orientation === 135) {
+    let sumX = 0; let sumY = 0;
+    for (const index of footprint) { sumX += index % mapWidth + 0.5; sumY += Math.floor(index / mapWidth) + 0.5; }
+    const center = { x: Math.round(sumX / footprint.length), y: Math.round(sumY / footprint.length) };
+    const xs = footprint.map((index) => index % mapWidth); const ys = footprint.map((index) => Math.floor(index / mapWidth));
+    const width = Math.max(...xs) - Math.min(...xs) + 1; const height = Math.max(...ys) - Math.min(...ys) + 1;
+    const major = Math.max(3, Math.round(Math.max(width, height) / 2));
+    const minor = Math.max(2, Math.round(Math.min(width, height) / 3));
+    const u = orientation === 45 ? { x: 1, y: 1 } : { x: -1, y: 1 };
+    const v = orientation === 45 ? { x: -1, y: 1 } : { x: 1, y: 1 };
+    const corners: WallAnchor[] = [
+      { x: center.x - u.x * major - v.x * minor, y: center.y - u.y * major - v.y * minor },
+      { x: center.x + u.x * major - v.x * minor, y: center.y + u.y * major - v.y * minor },
+      { x: center.x + u.x * major + v.x * minor, y: center.y + u.y * major + v.y * minor },
+      { x: center.x - u.x * major + v.x * minor, y: center.y - u.y * major + v.y * minor },
+    ];
+    for (let side = 0; side < 4; side += 1) appendUnitAnchorEdges(edges, corners[side]!, corners[(side + 1) % 4]!);
+  } else {
+    const cells = new Set(footprint);
+    for (const index of footprint) {
+      const x = index % mapWidth; const y = Math.floor(index / mapWidth);
+      if (!cells.has(index - mapWidth)) edges.push({ start: { x, y }, end: { x: x + 1, y } });
+      if (!cells.has(index + mapWidth)) edges.push({ start: { x: x + 1, y: y + 1 }, end: { x, y: y + 1 } });
+      if (x === 0 || !cells.has(index - 1)) edges.push({ start: { x, y: y + 1 }, end: { x, y } });
+      if (x === mapWidth - 1 || !cells.has(index + 1)) edges.push({ start: { x: x + 1, y }, end: { x: x + 1, y: y + 1 } });
+    }
+  }
+  const available = [...edges]; const doors: SegmentGeometry[] = [];
+  for (const entrance of entrances) {
+    const entranceX = entrance % mapWidth + 0.5; const entranceY = Math.floor(entrance / mapWidth) + 0.5;
+    let best = 0; let bestDistance = Number.POSITIVE_INFINITY;
+    for (let index = 0; index < available.length; index += 1) {
+      const edge = available[index]!; const midpointX = (edge.start.x + edge.end.x) / 2; const midpointY = (edge.start.y + edge.end.y) / 2;
+      const distance = squared(midpointX - entranceX) + squared(midpointY - entranceY) + 0.02 * (squared(midpointX - roadTileX) + squared(midpointY - roadTileY));
+      if (distance < bestDistance) { best = index; bestDistance = distance; }
+    }
+    const [edge] = available.splice(best, 1);
+    if (edge) doors.push(createStructureSegmentGeometry(edge.start, edge.end, "wood-door"));
+  }
+  const doorKeys = new Set(doors.map(segmentKey));
+  const walls = edges.map((edge) => createStructureSegmentGeometry(edge.start, edge.end, "wood-wall")).filter((edge) => !doorKeys.has(segmentKey(edge)));
+  return { walls, doors };
+}
+
+function appendUnitAnchorEdges(target: Array<{ start: WallAnchor; end: WallAnchor }>, start: WallAnchor, end: WallAnchor): void {
+  const deltaX = Math.sign(end.x - start.x); const deltaY = Math.sign(end.y - start.y);
+  const count = Math.max(Math.abs(end.x - start.x), Math.abs(end.y - start.y));
+  for (let index = 0; index < count; index += 1) target.push({ start: { x: start.x + deltaX * index, y: start.y + deltaY * index }, end: { x: start.x + deltaX * (index + 1), y: start.y + deltaY * (index + 1) } });
+}
 
 function createDiagonalBuildingGeometry(
   centerTileX: number,

@@ -64,6 +64,7 @@ import { beginNoiseReaction, beginVisualReaction, consumeReadyZombieReaction, up
 import { clearCompanionTargetCommitment, updateCompanionTargetCommitment } from "../systems/companion-target-commitment";
 import { canRun, createSurvivalNeeds, getRunSpeedMultiplier, updateSurvivalNeeds } from "../systems/survival-needs-system";
 import { getHordeActivationCount, getHordeActivationIntervalMs, HORDE_SPAWN_SCAN_BUDGET, isEligibleHordeSpawn } from "../systems/gunshot-horde-system";
+import { canSpawnZombies, consumeZombieRestoreBatch, createZombieSpawnToggleState, setZombieSpawnToggle, type ZombieSpawnToggleState } from "../systems/zombie-spawn-toggle";
 import { CompanionCommandPanel } from "../ui/companion-command-panel";
 import { Hud } from "../ui/hud";
 import { InventoryPanel, type BuildTabSelectionIntent, type InventoryPanelState } from "../ui/inventory-panel";
@@ -189,6 +190,7 @@ export class WorldScene extends Phaser.Scene {
   private saveSystem!: SaveSystem;
   private settingsStore!: GameSettingsStore;
   private settings!: GameSettings;
+  private zombieSpawnToggle: ZombieSpawnToggleState = createZombieSpawnToggleState();
   private rng!: SeededRng;
   private seed = 0;
   private quickslots: Array<string | null> = ["bandage", "medicine", "torch", "molotov", "barricade"];
@@ -273,6 +275,7 @@ export class WorldScene extends Phaser.Scene {
     this.saveSystem = new SaveSystem(window.localStorage, SAVE_KEY);
     this.settingsStore = new GameSettingsStore(window.localStorage);
     this.settings = this.settingsStore.load();
+    this.zombieSpawnToggle = createZombieSpawnToggleState(this.settings.zombieSpawningEnabled);
     const saved = this.loadRequested ? this.saveSystem.load() : null;
     const mapReset = this.saveSystem.consumeIncompatibleMapReset();
     this.seed = saved?.seed ?? ((Date.now() ^ 0x5f3759df) >>> 0);
@@ -858,11 +861,13 @@ export class WorldScene extends Phaser.Scene {
         this.scene.start("world", { load: false });
       },
       onDeveloperModeChange: (enabled) => this.setDeveloperMode(enabled),
+      onZombieSpawningChange: (enabled) => this.setZombieSpawningEnabled(enabled),
       onGrantCompendiumEntry: (entry) => this.grantCompendium(entry),
       getCompendiumState: () => ({ developerMode: this.settings.developerMode, count: (entry) => this.inventory.count(entry.sourceId) }),
       onUiSound:()=>this.audio.play("ui"),
     });
     this.pauseMenu.setDeveloperMode(this.settings.developerMode);
+    this.pauseMenu.setZombieSpawningEnabled(this.settings.zombieSpawningEnabled);
     this.worldStoragePanel = new WorldStoragePanel(this.uiRoot,this.inventory,()=>{this.refreshInventoryPanel();this.saveGame(false);});
     this.buildPreview = this.add.graphics().setDepth(DEPTH.effectWorld - 10);
   }
@@ -1248,6 +1253,11 @@ export class WorldScene extends Phaser.Scene {
   }
 
   private createZombies(saved: SaveGame | null): void {
+    if (!canSpawnZombies(this.zombieSpawnToggle)) {
+      this.zombies = [];
+      this.activeZombieCount = 0;
+      return;
+    }
     if (saved) {
       saved.consumedZombieSpawnIds.forEach((id) => this.consumedZombieSpawnIds.add(id));
       this.zombies = saved.zombies.map((state) => {
@@ -2482,6 +2492,42 @@ export class WorldScene extends Phaser.Scene {
     this.hud.showMessage(`개발자 모드 ${enabled ? "켜짐" : "꺼짐"}`);
   }
 
+  private setZombieSpawningEnabled(enabled: boolean): void {
+    const change = setZombieSpawnToggle(this.zombieSpawnToggle, enabled, this.simulationTime);
+    this.settings = this.settingsStore.setZombieSpawningEnabled(enabled);
+    this.pauseMenu.setZombieSpawningEnabled(enabled);
+    if (change === "disabled") this.clearZombiesForTestToggle();
+    if (change === "enabled") {
+      this.nextDormantActivationAt = this.simulationTime;
+      this.nextHordeActivationAt = this.simulationTime;
+      this.nextNightSpawnAt = this.simulationTime;
+      this.nextDefenseSpawnAt = this.simulationTime;
+    }
+    if (change !== "unchanged") this.hud.showMessage(`테스트용 좀비 스폰 ${enabled ? "ON" : "OFF"}`);
+  }
+
+  private clearZombiesForTestToggle(): void {
+    const dormantSpawnIds = new Set(this.map.zombieSpawns.map((spawn) => spawn.id));
+    for (const zombie of this.zombies) {
+      this.worldObjects.unregister(zombie.id);
+      zombie.view.destroy();
+      if (dormantSpawnIds.has(zombie.id)) this.consumedZombieSpawnIds.delete(zombie.id);
+    }
+    this.zombies.length = 0;
+    this.minimapZombieSources.length = 0;
+    this.teamVisibleZombies.length = 0;
+    this.projectileTargets.length = 0;
+    this.turretTargetScratch.length = 0;
+    this.activeZombieCount = 0;
+    this.nextDormantActivationAt = Number.POSITIVE_INFINITY;
+    this.nextHordeActivationAt = Number.POSITIVE_INFINITY;
+    this.nextNightSpawnAt = Number.POSITIVE_INFINITY;
+    this.nextDefenseSpawnAt = Number.POSITIVE_INFINITY;
+    this.hordeSpawnCursor = 0;
+    this.noise.clear();
+    this.minimap.invalidateMarkers();
+  }
+
   private refreshInventoryPanel(): void {
     this.inventoryPanel.update(this.getInventoryPanelState());
     this.updateHud();
@@ -2514,6 +2560,9 @@ export class WorldScene extends Phaser.Scene {
   }
 
   private updateSpawning(): void {
+    if (!canSpawnZombies(this.zombieSpawnToggle)) return;
+    const restoreBatch = consumeZombieRestoreBatch(this.zombieSpawnToggle, this.simulationTime);
+    if (restoreBatch > 0) this.activateDormantZombieSpawns(this.countActiveLivingZombies() + restoreBatch, ZOMBIE_ACTIVATION_RADIUS);
     const attractor = this.noise.getGunshotAttractor(this.simulationTime);
     if (attractor && this.simulationTime >= this.nextHordeActivationAt) {
       const activationCount = getHordeActivationCount(attractor.value);
@@ -2539,6 +2588,7 @@ export class WorldScene extends Phaser.Scene {
   }
 
   private spawnWave(kind: ZombieKind, count: number, center: Point, radius: number): void {
+    if (!canSpawnZombies(this.zombieSpawnToggle)) return;
     for (let index = 0; index < count; index += 1) {
       if (this.countActiveLivingZombies() >= BALANCE.maxActiveZombies) return;
       for (let attempt = 0; attempt < 12; attempt += 1) {
@@ -2557,6 +2607,7 @@ export class WorldScene extends Phaser.Scene {
   }
 
   private activateDormantZombieSpawns(targetLivingCount: number, radius: number): void {
+    if (!canSpawnZombies(this.zombieSpawnToggle)) return;
     let living = this.countActiveLivingZombies();
     if (living >= Math.min(targetLivingCount, BALANCE.maxActiveZombies)) return;
     const radiusSquared = radius * radius;
@@ -2577,6 +2628,7 @@ export class WorldScene extends Phaser.Scene {
   }
 
   private activateGunshotHorde(requestedCount: number, attractor: Readonly<{ x: number; y: number }>): number {
+    if (!canSpawnZombies(this.zombieSpawnToggle)) return 0;
     const spawns = this.map.zombieSpawns;
     let living = this.countActiveLivingZombies();
     if (spawns.length === 0 || living >= BALANCE.maxActiveZombies) return 0;

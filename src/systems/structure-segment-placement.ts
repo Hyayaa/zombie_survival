@@ -1,12 +1,27 @@
 import { BUILDABLE_DEFINITIONS, type BuildableKind } from "../data/buildable-definitions";
+import { TILE_SIZE } from "../config/game-config";
 import { segmentsIntersect, type SegmentGeometry } from "./collision-geometry";
 import type { Point } from "./zombie-ai-system";
 
-export const STRUCTURE_ANCHOR_SIZE = 24;
+export const STRUCTURE_ANCHOR_SIZE = TILE_SIZE;
 export const MAX_WALL_CHAIN_SEGMENTS = 8;
 export const BUILD_RANGE = 144;
 export type SegmentBuildableKind = Extract<BuildableKind, "wood-wall" | "metal-wall" | "wood-door">;
 export interface StructureSegment extends SegmentGeometry { kind: SegmentBuildableKind }
+export interface WallAnchor { x: number; y: number }
+
+export function wallAnchorToWorld(anchor: WallAnchor): Point {
+  return { x: anchor.x * TILE_SIZE, y: anchor.y * TILE_SIZE };
+}
+
+export function createStructureSegmentGeometry(startAnchor: WallAnchor, endAnchor: WallAnchor, kind: SegmentBuildableKind = "wood-wall"): SegmentGeometry {
+  const deltaX = endAnchor.x - startAnchor.x;
+  const deltaY = endAnchor.y - startAnchor.y;
+  if ((deltaX === 0 && deltaY === 0) || Math.abs(deltaX) > 1 || Math.abs(deltaY) > 1) throw new Error("Structure segments require adjacent integer anchors");
+  const start = wallAnchorToWorld(startAnchor);
+  const end = wallAnchorToWorld(endAnchor);
+  return { startX: start.x, startY: start.y, endX: end.x, endY: end.y, thickness: BUILDABLE_DEFINITIONS[kind].segment!.thickness };
+}
 
 export function snapStructureAnchor(point: Point): Point {
   return { x: Math.round(point.x / STRUCTURE_ANCHOR_SIZE) * STRUCTURE_ANCHOR_SIZE, y: Math.round(point.y / STRUCTURE_ANCHOR_SIZE) * STRUCTURE_ANCHOR_SIZE };
