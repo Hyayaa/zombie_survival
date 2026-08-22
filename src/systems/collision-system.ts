@@ -15,6 +15,11 @@ const SEGMENT_BUCKET_PADDING = 12;
 interface SegmentCollider {
   geometry: SegmentGeometry;
   doorIndex: number;
+  id?: string;
+  active?: boolean;
+  blocksMovement: boolean;
+  blocksVision: boolean;
+  blocksProjectiles: boolean;
 }
 
 export class CollisionSystem implements VisionGrid {
@@ -42,6 +47,7 @@ export class CollisionSystem implements VisionGrid {
   private readonly doorSegmentActive: Uint8Array;
   private visionRevisionValue = 0;
   private navigationRevisionValue = 0;
+  private projectileCollisionRevisionValue = 0;
 
   constructor(
     obstacles: WorldObstacle[],
@@ -94,6 +100,7 @@ export class CollisionSystem implements VisionGrid {
     this.adjustDynamicTraversal(obstacle, 1);
     this.rebuildObstacleTiles(obstacle);
     if (obstacle.blocksMovement) this.navigationRevisionValue += 1;
+    if (obstacle.blocksProjectiles) this.projectileCollisionRevisionValue += 1;
   }
 
   removeDynamicObstacle(id: string): boolean {
@@ -104,6 +111,7 @@ export class CollisionSystem implements VisionGrid {
       this.adjustDynamicTraversal(removed, -1);
       this.rebuildObstacleTiles(removed);
       if (removed.blocksMovement) this.navigationRevisionValue += 1;
+      if (removed.blocksProjectiles) this.projectileCollisionRevisionValue += 1;
     }
     return true;
   }
@@ -117,6 +125,36 @@ export class CollisionSystem implements VisionGrid {
   }
 
   get navigationRevision(): number { return this.navigationRevisionValue; }
+  get projectileCollisionRevision(): number { return this.projectileCollisionRevisionValue; }
+
+  addDynamicSegment(id: string, geometry: SegmentGeometry, options: { blocksMovement: boolean; blocksVision: boolean; blocksProjectiles: boolean }): void {
+    this.removeDynamicSegment(id);
+    const segmentIndex = this.addSegmentCollider(geometry, -1, id, options);
+    this.segmentMarkers = growMarkers(this.segmentMarkers, this.segmentColliders.length);
+    if (options.blocksVision) this.adjustSegmentVision(segmentIndex, 1, true);
+    if (options.blocksMovement) this.navigationRevisionValue += 1;
+    if (options.blocksProjectiles) this.projectileCollisionRevisionValue += 1;
+  }
+
+  removeDynamicSegment(id: string): boolean {
+    const index = this.segmentColliders.findIndex((collider) => collider.id === id && collider.active !== false);
+    if (index < 0) return false;
+    const collider = this.segmentColliders[index]!; collider.active = false;
+    if (collider.blocksVision) this.adjustSegmentVision(index, -1, true);
+    if (collider.blocksMovement) this.navigationRevisionValue += 1;
+    if (collider.blocksProjectiles) this.projectileCollisionRevisionValue += 1;
+    return true;
+  }
+
+  setDynamicSegmentActive(id: string, active: boolean): boolean {
+    const index = this.segmentColliders.findIndex((collider) => collider.id === id); if (index < 0) return false;
+    const collider = this.segmentColliders[index]!; const wasActive = collider.active !== false; if (wasActive === active) return true;
+    collider.active = active;
+    if (collider.blocksVision) this.adjustSegmentVision(index, active ? 1 : -1, true);
+    if (collider.blocksMovement) this.navigationRevisionValue += 1;
+    if (collider.blocksProjectiles) this.projectileCollisionRevisionValue += 1;
+    return true;
+  }
 
   setDoorOpen(id: string, open: boolean): void {
     const doorIndex = this.doors.findIndex((candidate) => candidate.id === id);
@@ -156,7 +194,7 @@ export class CollisionSystem implements VisionGrid {
         if (circleIntersectsTile(x, y, radius, tileX, tileY, this.tileSize)) return true;
       }
     }
-    return this.circleHitsIndexedSegment(x, y, radius, minTileX, minTileY, maxTileX, maxTileY);
+    return this.circleHitsIndexedSegment(x, y, radius, minTileX, minTileY, maxTileX, maxTileY, "movement");
   }
 
   canOccupyCircle(x: number, y: number, radius: number): boolean {
@@ -210,7 +248,7 @@ export class CollisionSystem implements VisionGrid {
 
   blocksVisionWorld(x: number, y: number): boolean {
     if (this.gridValue(this.visionGrid, x, y)) return true;
-    return this.pointHitsIndexedSegment(x, y);
+    return this.pointHitsIndexedSegment(x, y, "vision");
   }
 
   visionCostWorld(x: number, y: number): number {
@@ -229,11 +267,11 @@ export class CollisionSystem implements VisionGrid {
 
   blocksProjectilesWorld(x: number, y: number): boolean {
     if (this.gridValue(this.projectileGrid, x, y)) return true;
-    return this.pointHitsIndexedSegment(x, y);
+    return this.pointHitsIndexedSegment(x, y, "projectile");
   }
 
   hasLineOfSight(from: Point, to: Point, sampleStep = 6): boolean {
-    if (this.traversalHitsIndexedSegment(from, to, 0, false)) return false;
+    if (this.traversalHitsIndexedSegment(from, to, 0, false, "vision")) return false;
     const distance = Math.hypot(to.x - from.x, to.y - from.y);
     const steps = Math.max(1, Math.ceil(distance / sampleStep));
     for (let step = 1; step < steps; step += 1) {
@@ -379,9 +417,9 @@ export class CollisionSystem implements VisionGrid {
     return changed;
   }
 
-  private addSegmentCollider(geometry: SegmentGeometry, doorIndex: number): number {
+  private addSegmentCollider(geometry: SegmentGeometry, doorIndex: number, id?: string, options: { blocksMovement: boolean; blocksVision: boolean; blocksProjectiles: boolean } = { blocksMovement: true, blocksVision: true, blocksProjectiles: true }): number {
     const segmentIndex = this.segmentColliders.length;
-    this.segmentColliders.push({ geometry, doorIndex });
+    this.segmentColliders.push({ geometry, doorIndex, id, active: true, ...options });
     visitSegmentTiles(geometry, this.tileSize, this.widthTiles, this.heightTiles, (tileX, tileY) => {
       this.segmentBuckets[this.index(tileX, tileY)]!.push(segmentIndex);
     }, SEGMENT_BUCKET_PADDING);
@@ -389,6 +427,7 @@ export class CollisionSystem implements VisionGrid {
   }
 
   private isSegmentActive(collider: SegmentCollider): boolean {
+    if (collider.active === false) return false;
     if (collider.doorIndex < 0) return true;
     const door = this.doors[collider.doorIndex];
     return Boolean(door && !door.open && !door.destroyed);
@@ -439,7 +478,7 @@ export class CollisionSystem implements VisionGrid {
     return this.segmentQueryGeneration;
   }
 
-  private circleHitsIndexedSegment(x: number, y: number, radius: number, minTileX: number, minTileY: number, maxTileX: number, maxTileY: number): boolean {
+  private circleHitsIndexedSegment(x: number, y: number, radius: number, minTileX: number, minTileY: number, maxTileX: number, maxTileY: number, mode: "movement" | "vision" | "projectile"): boolean {
     const generation = this.beginSegmentQuery();
     for (let tileY = minTileY; tileY <= maxTileY; tileY += 1) {
       for (let tileX = minTileX; tileX <= maxTileX; tileX += 1) {
@@ -449,21 +488,21 @@ export class CollisionSystem implements VisionGrid {
           if (this.segmentMarkers[segmentIndex] === generation) continue;
           this.segmentMarkers[segmentIndex] = generation;
           const collider = this.segmentColliders[segmentIndex]!;
-          if (this.isSegmentActive(collider) && circleIntersectsThickSegment(x, y, radius, collider.geometry)) return true;
+          if (this.isSegmentActive(collider) && colliderBlocks(collider, mode) && circleIntersectsThickSegment(x, y, radius, collider.geometry)) return true;
         }
       }
     }
     return false;
   }
 
-  private pointHitsIndexedSegment(x: number, y: number): boolean {
+  private pointHitsIndexedSegment(x: number, y: number, mode: "vision" | "projectile"): boolean {
     const tileX = Math.floor(x / this.tileSize);
     const tileY = Math.floor(y / this.tileSize);
     if (!this.inBounds(tileX, tileY)) return true;
-    return this.circleHitsIndexedSegment(x, y, 0, tileX, tileY, tileX, tileY);
+    return this.circleHitsIndexedSegment(x, y, 0, tileX, tileY, tileX, tileY, mode);
   }
 
-  private traversalHitsIndexedSegment(from: Point, to: Point, radius: number, allowClosedDoors: boolean): boolean {
+  private traversalHitsIndexedSegment(from: Point, to: Point, radius: number, allowClosedDoors: boolean, mode: "movement" | "vision" = "movement"): boolean {
     const minTileX = Math.max(0, Math.floor((Math.min(from.x, to.x) - radius) / this.tileSize));
     const minTileY = Math.max(0, Math.floor((Math.min(from.y, to.y) - radius) / this.tileSize));
     const maxTileX = Math.min(this.widthTiles - 1, Math.floor((Math.max(from.x, to.x) + radius) / this.tileSize));
@@ -478,7 +517,7 @@ export class CollisionSystem implements VisionGrid {
           if (this.segmentMarkers[segmentIndex] === generation) continue;
           this.segmentMarkers[segmentIndex] = generation;
           const collider = this.segmentColliders[segmentIndex]!;
-          if (!this.isSegmentActive(collider) || (allowClosedDoors && collider.doorIndex >= 0)) continue;
+          if (!this.isSegmentActive(collider) || !colliderBlocks(collider, mode) || (allowClosedDoors && collider.doorIndex >= 0)) continue;
           if (segmentIntersectsThickSegment(movement, collider.geometry, radius)) return true;
         }
       }
@@ -523,4 +562,13 @@ function circleIntersectsTile(x: number, y: number, radius: number, tileX: numbe
   const deltaX = x - closestX;
   const deltaY = y - closestY;
   return deltaX * deltaX + deltaY * deltaY < radius * radius;
+}
+
+function colliderBlocks(collider: SegmentCollider, mode: "movement" | "vision" | "projectile"): boolean {
+  return mode === "movement" ? collider.blocksMovement : mode === "vision" ? collider.blocksVision : collider.blocksProjectiles;
+}
+
+function growMarkers(markers: Uint32Array<ArrayBuffer>, length: number): Uint32Array<ArrayBuffer> {
+  if (markers.length >= length) return markers;
+  const next = new Uint32Array(length); next.set(markers); return next;
 }

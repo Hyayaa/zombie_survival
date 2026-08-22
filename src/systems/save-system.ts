@@ -8,6 +8,7 @@ import { createWeaponMagazines } from "./weapon-system";
 import { GameClock } from "../core/game-clock";
 import { createSurvivalNeeds } from "./survival-needs-system";
 import type { GridInventorySnapshot, InventorySlot } from "./inventory-system";
+import { BUILDABLE_DEFINITIONS } from "../data/buildable-definitions";
 
 export interface StorageLike {
   getItem(key: string): string | null;
@@ -45,6 +46,7 @@ export class SaveSystem {
       if (parsed.version === 5) return this.migrateV5(parsed);
       if (parsed.version === 6) return this.migrateV6(parsed);
       if (parsed.version === 7) return this.migrateV7(parsed);
+      if (parsed.version === 8) return this.migrateV8(parsed);
       if (parsed.version !== SAVE_VERSION) {
         this.storage.removeItem(this.key);
         this.incompatibleMapReset = true;
@@ -157,6 +159,12 @@ export class SaveSystem {
     return migrated;
   }
 
+  private migrateV8(value: SaveCandidate): SaveGame | null {
+    if (!this.isValidBase(value, 8) || !this.hasValidObstacleState(value) || !this.hasValidCompanions(value) || !this.hasValidStructures(value) || !this.hasValidSurvivalState(value)) return null;
+    const migrated = { ...value, version: SAVE_VERSION, nextStructureId: value.structures?.length ?? 0 } as SaveGame;
+    this.save(migrated); return migrated;
+  }
+
   private isValidBase(value: SaveCandidate, version: number): boolean {
     return value.version === version
       && value.mapId === MAP_ID
@@ -246,9 +254,14 @@ export class SaveSystem {
 
   private hasValidStructures(value: SaveCandidate): boolean {
     return Array.isArray(value.structures) && value.structures.every((state) => state && typeof state.id === "string"
-      && ["turret", "solar-generator", "fuel-generator", "battery-bank", "makeshift_workbench", "plank_workbench", "technical_workbench"].includes(state.kind)
+      && BUILDABLE_DEFINITIONS[state.kind as keyof typeof BUILDABLE_DEFINITIONS] !== undefined
       && typeof state.tileX === "number" && typeof state.tileY === "number" && typeof state.storedEnergy === "number"
-      && (state.fuelSeconds === undefined || typeof state.fuelSeconds === "number"));
+      && (state.fuelSeconds === undefined || typeof state.fuelSeconds === "number")
+      && (state.health === undefined || typeof state.health === "number")
+      && (state.maximumHealth === undefined || typeof state.maximumHealth === "number")
+      && (state.placement === undefined || (state.placement.kind === "footprint"
+        ? typeof state.placement.tileX === "number" && typeof state.placement.tileY === "number" && typeof state.placement.rotation === "number"
+        : state.placement.kind === "segment" && [state.placement.startX, state.placement.startY, state.placement.endX, state.placement.endY].every((coordinate: unknown) => typeof coordinate === "number"))));
   }
 
   private hasValidSurvivalState(value: SaveCandidate): boolean {

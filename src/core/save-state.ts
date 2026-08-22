@@ -88,6 +88,7 @@ export interface SaveGame {
   doorStates: SavedDoorState[];
   barricades: SavedBarricadeState[];
   structures: SavedStructureState[];
+  nextStructureId?: number;
   consumedZombieSpawnIds: string[];
   zombies: SavedZombie[];
   exploredFog: SavedFogExploration;

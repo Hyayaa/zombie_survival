@@ -1,24 +1,42 @@
 import { BUILDABLE_DEFINITIONS, type BuildableKind } from "../data/buildable-definitions";
 import { TILE_SIZE } from "../config/game-config";
+import type { WorldStorageSnapshot } from "../systems/world-storage-container";
+
+export type StructurePlacement =
+  | { kind: "segment"; startX: number; startY: number; endX: number; endY: number; hingeSide?: -1 | 1 }
+  | { kind: "footprint"; tileX: number; tileY: number; rotation: number };
 
 export interface PlacedStructureState {
-  id: string;
-  kind: BuildableKind;
-  tileX: number;
-  tileY: number;
-  storedEnergy: number;
-  fuelSeconds?: number;
-  powered: boolean;
-  aimAngle?: number;
+  id: string; kind: BuildableKind; tileX: number; tileY: number; placement: StructurePlacement;
+  health: number; maximumHealth: number; createdOrder: number;
+  storedEnergy: number; fuelSeconds?: number; powered: boolean; aimAngle?: number; doorOpen?: boolean;
+  storage?: WorldStorageSnapshot;
 }
 
-export interface SavedStructureState extends Omit<PlacedStructureState, "powered"> {}
+export type SavedStructureState = Omit<PlacedStructureState, "powered" | "placement" | "health" | "maximumHealth" | "createdOrder"> & {
+  placement?: StructurePlacement; health?: number; maximumHealth?: number; createdOrder?: number;
+};
 
-export function createPlacedStructure(id: string, kind: BuildableKind, tileX: number, tileY: number): PlacedStructureState {
-  return { id, kind, tileX, tileY, storedEnergy: 0, fuelSeconds: kind === "fuel-generator" ? 0 : undefined, powered: false, aimAngle: kind === "turret" ? 0 : undefined };
+export function createPlacedStructure(id: string, kind: BuildableKind, tileX: number, tileY: number, rotation = 0, createdOrder = 0): PlacedStructureState {
+  const definition = BUILDABLE_DEFINITIONS[kind];
+  if (definition.placementKind !== "footprint") throw new Error(`${kind} requires segment placement`);
+  return { id, kind, tileX, tileY, placement: { kind: "footprint", tileX, tileY, rotation }, health: definition.maximumHealth, maximumHealth: definition.maximumHealth, createdOrder, storedEnergy: 0, fuelSeconds: kind === "fuel-generator" ? 0 : undefined, powered: false, aimAngle: kind === "turret" ? 0 : undefined };
 }
 
-export function getPlacedStructureCenter(state: Pick<PlacedStructureState, "kind" | "tileX" | "tileY">): { x: number; y: number } {
-  const footprint = BUILDABLE_DEFINITIONS[state.kind].footprint;
+export function createPlacedSegment(id: string, kind: "wood-wall" | "metal-wall" | "wood-door", startX: number, startY: number, endX: number, endY: number, createdOrder = 0, hingeSide: -1 | 1 = 1): PlacedStructureState {
+  const definition = BUILDABLE_DEFINITIONS[kind];
+  return { id, kind, tileX: Math.floor(Math.min(startX, endX) / TILE_SIZE), tileY: Math.floor(Math.min(startY, endY) / TILE_SIZE), placement: { kind: "segment", startX, startY, endX, endY, hingeSide: kind === "wood-door" ? hingeSide : undefined }, health: definition.maximumHealth, maximumHealth: definition.maximumHealth, createdOrder, storedEnergy: 0, powered: false, doorOpen: kind === "wood-door" ? false : undefined };
+}
+
+export function normalizePlacedStructure(state: Partial<PlacedStructureState> & Pick<PlacedStructureState, "id" | "kind" | "tileX" | "tileY">): PlacedStructureState {
+  const definition = BUILDABLE_DEFINITIONS[state.kind];
+  const placement = state.placement ?? { kind: "footprint" as const, tileX: state.tileX, tileY: state.tileY, rotation: 0 };
+  const maximumHealth = state.maximumHealth ?? definition.maximumHealth;
+  return { ...state, placement, health: Math.max(0, Math.min(maximumHealth, state.health ?? maximumHealth)), maximumHealth, createdOrder: state.createdOrder ?? 0, storedEnergy: state.storedEnergy ?? 0, powered: state.powered ?? false } as PlacedStructureState;
+}
+
+export function getPlacedStructureCenter(state: Pick<PlacedStructureState, "kind" | "tileX" | "tileY" | "placement">): { x: number; y: number } {
+  if (state.placement.kind === "segment") return { x: (state.placement.startX + state.placement.endX) / 2, y: (state.placement.startY + state.placement.endY) / 2 };
+  const footprint = BUILDABLE_DEFINITIONS[state.kind].footprint!;
   return { x: (state.tileX + footprint.width / 2) * TILE_SIZE, y: (state.tileY + footprint.height / 2) * TILE_SIZE };
 }

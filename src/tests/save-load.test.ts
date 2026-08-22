@@ -5,6 +5,8 @@ import { createCityBlockMap } from "../data/map-definitions";
 import { decodeExploredFog, encodeExploredFog, FOG_TOTAL_CELLS, isValidExploredFog } from "../systems/fog-save-codec";
 import { SaveSystem, type StorageLike } from "../systems/save-system";
 import { InventorySystem } from "../systems/inventory-system";
+import { createPlacedSegment, createPlacedStructure } from "../entities/placed-structure";
+import { WorldStorageContainer } from "../systems/world-storage-container";
 
 class MemoryStorage implements StorageLike {
   private data = new Map<string, string>();
@@ -41,6 +43,14 @@ function saveFixture(): SaveGame {
 }
 
 describe("SaveSystem", () => {
+  it("round-trips segment geometry, door state, health, crate storage and structure counter", () => {
+    const storage=new MemoryStorage(),saves=new SaveSystem(storage,"structures-v9"),fixture=saveFixture();
+    const wall=createPlacedSegment("wall-7","metal-wall",24,48,48,72,7);wall.health=411;
+    const door=createPlacedSegment("door-8","wood-door",48,72,72,72,8,-1);door.doorOpen=true;
+    const crate=createPlacedStructure("crate-9","wood-crate",4,5,0,9);const contents=new WorldStorageContainer("structure:crate-9:storage");contents.add("wood",4,0,0);crate.storage=contents.snapshot();
+    fixture.structures=[wall,door,crate].map(({powered:_powered,...state})=>state);fixture.nextStructureId=12;
+    expect(saves.save(fixture)).toBe(true);const loaded=saves.load();expect(loaded?.structures).toEqual(fixture.structures);expect(loaded?.nextStructureId).toBe(12);
+  });
   it("restores player, inventory and explored fog", () => {
     const storage = new MemoryStorage();
     const saves = new SaveSystem(storage, "test");
