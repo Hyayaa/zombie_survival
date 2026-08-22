@@ -69,7 +69,10 @@ export function createMapRendering(scene: Phaser.Scene, map: MapDefinition): Map
         for (let x = chunkX; x < maxX; x += 1) {
           const terrain = getTerrain(map, x, y);
           const index = y * map.widthTiles + x;
-          const color = terrain === TerrainType.Road ? COLORS.road
+          const color = terrain === TerrainType.Water ? 0x173747
+            : terrain === TerrainType.RiverBank ? 0x59604b
+              : terrain === TerrainType.BridgeRoad ? 0x4b4a45
+                : terrain === TerrainType.Road ? COLORS.road
             : terrain === TerrainType.Sidewalk ? 0x3c4240
               : terrain === TerrainType.Floor ? (floorColors[index] || ((x + y) % 2 === 0 ? COLORS.floor : COLORS.floorAlt))
                 : ((x + y) % 3 === 0 ? COLORS.groundAlt : COLORS.ground);
@@ -77,7 +80,7 @@ export function createMapRendering(scene: Phaser.Scene, map: MapDefinition): Map
           const worldY = y * TILE_SIZE;
           ground.fillStyle(color, 1).fillRect(worldX, worldY, TILE_SIZE, TILE_SIZE);
           const obstacle = obstacleGrid[index];
-          if (!obstacle) continue;
+          if (!obstacle || obstacle.kind === "water") continue;
           if (obstacle.kind === "wall") {
             props.fillStyle(COLORS.wall, 1).fillRect(worldX, worldY, TILE_SIZE, TILE_SIZE);
             props.fillStyle(COLORS.wallTop, 1).fillRect(worldX, worldY, TILE_SIZE, 5);

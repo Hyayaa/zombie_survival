@@ -1,8 +1,8 @@
 export const LOGICAL_WIDTH = 480;
 export const LOGICAL_HEIGHT = 270;
 export const TILE_SIZE = 24;
-export const MAP_WIDTH_TILES = 128;
-export const MAP_HEIGHT_TILES = 128;
+export const MAP_WIDTH_TILES = 282;
+export const MAP_HEIGHT_TILES = 282;
 export const WORLD_WIDTH = MAP_WIDTH_TILES * TILE_SIZE;
 export const WORLD_HEIGHT = MAP_HEIGHT_TILES * TILE_SIZE;
 // Compatibility aliases for older gameplay helpers. New dimension-aware code uses the axes above.

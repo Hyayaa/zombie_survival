@@ -1,12 +1,14 @@
-import { MAP_HEIGHT_TILES, MAP_ID, MAP_VERSION, MAP_WIDTH_TILES, OBSTACLE_BALANCE, TILE_SIZE } from "../config/game-config";
+import { MAP_ID, MAP_VERSION, OBSTACLE_BALANCE, TILE_SIZE } from "../config/game-config";
 import type { SegmentGeometry } from "../systems/collision-geometry";
 import type { ZombieKind } from "./zombie-definitions";
 import type { WeaponId } from "./weapon-definitions";
 import { BUILDABLE_DEFINITIONS } from "./buildable-definitions";
 import type { StructureOwnership,StructureSource } from "../entities/placed-structure";
 import { createStructureSegmentGeometry, segmentKey, type WallAnchor } from "../systems/structure-segment-placement";
+import { CITY_REGION_HEIGHT, CITY_REGION_WIDTH, type WorldMacroPlan } from "./world-region-definitions";
+import { createMultiCityWorld } from "../systems/world-macro-generator";
 
-export enum TerrainType { Ground = 0, Road = 1, Sidewalk = 2, Floor = 3 }
+export enum TerrainType { Ground = 0, Road = 1, Sidewalk = 2, Floor = 3, Water = 4, RiverBank = 5, BridgeRoad = 6 }
 export type RoadKind = "arterial" | "street" | "diagonal";
 
 export interface RoadSegment {
@@ -32,7 +34,7 @@ export interface BuildingDefinition {
 export interface WorldObstacle {
   id: string; tileX: number; tileY: number; widthTiles: number; heightTiles: number;
   blocksMovement: boolean; blocksVision: boolean; blocksProjectiles: boolean;
-  coverHeight: CoverHeight; kind: "wall" | "furniture" | "vehicle" | "barricade";
+  coverHeight: CoverHeight; kind: "wall" | "furniture" | "vehicle" | "barricade" | "water";
 }
 
 export interface DoorDefinition {
@@ -68,6 +70,7 @@ export interface MapDefinition {
   survivorSpawn: { x: number; y: number };
   extractionZone: { x: number; y: number; radius: number };
   safehouseZone: { x: number; y: number; width: number; height: number };
+  worldPlan?: WorldMacroPlan;
 }
 
 const ROAD_SEGMENTS: RoadSegment[] = [
@@ -87,10 +90,11 @@ const ROAD_SEGMENTS: RoadSegment[] = [
 const KIND_CYCLE: BuildingKind[] = ["house", "house", "store", "office", "ruin", "house", "warehouse", "garage", "clinic"];
 const FLOOR_COLORS = [0x4c5148, 0x514a42, 0x4c4842, 0x4b514c, 0x484d4c, 0x504a46];
 
-export const CURRENT_MAP_GENERATION_VERSION=4;
+export const CURRENT_MAP_GENERATION_VERSION=5;
 export function createCityBlockMap(mapSeed = 0x51a7c1,mapGenerationVersion=CURRENT_MAP_GENERATION_VERSION): MapDefinition {
-  const widthTiles = MAP_WIDTH_TILES;
-  const heightTiles = MAP_HEIGHT_TILES;
+  if (mapGenerationVersion >= 5) return createMultiCityWorld(mapSeed, (citySeed) => createCityBlockMap(citySeed, 4));
+  const widthTiles = CITY_REGION_WIDTH;
+  const heightTiles = CITY_REGION_HEIGHT;
   const terrain = new Uint8Array(widthTiles * heightTiles);
   const occupied = new Uint8Array(terrain.length);
   const minimapWallCoverage = new Uint8Array(terrain.length);
@@ -259,7 +263,7 @@ export function getTerrain(map: Pick<MapDefinition, "terrain" | "widthTiles" | "
   if (tileX < 0 || tileY < 0 || tileX >= map.widthTiles || tileY >= map.heightTiles) return TerrainType.Ground;
   return map.terrain[tileY * map.widthTiles + tileX] as TerrainType;
 }
-export function isRoad(map: Pick<MapDefinition, "terrain" | "widthTiles" | "heightTiles">, tileX: number, tileY: number): boolean { return getTerrain(map, tileX, tileY) === TerrainType.Road; }
+export function isRoad(map: Pick<MapDefinition, "terrain" | "widthTiles" | "heightTiles">, tileX: number, tileY: number): boolean { const terrain=getTerrain(map,tileX,tileY);return terrain===TerrainType.Road||terrain===TerrainType.BridgeRoad; }
 
 function rasterizeRoads(terrain: Uint8Array, width: number, height: number, roads: readonly RoadSegment[]): void {
   for (const road of roads) {

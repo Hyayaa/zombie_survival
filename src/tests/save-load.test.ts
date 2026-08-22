@@ -99,7 +99,7 @@ describe("SaveSystem", () => {
     expect(loaded?.player.health).toBe(67);
     expect(loaded?.inventory).toEqual(fixture.inventory);
     expect(loaded?.exploredFog).toEqual(fixture.exploredFog);
-    expect(loaded?.doorStates).toHaveLength(createCityBlockMap(99).doors.length);
+    expect(loaded?.doorStates).toHaveLength(createCityBlockMap(99,2).doors.length);
     expect(loaded?.doorStates.find((door) => door.id === "door-building-00")).toMatchObject({ open: true, health: 48, destroyed: false });
     expect(loaded?.doorStates.find((door) => door.id !== "door-building-00")?.open).toBe(false);
     expect(loaded?.barricades).toEqual([]);

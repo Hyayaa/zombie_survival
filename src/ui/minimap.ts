@@ -5,7 +5,7 @@ import type { Point } from "../systems/zombie-ai-system";
 
 export type MapDisplayMode = "hidden" | "local" | "full";
 export enum MinimapTileState { Unknown = 0, Explored = 1, Visible = 2 }
-export enum MinimapTerrain { Ground = 0, Road = 1, Sidewalk = 2, Floor = 3, Wall = 4, Vehicle = 5, Door = 6, OpenDoor = 7, Barricade = 8 }
+export enum MinimapTerrain { Ground = 0, Road = 1, Sidewalk = 2, Floor = 3, Wall = 4, Vehicle = 5, Door = 6, OpenDoor = 7, Barricade = 8, Water = 9, RiverBank = 10 }
 
 export const MINIMAP_COLORS = {
   unknown: 0x020405,
@@ -18,6 +18,8 @@ export const MINIMAP_COLORS = {
   doorExplored: 0x4c4335, doorVisible: 0x8a7656,
   openDoorExplored: 0x343b32, openDoorVisible: 0x65765b,
   barricadeExplored: 0x49382b, barricadeVisible: 0x866140,
+  waterExplored: 0x102733, waterVisible: 0x1d5068,
+  riverBankExplored: 0x34392c, riverBankVisible: 0x626b50,
   player: 0x64c7e8, companion: 0xd1ad5f, safehouse: 0x7193b8,
   extraction: 0x8fbd68, cameraViewport: 0xd7e0dc,
   zombie: 0xc9403c,
@@ -130,22 +132,22 @@ export function getMinimapTerrain(map: MapDefinition, tileX: number, tileY: numb
   }
   if (map.minimapWallCoverage[tileY * map.widthTiles + tileX]) return MinimapTerrain.Wall;
   const terrain = getTerrain(map, tileX, tileY);
-  return terrain === TerrainType.Road ? MinimapTerrain.Road : terrain === TerrainType.Sidewalk ? MinimapTerrain.Sidewalk : terrain === TerrainType.Floor ? MinimapTerrain.Floor : MinimapTerrain.Ground;
+  return terrain === TerrainType.Water ? MinimapTerrain.Water : terrain === TerrainType.RiverBank ? MinimapTerrain.RiverBank : terrain === TerrainType.Road || terrain === TerrainType.BridgeRoad ? MinimapTerrain.Road : terrain === TerrainType.Sidewalk ? MinimapTerrain.Sidewalk : terrain === TerrainType.Floor ? MinimapTerrain.Floor : MinimapTerrain.Ground;
 }
 
-export function worldToFullMap(worldX: number, worldY: number, output: Point = { x: 0, y: 0 }): Point {
-  output.x = clamp(worldX / WORLD_WIDTH * MINIMAP.fullSize, 0, MINIMAP.fullSize);
-  output.y = clamp(worldY / WORLD_HEIGHT * MINIMAP.fullSize, 0, MINIMAP.fullSize);
+export function worldToFullMap(worldX: number, worldY: number, output: Point = { x: 0, y: 0 }, worldWidth = WORLD_WIDTH, worldHeight = WORLD_HEIGHT): Point {
+  output.x = clamp(worldX / worldWidth * MINIMAP.fullSize, 0, MINIMAP.fullSize);
+  output.y = clamp(worldY / worldHeight * MINIMAP.fullSize, 0, MINIMAP.fullSize);
   return output;
 }
 export const worldToMinimap = worldToFullMap;
 
-export function cameraViewportToFullMap(worldView: { x: number; y: number; width: number; height: number }): { x: number; y: number; width: number; height: number } {
+export function cameraViewportToFullMap(worldView: { x: number; y: number; width: number; height: number }, worldWidth = WORLD_WIDTH, worldHeight = WORLD_HEIGHT): { x: number; y: number; width: number; height: number } {
   return {
-    x: clamp(worldView.x / WORLD_WIDTH * MINIMAP.fullSize, 0, MINIMAP.fullSize),
-    y: clamp(worldView.y / WORLD_HEIGHT * MINIMAP.fullSize, 0, MINIMAP.fullSize),
-    width: clamp(worldView.width / WORLD_WIDTH * MINIMAP.fullSize, 0, MINIMAP.fullSize),
-    height: clamp(worldView.height / WORLD_HEIGHT * MINIMAP.fullSize, 0, MINIMAP.fullSize),
+    x: clamp(worldView.x / worldWidth * MINIMAP.fullSize, 0, MINIMAP.fullSize),
+    y: clamp(worldView.y / worldHeight * MINIMAP.fullSize, 0, MINIMAP.fullSize),
+    width: clamp(worldView.width / worldWidth * MINIMAP.fullSize, 0, MINIMAP.fullSize),
+    height: clamp(worldView.height / worldHeight * MINIMAP.fullSize, 0, MINIMAP.fullSize),
   };
 }
 export const cameraViewportToMinimap = cameraViewportToFullMap;
@@ -334,7 +336,8 @@ export class MinimapPanel {
   private drawFullTerrainTile(index: number): void {
     const tileX = index % this.map.widthTiles; const tileY = Math.floor(index / this.map.widthTiles);
     this.fullTerrainContext.fillStyle = colorCss(getMinimapTileColor(this.terrain[index] as MinimapTerrain, MinimapTileState.Visible));
-    this.fullTerrainContext.fillRect(tileX * MINIMAP.fullPixelsPerTile, tileY * MINIMAP.fullPixelsPerTile, MINIMAP.fullPixelsPerTile, MINIMAP.fullPixelsPerTile);
+    const x=Math.floor(tileX/this.map.widthTiles*MINIMAP.fullSize),y=Math.floor(tileY/this.map.heightTiles*MINIMAP.fullSize),nextX=Math.ceil((tileX+1)/this.map.widthTiles*MINIMAP.fullSize),nextY=Math.ceil((tileY+1)/this.map.heightTiles*MINIMAP.fullSize);
+    this.fullTerrainContext.fillRect(x,y,Math.max(1,nextX-x),Math.max(1,nextY-y));
   }
   private rebuildFullFog(): void {
     for (let index = 0; index < this.terrain.length; index += 1) this.drawFullFogTile(index);
@@ -342,12 +345,12 @@ export class MinimapPanel {
   }
   private drawFullFogTile(index: number): void {
     const tileX = index % this.map.widthTiles; const tileY = Math.floor(index / this.map.widthTiles);
-    const x = tileX * MINIMAP.fullPixelsPerTile; const y = tileY * MINIMAP.fullPixelsPerTile;
-    this.fullFogContext.clearRect(x, y, MINIMAP.fullPixelsPerTile, MINIMAP.fullPixelsPerTile);
+    const x=Math.floor(tileX/this.map.widthTiles*MINIMAP.fullSize),y=Math.floor(tileY/this.map.heightTiles*MINIMAP.fullSize),nextX=Math.ceil((tileX+1)/this.map.widthTiles*MINIMAP.fullSize),nextY=Math.ceil((tileY+1)/this.map.heightTiles*MINIMAP.fullSize),width=Math.max(1,nextX-x),height=Math.max(1,nextY-y);
+    this.fullFogContext.clearRect(x,y,width,height);
     const style = getFullMapFogStyle(getMinimapTileState(this.fog, tileX, tileY));
     if (!style) return;
     this.fullFogContext.fillStyle = style;
-    this.fullFogContext.fillRect(x, y, MINIMAP.fullPixelsPerTile, MINIMAP.fullPixelsPerTile);
+    this.fullFogContext.fillRect(x,y,width,height);
   }
   private drawLocalMarkers(state: MinimapDynamicState): void {
     const context = this.localMarkerContext; context.clearRect(0, 0, MINIMAP.localSize, MINIMAP.localSize);
@@ -372,24 +375,25 @@ export class MinimapPanel {
   }
   private drawFullMarkers(state: MinimapDynamicState): void {
     const context = this.fullMarkerContext; context.clearRect(0, 0, MINIMAP.fullSize, MINIMAP.fullSize);
-    const viewport = cameraViewportToFullMap(state.cameraWorldView);
+    const worldWidth=this.map.widthTiles*TILE_SIZE,worldHeight=this.map.heightTiles*TILE_SIZE;
+    const viewport = cameraViewportToFullMap(state.cameraWorldView,worldWidth,worldHeight);
     context.strokeStyle = colorCss(MINIMAP_COLORS.cameraViewport); context.lineWidth = 2;
     context.strokeRect(Math.floor(viewport.x) + 0.5, Math.floor(viewport.y) + 0.5, Math.max(1, Math.floor(viewport.width) - 1), Math.max(1, Math.floor(viewport.height) - 1));
     const safehouse = this.map.safehouseZone;
-    worldToFullMap(safehouse.x + safehouse.width / 2, safehouse.y + safehouse.height / 2, this.markerPoint); drawMarker(context, this.markerPoint, MINIMAP_COLORS.safehouse, 5, MINIMAP.fullSize);
+    worldToFullMap(safehouse.x + safehouse.width / 2, safehouse.y + safehouse.height / 2, this.markerPoint,worldWidth,worldHeight); drawMarker(context, this.markerPoint, MINIMAP_COLORS.safehouse, 5, MINIMAP.fullSize);
     const extractionTileX = Math.floor(this.map.extractionZone.x / TILE_SIZE);
     const extractionTileY = Math.floor(this.map.extractionZone.y / TILE_SIZE);
     if (shouldShowExtraction(getMinimapTileState(this.fog, extractionTileX, extractionTileY), state.collectedParts, state.defenseActive)) {
-      worldToFullMap(this.map.extractionZone.x, this.map.extractionZone.y, this.markerPoint);
+      worldToFullMap(this.map.extractionZone.x, this.map.extractionZone.y, this.markerPoint,worldWidth,worldHeight);
       drawMarker(context, this.markerPoint, MINIMAP_COLORS.extraction, 6, MINIMAP.fullSize);
     }
     for (const companion of state.companions) {
       if (!shouldShowFullCompanion(state.developerMode, companion.alive)) continue;
-      worldToFullMap(companion.position.x, companion.position.y, this.markerPoint);
+      worldToFullMap(companion.position.x, companion.position.y, this.markerPoint,worldWidth,worldHeight);
       drawMarker(context, this.markerPoint, companion.rescued ? MINIMAP_COLORS.companion : MINIMAP_COLORS.survivor, 4, MINIMAP.fullSize);
     }
-    worldToFullMap(state.player.x, state.player.y, this.markerPoint); drawMarker(context, this.markerPoint, MINIMAP_COLORS.player, 6, MINIMAP.fullSize);
-    for (const structure of state.structures ?? []) { worldToFullMap(structure.position.x, structure.position.y, this.markerPoint); drawMarker(context, this.markerPoint, structure.kind.includes("wall") || structure.kind.includes("door") ? 0x9c8a67 : 0x708f7d, 2, MINIMAP.fullSize); }
+    worldToFullMap(state.player.x, state.player.y, this.markerPoint,worldWidth,worldHeight); drawMarker(context, this.markerPoint, MINIMAP_COLORS.player, 6, MINIMAP.fullSize);
+    for (const structure of state.structures ?? []) { worldToFullMap(structure.position.x, structure.position.y, this.markerPoint,worldWidth,worldHeight); drawMarker(context, this.markerPoint, structure.kind.includes("wall") || structure.kind.includes("door") ? 0x9c8a67 : 0x708f7d, 2, MINIMAP.fullSize); }
   }
 }
 
@@ -410,6 +414,8 @@ export function getMinimapTileColor(terrain: MinimapTerrain, state: MinimapTileS
     case MinimapTerrain.Door: return visible ? MINIMAP_COLORS.doorVisible : MINIMAP_COLORS.doorExplored;
     case MinimapTerrain.OpenDoor: return visible ? MINIMAP_COLORS.openDoorVisible : MINIMAP_COLORS.openDoorExplored;
     case MinimapTerrain.Barricade: return visible ? MINIMAP_COLORS.barricadeVisible : MINIMAP_COLORS.barricadeExplored;
+    case MinimapTerrain.Water: return visible ? MINIMAP_COLORS.waterVisible : MINIMAP_COLORS.waterExplored;
+    case MinimapTerrain.RiverBank: return visible ? MINIMAP_COLORS.riverBankVisible : MINIMAP_COLORS.riverBankExplored;
     default: return visible ? MINIMAP_COLORS.groundVisible : MINIMAP_COLORS.groundExplored;
   }
 }

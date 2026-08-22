@@ -8,8 +8,9 @@ export function validateMap(map: MapDefinition): MapValidationResult {
   const errors: string[] = [];
   const tileCount = map.widthTiles * map.heightTiles;
   if (map.terrain.length !== tileCount) errors.push(`terrain length ${map.terrain.length}, expected ${tileCount}`);
-  if (map.widthTiles !== 128 || map.heightTiles !== 128) errors.push(`map dimensions ${map.widthTiles}x${map.heightTiles}, expected 128x128`);
-  if (map.buildings.length < 30) errors.push(`building count ${map.buildings.length}, expected at least 30`);
+  const expectedWidth=map.worldPlan?.widthTiles??128,expectedHeight=map.worldPlan?.heightTiles??128;
+  if (map.widthTiles !== expectedWidth || map.heightTiles !== expectedHeight) errors.push(`map dimensions ${map.widthTiles}x${map.heightTiles}, expected ${expectedWidth}x${expectedHeight}`);
+  if (map.buildings.length < (map.worldPlan ? 120 : 30)) errors.push(`building count ${map.buildings.length}, expected at least ${map.worldPlan ? 120 : 30}`);
   if (!map.buildings.some((building) => building.orientation === 45)) errors.push("missing orientation 45 building");
   if (!map.buildings.some((building) => building.orientation === 135)) errors.push("missing orientation 135 building");
   if (!map.roadSegments.some((road) => road.kind === "diagonal" && road.endY > road.startY)) errors.push("missing NW-SE diagonal road");
@@ -113,10 +114,10 @@ function buildBlockedGrid(map: MapDefinition): Uint8Array {
 }
 
 function floodRoads(map: MapDefinition): Uint8Array {
-  const first = map.terrain.findIndex((terrain) => terrain === TerrainType.Road);
+  const first = map.terrain.findIndex(isRoadTerrain);
   const visited = new Uint8Array(map.terrain.length);
   if (first < 0) return visited;
-  return flood(map.widthTiles, map.heightTiles, first, (index) => map.terrain[index] === TerrainType.Road, visited);
+  return flood(map.widthTiles, map.heightTiles, first, (index) => isRoadTerrain(map.terrain[index]!), visited);
 }
 
 function floodWalkable(map: MapDefinition, blocked: Uint8Array, start: number): Uint8Array {
@@ -150,12 +151,14 @@ function nearestRoadIndex(map: MapDefinition, targetX: number, targetY: number):
   let best = -1; let bestDistance = Number.POSITIVE_INFINITY;
   for (let y = Math.max(0, targetY - 5); y <= Math.min(map.heightTiles - 1, targetY + 5); y += 1) for (let x = Math.max(0, targetX - 5); x <= Math.min(map.widthTiles - 1, targetX + 5); x += 1) {
     const index = y * map.widthTiles + x;
-    if (map.terrain[index] !== TerrainType.Road) continue;
+    if (!isRoadTerrain(map.terrain[index]!)) continue;
     const candidate = (x - targetX) ** 2 + (y - targetY) ** 2;
     if (candidate < bestDistance) { best = index; bestDistance = candidate; }
   }
   return best;
 }
+
+function isRoadTerrain(terrain:number):boolean{return terrain===TerrainType.Road||terrain===TerrainType.BridgeRoad;}
 
 function worldIndex(map: MapDefinition, worldX: number, worldY: number): number {
   const x = Math.floor(worldX / TILE_SIZE); const y = Math.floor(worldY / TILE_SIZE);

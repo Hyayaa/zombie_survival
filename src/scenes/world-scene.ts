@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { BALANCE, COMPANION_MOVEMENT, DEPTH, FLASHLIGHT_AIM_BUCKETS, FOG_CELL_SIZE, LOGICAL_HEIGHT, LOGICAL_WIDTH, MAP_ID, MAP_VERSION, MAX_PATHFINDING_PER_FRAME, OBSTACLE_BALANCE, SAVE_KEY, SAVE_VERSION, TILE_SIZE, WORLD_HEIGHT, WORLD_WIDTH } from "../config/game-config";
+import { BALANCE, COMPANION_MOVEMENT, DEPTH, FLASHLIGHT_AIM_BUCKETS, FOG_CELL_SIZE, LOGICAL_HEIGHT, LOGICAL_WIDTH, MAP_ID, MAP_VERSION, MAX_PATHFINDING_PER_FRAME, OBSTACLE_BALANCE, SAVE_KEY, SAVE_VERSION, TILE_SIZE, WORLD_WIDTH } from "../config/game-config";
 import { GameSettingsStore, type GameSettings } from "../core/game-settings";
 import { GameClock } from "../core/game-clock";
 import type { SaveGame, SavedBarricadeState } from "../core/save-state";
@@ -345,7 +345,7 @@ export class WorldScene extends Phaser.Scene {
     legacyInventoryOverflow.forEach((slot, index) => this.spawnDrop(slot.itemId, slot.quantity, this.player.position.x + 18 + (index % 3) * 8, this.player.position.y + Math.floor(index / 3) * 8));
     this.applySearchedContainerViews();
 
-    this.fog = new FogOfWarSystem(WORLD_WIDTH, WORLD_HEIGHT, FOG_CELL_SIZE, this.seed);
+    this.fog = new FogOfWarSystem(this.map.widthTiles * TILE_SIZE, this.map.heightTiles * TILE_SIZE, FOG_CELL_SIZE, this.seed);
     if (saved) this.fog.importExplored(saved.exploredFog);
     this.fogRenderer = new FogRenderer(this, this.fog);
     this.occluderSurfaceRenderer=new OccluderSurfaceRenderer(this,this.map);
@@ -693,7 +693,7 @@ export class WorldScene extends Phaser.Scene {
     const normalized = normalizePlacedStructure({ ...state, powered: false }); const definition = BUILDABLE_DEFINITIONS[normalized.kind];
     if (normalized.placement.kind === "furniture") {
       const size=definition.furnitureSize!;const bounds=getObbAabb({x:normalized.placement.x,y:normalized.placement.y,angle:normalized.placement.angle,halfWidth:size.width/2,halfHeight:size.height/2});
-      if(bounds.minX<0||bounds.minY<0||bounds.maxX>WORLD_WIDTH||bounds.maxY>WORLD_HEIGHT)return;
+      if(bounds.minX<0||bounds.minY<0||bounds.maxX>this.map.widthTiles*TILE_SIZE||bounds.maxY>this.map.heightTiles*TILE_SIZE)return;
       this.collision.addDynamicFurniture(normalized.id,{x:normalized.placement.x,y:normalized.placement.y,angle:normalized.placement.angle,halfWidth:size.width/2,halfHeight:size.height/2},{blocksMovement:definition.blocksMovement,blocksProjectiles:definition.blocksProjectiles});
     } else if (normalized.placement.kind === "footprint") {
       const footprint = getRotatedStructureFootprint(normalized.kind, normalized.placement.rotation);
@@ -701,7 +701,7 @@ export class WorldScene extends Phaser.Scene {
       this.collision.addDynamicObstacle({ id: normalized.id, tileX: normalized.tileX, tileY: normalized.tileY, widthTiles: footprint.width, heightTiles: footprint.height, blocksMovement: definition.blocksMovement, blocksVision: definition.blocksVision, blocksProjectiles: definition.blocksProjectiles, coverHeight: normalized.kind === "wood-crate" ? "low" : "low", kind: "furniture" });
     } else {
       const placement = normalized.placement; const segment = definition.segment!;
-      if ([placement.startX, placement.startY, placement.endX, placement.endY].some((value) => value < 0) || Math.max(placement.startX, placement.endX) > WORLD_WIDTH || Math.max(placement.startY, placement.endY) > WORLD_HEIGHT) return;
+      if ([placement.startX, placement.startY, placement.endX, placement.endY].some((value) => value < 0) || Math.max(placement.startX, placement.endX) > this.map.widthTiles*TILE_SIZE || Math.max(placement.startY, placement.endY) > this.map.heightTiles*TILE_SIZE) return;
       this.collision.addDynamicSegment(normalized.id, { ...placement, thickness: segment.thickness }, { blocksMovement: definition.blocksMovement, blocksVision: definition.blocksVision, blocksProjectiles: definition.blocksProjectiles });
       if (normalized.kind === "wood-door" && normalized.doorOpen) this.collision.setDynamicSegmentActive(normalized.id, false);
     }
@@ -752,13 +752,14 @@ export class WorldScene extends Phaser.Scene {
 
   private configureCamera(): void {
     const camera = this.cameras.main;
-    configurePaddedCameraBounds(camera, WORLD_WIDTH, WORLD_HEIGHT);
+    const worldWidth=this.map.widthTiles*TILE_SIZE,worldHeight=this.map.heightTiles*TILE_SIZE;
+    configurePaddedCameraBounds(camera, worldWidth, worldHeight);
     camera.setRoundPixels(true);
     camera.stopFollow();
     camera.setBackgroundColor(0x080b0d);
     this.cameraController = new CameraController(camera, this.game.canvas, () => (
       !this.inventoryPanel?.isOpen() && !this.pauseMenu?.isOpen() && !this.minimap?.isFull() && !this.gameEnded
-    ), WORLD_WIDTH, WORLD_HEIGHT);
+    ), worldWidth, worldHeight);
   }
 
   private configureInput(): void {
@@ -2318,7 +2319,7 @@ export class WorldScene extends Phaser.Scene {
     const definition=BUILDABLE_DEFINITIONS[kind],size=definition.furnitureSize!,obb:OrientedRectangle={x,y,angle,halfWidth:size.width/2,halfHeight:size.height/2},bounds=getObbAabb(obb),minTileX=Math.floor(bounds.minX/TILE_SIZE),minTileY=Math.floor(bounds.minY/TILE_SIZE),maxTileX=Math.floor(bounds.maxX/TILE_SIZE),maxTileY=Math.floor(bounds.maxY/TILE_SIZE);
     const nearby=this.structureRegistry.queryTiles(minTileX,minTileY,maxTileX,maxTileY),occupied=nearby.some((state)=>{if(state.placement.kind==="furniture"){const otherSize=BUILDABLE_DEFINITIONS[state.kind].furnitureSize!;return obbIntersectsObb(obb,{x:state.placement.x,y:state.placement.y,angle:state.placement.angle,halfWidth:otherSize.width/2,halfHeight:otherSize.height/2});}if(state.placement.kind==="segment")return circleIntersectsThickSegment(x,y,Math.max(size.width,size.height)/2,{...state.placement,thickness:BUILDABLE_DEFINITIONS[state.kind].segment!.thickness});return false;});
     const covered:Array<{x:number;y:number}>=[];for(let tileY=minTileY;tileY<=maxTileY;tileY+=1)for(let tileX=minTileX;tileX<=maxTileX;tileX+=1)covered.push({x:tileX,y:tileY});
-    return getBuildablePlacementFailure(kind,{inBounds:bounds.minX>=0&&bounds.minY>=0&&bounds.maxX<=WORLD_WIDTH&&bounds.maxY<=WORLD_HEIGHT,blocked:covered.some((tile)=>this.collision.isTileBlocked(tile.x,tile.y)),occupiedByStructure:occupied,doorway:this.map.doors.some((door)=>circleIntersectsObb((door.tileX+.5)*TILE_SIZE,(door.tileY+.5)*TILE_SIZE,6,obb)),objective:this.map.containers.some((container)=>Boolean(container.part)&&circleIntersectsObb((container.tileX+.5)*TILE_SIZE,(container.tileY+.5)*TILE_SIZE,7,obb)),extraction:squaredDistance({x,y},this.map.extractionZone)<=(this.map.extractionZone.radius+Math.max(size.width,size.height)/2)**2,actorOccupied:[this.player,...this.companions.filter((actor)=>actor.alive),...this.zombies.filter((actor)=>actor.isAlive())].some((actor)=>circleIntersectsObb(actor.position.x,actor.position.y,7,obb)),indoor:covered.some((tile)=>this.indoorTiles[tile.y*this.map.widthTiles+tile.x]===1),roadLane:false,withinRange:isWithinBuildRange(this.player.position,{x,y}),visible:this.fog.getStateAtWorld(x,y)===VisibilityState.Visible,lineOfSight:this.collision.hasLineOfSight(this.player.position,{x,y})});
+    return getBuildablePlacementFailure(kind,{inBounds:bounds.minX>=0&&bounds.minY>=0&&bounds.maxX<=this.map.widthTiles*TILE_SIZE&&bounds.maxY<=this.map.heightTiles*TILE_SIZE,blocked:covered.some((tile)=>this.collision.isTileBlocked(tile.x,tile.y)),occupiedByStructure:occupied,doorway:this.map.doors.some((door)=>circleIntersectsObb((door.tileX+.5)*TILE_SIZE,(door.tileY+.5)*TILE_SIZE,6,obb)),objective:this.map.containers.some((container)=>Boolean(container.part)&&circleIntersectsObb((container.tileX+.5)*TILE_SIZE,(container.tileY+.5)*TILE_SIZE,7,obb)),extraction:squaredDistance({x,y},this.map.extractionZone)<=(this.map.extractionZone.radius+Math.max(size.width,size.height)/2)**2,actorOccupied:[this.player,...this.companions.filter((actor)=>actor.alive),...this.zombies.filter((actor)=>actor.isAlive())].some((actor)=>circleIntersectsObb(actor.position.x,actor.position.y,7,obb)),indoor:covered.some((tile)=>this.indoorTiles[tile.y*this.map.widthTiles+tile.x]===1),roadLane:false,withinRange:isWithinBuildRange(this.player.position,{x,y}),visible:this.fog.getStateAtWorld(x,y)===VisibilityState.Visible,lineOfSight:this.collision.hasLineOfSight(this.player.position,{x,y})});
   }
 
   private validateFootprintPlacement(kind: BuildableKind, tileX: number, tileY: number, width: number, height: number): string | null {
@@ -2331,7 +2332,7 @@ export class WorldScene extends Phaser.Scene {
     const existing:SegmentGeometry[]=this.structures.flatMap((state)=>state.placement.kind==="segment"?[{startX:state.placement.startX,startY:state.placement.startY,endX:state.placement.endX,endY:state.placement.endY,thickness:BUILDABLE_DEFINITIONS[state.kind].segment!.thickness}]:[]);
     for(const segment of segments){const midpoint={x:(segment.startX+segment.endX)/2,y:(segment.startY+segment.endY)/2};
       if(!isWithinBuildRange(this.player.position,segment.startX===segments[0]!.startX&&segment.startY===segments[0]!.startY?{x:segment.startX,y:segment.startY}:midpoint)||!isWithinBuildRange(this.player.position,{x:segment.endX,y:segment.endY}))return false;
-      if(midpoint.x<0||midpoint.y<0||midpoint.x>WORLD_WIDTH||midpoint.y>WORLD_HEIGHT||this.fog.getStateAtWorld(midpoint.x,midpoint.y)!==VisibilityState.Visible||!this.collision.hasLineOfSight(this.player.position,midpoint)||segmentConflicts(segment,existing))return false;
+      if(midpoint.x<0||midpoint.y<0||midpoint.x>this.map.widthTiles*TILE_SIZE||midpoint.y>this.map.heightTiles*TILE_SIZE||this.fog.getStateAtWorld(midpoint.x,midpoint.y)!==VisibilityState.Visible||!this.collision.hasLineOfSight(this.player.position,midpoint)||segmentConflicts(segment,existing))return false;
       if(this.collision.isMovementBlockedWorld(midpoint.x,midpoint.y,1))return false;
       if([this.player,...this.companions.filter((actor)=>actor.alive),...this.zombies.filter((actor)=>actor.isAlive())].some((actor)=>circleIntersectsThickSegment(actor.position.x,actor.position.y,6,segment)))return false;
       existing.push(segment);
@@ -2351,7 +2352,7 @@ export class WorldScene extends Phaser.Scene {
   private cancelBuildPlacement():void{clearWallDrag(this.wallDrag);this.pendingBuildPlacement=undefined;this.buildStartAnchor=undefined;this.buildPreview?.clear();}
   private closeBuildMode(): void { this.cancelBuildPlacement(); }
   private removeStructureRuntime(id:string):PlacedStructureState|undefined{const state=this.structureRegistry.remove(id);if(!state)return undefined;this.structures=this.structures.filter((candidate)=>candidate.id!==id);const markerIndex=this.minimapStructureSources.findIndex((marker)=>marker.id===id);if(markerIndex>=0)this.minimapStructureSources.splice(markerIndex,1);if(state.placement.kind==="segment")this.collision.removeDynamicSegment(id);else if(state.placement.kind==="furniture")this.collision.removeDynamicFurniture(id);else this.collision.removeDynamicObstacle(id);this.structureViews.get(id)?.destroy();this.structureViews.delete(id);this.worldObjects.unregister(id);this.craftingStations.unregister(id);this.turretRuntime.delete(id);this.structureStorage.delete(id);return state;}
-  private destroyPlayerStructure(id:string,dropStorage:boolean):void{const state=this.structureRegistry.get(id);if(!state)return;const center=getPlacedStructureCenter(state);const storage=this.structureStorage.get(id);const items=dropStorage&&storage?storage.drainForDestruction():[];const offsets=deterministicStorageDropOffsets(items.length);this.removeStructureRuntime(id);items.forEach((item,index)=>{const offset=offsets[index]!;this.spawnDrop(item.itemId,item.quantity,Math.max(6,Math.min(WORLD_WIDTH-6,center.x+offset.x)),Math.max(6,Math.min(WORLD_HEIGHT-6,center.y+offset.y)));});this.cancelZombieObstacleTargets(id);this.rebuildPowerTopology();this.fogInvalidation.invalidate();this.interactionSystem.invalidate();this.demolitionConfirmUntil.delete(id);}
+  private destroyPlayerStructure(id:string,dropStorage:boolean):void{const state=this.structureRegistry.get(id);if(!state)return;const center=getPlacedStructureCenter(state);const storage=this.structureStorage.get(id);const items=dropStorage&&storage?storage.drainForDestruction():[];const offsets=deterministicStorageDropOffsets(items.length),worldWidth=this.map.widthTiles*TILE_SIZE,worldHeight=this.map.heightTiles*TILE_SIZE;this.removeStructureRuntime(id);items.forEach((item,index)=>{const offset=offsets[index]!;this.spawnDrop(item.itemId,item.quantity,Math.max(6,Math.min(worldWidth-6,center.x+offset.x)),Math.max(6,Math.min(worldHeight-6,center.y+offset.y)));});this.cancelZombieObstacleTargets(id);this.rebuildPowerTopology();this.fogInvalidation.invalidate();this.interactionSystem.invalidate();this.demolitionConfirmUntil.delete(id);}
 
   private updateFires(deltaSeconds: number): void {
     let writeIndex = 0;
@@ -2593,8 +2594,8 @@ export class WorldScene extends Phaser.Scene {
       if (this.countActiveLivingZombies() >= BALANCE.maxActiveZombies) return;
       for (let attempt = 0; attempt < 12; attempt += 1) {
         const angle = this.rng.next() * Math.PI * 2;
-        const x = Math.max(12, Math.min(WORLD_WIDTH - 12, center.x + Math.cos(angle) * radius));
-        const y = Math.max(12, Math.min(WORLD_HEIGHT - 12, center.y + Math.sin(angle) * radius));
+        const x = Math.max(12, Math.min(this.map.widthTiles * TILE_SIZE - 12, center.x + Math.cos(angle) * radius));
+        const y = Math.max(12, Math.min(this.map.heightTiles * TILE_SIZE - 12, center.y + Math.sin(angle) * radius));
         if (this.collision.isMovementBlockedWorld(x, y, BALANCE.zombieRadius)) continue;
         const zombie = new Zombie(this, `spawned-${Math.round(this.simulationTime)}-${index}-${attempt}`, kind, { x, y }, "InvestigateNoise");
         zombie.mind.lastHeardNoisePosition = { ...center };
