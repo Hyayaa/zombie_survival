@@ -29,6 +29,14 @@ export function createSegmentChain(kind: SegmentBuildableKind, startPoint: Point
   return segments;
 }
 
+export function createOrientedSegmentChain(kind: SegmentBuildableKind, startPoint: Point, pointer: Point, rotation: number): StructureSegment[] {
+  const start=snapStructureAnchor(startPoint),target=snapStructureAnchor(pointer),deltaX=target.x-start.x,deltaY=target.y-start.y;
+  const directions=[{x:1,y:0},{x:1,y:1},{x:0,y:1},{x:1,y:-1}] as const,direction=directions[Math.abs(rotation)%4]!;
+  const projection=deltaX*direction.x+deltaY*direction.y,sign=projection<0?-1:1;
+  const count=Math.min(MAX_WALL_CHAIN_SEGMENTS,Math.max(1,Math.round(Math.max(Math.abs(deltaX),Math.abs(deltaY))/STRUCTURE_ANCHOR_SIZE)));
+  return createSegmentChain(kind,start,{x:start.x+direction.x*sign*STRUCTURE_ANCHOR_SIZE*count,y:start.y+direction.y*sign*STRUCTURE_ANCHOR_SIZE*count});
+}
+
 export function segmentKey(segment: Pick<SegmentGeometry, "startX" | "startY" | "endX" | "endY">): string {
   const first = `${segment.startX},${segment.startY}`; const second = `${segment.endX},${segment.endY}`;
   return first < second ? `${first}|${second}` : `${second}|${first}`;
