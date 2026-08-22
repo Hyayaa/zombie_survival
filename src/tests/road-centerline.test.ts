@@ -1,0 +1,2 @@
+import{describe,expect,it}from"vitest";import{createCityBlockMap}from"../data/map-definitions";
+describe("road centerline masks",()=>{it("derives dashed markings from the same centerline and clips them to road pixels",()=>{const map=createCityBlockMap(413),marked=map.roadRenderData!.tiles.filter((tile)=>tile.centerlineRows.some((row)=>row!==0));expect(marked.length).toBeGreaterThan(100);for(const tile of marked)for(let row=0;row<24;row+=1)expect(tile.centerlineRows[row]!&~tile.roadRows[row]!).toBe(0);});});

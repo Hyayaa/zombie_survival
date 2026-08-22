@@ -5,7 +5,8 @@ import type { WeaponId } from "./weapon-definitions";
 import { BUILDABLE_DEFINITIONS } from "./buildable-definitions";
 import type { StructureOwnership,StructureSource } from "../entities/placed-structure";
 import { createStructureSegmentGeometry, segmentKey, type WallAnchor } from "../systems/structure-segment-placement";
-import { CITY_REGION_HEIGHT, CITY_REGION_WIDTH, type WorldMacroPlan } from "./world-region-definitions";
+import { CITY_REGION_HEIGHT, CITY_REGION_WIDTH, type CityKind, type WorldMacroPlan } from "./world-region-definitions";
+import type { BuildingEnvelope, BuildingLot, DistrictPropDefinition, DoorAccessPlan, ReservedWorldCorridors, RoadGraph, RoadRenderData } from "./road-generation-definitions";
 import { createMultiCityWorld } from "../systems/world-macro-generator";
 
 export enum TerrainType { Ground = 0, Road = 1, Sidewalk = 2, Floor = 3, Water = 4, RiverBank = 5, BridgeRoad = 6 }
@@ -71,6 +72,13 @@ export interface MapDefinition {
   extractionZone: { x: number; y: number; radius: number };
   safehouseZone: { x: number; y: number; width: number; height: number };
   worldPlan?: WorldMacroPlan;
+  roadGraph?: RoadGraph;
+  reservedCorridors?: ReservedWorldCorridors;
+  roadRenderData?: RoadRenderData;
+  buildingLots?: BuildingLot[];
+  buildingEnvelopes?: BuildingEnvelope[];
+  doorAccessPlans?: DoorAccessPlan[];
+  districtProps?: DistrictPropDefinition[];
 }
 
 const ROAD_SEGMENTS: RoadSegment[] = [
@@ -90,15 +98,15 @@ const ROAD_SEGMENTS: RoadSegment[] = [
 const KIND_CYCLE: BuildingKind[] = ["house", "house", "store", "office", "ruin", "house", "warehouse", "garage", "clinic"];
 const FLOOR_COLORS = [0x4c5148, 0x514a42, 0x4c4842, 0x4b514c, 0x484d4c, 0x504a46];
 
-export const CURRENT_MAP_GENERATION_VERSION=5;
-export function createCityBlockMap(mapSeed = 0x51a7c1,mapGenerationVersion=CURRENT_MAP_GENERATION_VERSION): MapDefinition {
-  if (mapGenerationVersion >= 5) return createMultiCityWorld(mapSeed, (citySeed) => createCityBlockMap(citySeed, 4));
+export const CURRENT_MAP_GENERATION_VERSION=6;
+export function createCityBlockMap(mapSeed = 0x51a7c1,mapGenerationVersion=CURRENT_MAP_GENERATION_VERSION,district?:CityKind): MapDefinition {
+  if (mapGenerationVersion >= 5) return createMultiCityWorld(mapSeed, (citySeed,cityKind) => createCityBlockMap(citySeed, 4, mapGenerationVersion >= 6 ? cityKind : undefined),mapGenerationVersion);
   const widthTiles = CITY_REGION_WIDTH;
   const heightTiles = CITY_REGION_HEIGHT;
   const terrain = new Uint8Array(widthTiles * heightTiles);
   const occupied = new Uint8Array(terrain.length);
   const minimapWallCoverage = new Uint8Array(terrain.length);
-  const roadSegments = ROAD_SEGMENTS.map((segment) => ({ ...segment }));
+  const roadSegments = createDistrictRoadSegments(district);
   rasterizeRoads(terrain, widthTiles, heightTiles, roadSegments);
 
   const buildings: BuildingDefinition[] = [];
@@ -125,9 +133,8 @@ export function createCityBlockMap(mapSeed = 0x51a7c1,mapGenerationVersion=CURRE
       const roadY = road.startY + deltaY * along;
       for (const side of [-1, 1] as const) {
         const buildingIndex = buildings.length;
-        const buildingWidth = 8 + (buildingIndex + sample) % 3;
-        const buildingDepth = 6 + (buildingIndex + sample) % 2;
-        const offset = road.widthTiles / 2 + road.sidewalkTiles + buildingDepth / 2 + 2;
+        const [buildingWidth,buildingDepth] = buildingDimensions(district,buildingIndex,sample);
+        const offset = road.widthTiles / 2 + road.sidewalkTiles + buildingDepth / 2 + districtSetback(district,buildingIndex,sample)+(district?1.5:0);
         const centerX = roadX + normalX * side * offset;
         const centerY = roadY + normalY * side * offset;
         const footprint = rasterizeBuildingFootprint(centerX, centerY, buildingWidth, buildingDepth, orientation, widthTiles, heightTiles);
@@ -153,12 +160,12 @@ export function createCityBlockMap(mapSeed = 0x51a7c1,mapGenerationVersion=CURRE
           ? createDiagonalBuildingGeometry(centerX, centerY, buildingWidth, buildingDepth, orientation, entrance, widthTiles, roadX, roadY)
           : undefined;
         const anchoredGeometry = mapGenerationVersion >= 4
-          ? createGeneratedBuildingAnchorGeometry(footprint, entrances, orientation, widthTiles, roadX, roadY)
+          ? createGeneratedBuildingAnchorGeometry(footprint, entrances, orientation, widthTiles, roadX, roadY,buildingWidth,buildingDepth)
           : undefined;
         const building: BuildingDefinition = {
           id, name: buildingName(kind, buildings.length), kind, centerTileX: centerX, centerTileY: centerY,
           widthTiles: buildingWidth, depthTiles: buildingDepth, orientation, roadId: road.id, roadSide: side,
-          footprintTiles: footprint, floorTiles, wallTiles, entranceTiles: [entrance],
+          footprintTiles: footprint, floorTiles, wallTiles, entranceTiles: [...entrances],
           wallSegments: anchoredGeometry?.walls ?? diagonalGeometry?.walls ?? [],
           floorColor: FLOOR_COLORS[buildings.length % FLOOR_COLORS.length]!,
         };
@@ -182,17 +189,19 @@ export function createCityBlockMap(mapSeed = 0x51a7c1,mapGenerationVersion=CURRE
       }
     }
   }
-  if (buildings.length < 30) throw new Error(`Expanded city generation produced only ${buildings.length} buildings`);
+  const minimumBuildingCount=district?7:30;
+  if (buildings.length < minimumBuildingCount) throw new Error(`Expanded city generation produced only ${buildings.length} buildings${district?` for ${district}`:""}`);
 
   const safehouse = nearestBuilding(buildings, 64, 64);
   safehouse.kind = "safehouse"; safehouse.name = "중앙 은신처";
   const playerTile = interiorTile(safehouse, 0.5);
   const diagonalBuildings = buildings.filter((building) => building.orientation === 45 || building.orientation === 135);
+  const diagonalCandidates=diagonalBuildings.length>=2?diagonalBuildings:buildings;
   const usedCompanionBuildings = new Set([safehouse.id]);
   const companionBuildings: BuildingDefinition[] = [];
   const firstCompanionBuilding = selectBuildingNearDistance(buildings, safehouse, 38, usedCompanionBuildings);
   companionBuildings.push(firstCompanionBuilding); usedCompanionBuildings.add(firstCompanionBuilding.id);
-  const diagonalCompanionBuilding = nearestAvailableBuilding(diagonalBuildings, 92, 38, usedCompanionBuildings);
+  const diagonalCompanionBuilding = nearestAvailableBuilding(diagonalCandidates, 92, 38, usedCompanionBuildings);
   companionBuildings.push(diagonalCompanionBuilding); usedCompanionBuildings.add(diagonalCompanionBuilding.id);
   const southWestCompanionBuilding = nearestAvailableBuilding(buildings, 20, 108, usedCompanionBuildings);
   companionBuildings.push(southWestCompanionBuilding); usedCompanionBuildings.add(southWestCompanionBuilding.id);
@@ -205,7 +214,7 @@ export function createCityBlockMap(mapSeed = 0x51a7c1,mapGenerationVersion=CURRE
   });
   const survivorTile = companionSpawns[0]!.tileY * widthTiles + companionSpawns[0]!.tileX;
 
-  const batteryBuilding = nearestBuilding(diagonalBuildings, 108, 24);
+  const batteryBuilding = nearestBuilding(diagonalCandidates, 108, 24);
   const usedObjectives = new Set([safehouse.id, firstCompanionBuilding.id, batteryBuilding.id]);
   const fuelBuilding = nearestAvailableBuilding(buildings, 108, 108, usedObjectives);
   usedObjectives.add(fuelBuilding.id);
@@ -244,8 +253,8 @@ function selectBuildingEntrances(boundary:readonly number[],primary:number,width
 
 function stableUnit(seed:number,key:string):number{let hash=(seed^0x85ebca6b)>>>0;for(let index=0;index<key.length;index+=1){hash^=key.charCodeAt(index);hash=Math.imul(hash,0x01000193)>>>0;}hash^=hash>>>16;return(hash>>>0)/0x1_0000_0000;}
 function doorOrientationForBoundary(index:number,footprint:ReadonlySet<number>,width:number):DoorOrientation{const left=footprint.has(index-1),right=footprint.has(index+1),up=footprint.has(index-width),down=footprint.has(index+width);return(!left||!right)&&(up||down)?"vertical":"horizontal";}
-function restorePresetPrimaryDoor(building:BuildingDefinition,doors:DoorDefinition[],obstacles:WorldObstacle[],minimapWallCoverage:Uint8Array,width:number):void{for(let index=doors.length-1;index>=0;index-=1){const door=doors[index]!;if(door.buildingId!==building.id||door.id===`door-${building.id}`)continue;doors.splice(index,1);const tileIndex=door.tileY*width+door.tileX;if(!building.wallTiles.includes(tileIndex))building.wallTiles.push(tileIndex);const floorIndex=building.floorTiles.indexOf(tileIndex);if(floorIndex>=0)building.floorTiles.splice(floorIndex,1);minimapWallCoverage[tileIndex]=1;if(building.orientation!==45&&building.orientation!==135)obstacles.push(wall(`${building.id}-wall-${door.tileX}-${door.tileY}`,door.tileX,door.tileY));}}
-function restoreGeneratedPresetPrimaryDoor(building:BuildingDefinition,doors:DoorDefinition[],generated:GeneratedBuildingStructure[],walls:SegmentGeometry[],minimapWallCoverage:Uint8Array,width:number):void{for(let index=doors.length-1;index>=0;index-=1){const door=doors[index]!;if(door.buildingId!==building.id||door.id===`generated:${building.id}:door:0`)continue;doors.splice(index,1);const generatedIndex=generated.findIndex((structure)=>structure.id===door.id);if(generatedIndex>=0)generated.splice(generatedIndex,1);const tileIndex=door.tileY*width+door.tileX;if(!building.wallTiles.includes(tileIndex))building.wallTiles.push(tileIndex);const floorIndex=building.floorTiles.indexOf(tileIndex);if(floorIndex>=0)building.floorTiles.splice(floorIndex,1);minimapWallCoverage[tileIndex]=1;const placement=door.segment?{...door.segment,thickness:BUILDABLE_DEFINITIONS["wood-wall"].segment!.thickness}:createTileWallSegment(door.tileX,door.tileY,door.orientation),wallIndex=building.wallSegments.length;building.wallSegments.push(placement);walls.push(placement);generated.push({id:`generated:${building.id}:wall:${wallIndex}`,buildableId:"wood-wall",source:"generated",ownership:"world",placement,buildingId:building.id,wallIndex,demolishable:false,refund:false});}}
+function restorePresetPrimaryDoor(building:BuildingDefinition,doors:DoorDefinition[],obstacles:WorldObstacle[],minimapWallCoverage:Uint8Array,width:number):void{for(let index=doors.length-1;index>=0;index-=1){const door=doors[index]!;if(door.buildingId!==building.id||door.id===`door-${building.id}`)continue;doors.splice(index,1);const tileIndex=door.tileY*width+door.tileX;if(!building.wallTiles.includes(tileIndex))building.wallTiles.push(tileIndex);const floorIndex=building.floorTiles.indexOf(tileIndex);if(floorIndex>=0)building.floorTiles.splice(floorIndex,1);minimapWallCoverage[tileIndex]=1;if(building.orientation!==45&&building.orientation!==135)obstacles.push(wall(`${building.id}-wall-${door.tileX}-${door.tileY}`,door.tileX,door.tileY));}const primary=doors.find((door)=>door.buildingId===building.id);if(primary)building.entranceTiles=[primary.tileY*width+primary.tileX];}
+function restoreGeneratedPresetPrimaryDoor(building:BuildingDefinition,doors:DoorDefinition[],generated:GeneratedBuildingStructure[],walls:SegmentGeometry[],minimapWallCoverage:Uint8Array,width:number):void{for(let index=doors.length-1;index>=0;index-=1){const door=doors[index]!;if(door.buildingId!==building.id||door.id===`generated:${building.id}:door:0`)continue;doors.splice(index,1);const generatedIndex=generated.findIndex((structure)=>structure.id===door.id);if(generatedIndex>=0)generated.splice(generatedIndex,1);const tileIndex=door.tileY*width+door.tileX;if(!building.wallTiles.includes(tileIndex))building.wallTiles.push(tileIndex);const floorIndex=building.floorTiles.indexOf(tileIndex);if(floorIndex>=0)building.floorTiles.splice(floorIndex,1);minimapWallCoverage[tileIndex]=1;const placement=door.segment?{...door.segment,thickness:BUILDABLE_DEFINITIONS["wood-wall"].segment!.thickness}:createTileWallSegment(door.tileX,door.tileY,door.orientation),wallIndex=building.wallSegments.length;building.wallSegments.push(placement);walls.push(placement);generated.push({id:`generated:${building.id}:wall:${wallIndex}`,buildableId:"wood-wall",source:"generated",ownership:"world",placement,buildingId:building.id,wallIndex,demolishable:false,refund:false});}const primary=doors.find((door)=>door.buildingId===building.id);if(primary)building.entranceTiles=[primary.tileY*width+primary.tileX];}
 
 export function isDoorInitiallyOpen(mapSeed: number, doorId: string): boolean {
   let hash = (mapSeed ^ 0x9e3779b9) >>> 0;
@@ -298,17 +307,15 @@ const DOOR_LENGTH = TILE_SIZE - 5;
 
 function createGeneratedBuildingAnchorGeometry(
   footprint: readonly number[], entrances: readonly number[], orientation: BuildingOrientation,
-  mapWidth: number, roadTileX: number, roadTileY: number,
+  mapWidth: number, roadTileX: number, roadTileY: number,buildingWidth:number,buildingDepth:number,
 ): { walls: SegmentGeometry[]; doors: SegmentGeometry[] } {
   const edges: Array<{ start: WallAnchor; end: WallAnchor }> = [];
   if (orientation === 45 || orientation === 135) {
     let sumX = 0; let sumY = 0;
     for (const index of footprint) { sumX += index % mapWidth + 0.5; sumY += Math.floor(index / mapWidth) + 0.5; }
     const center = { x: Math.round(sumX / footprint.length), y: Math.round(sumY / footprint.length) };
-    const xs = footprint.map((index) => index % mapWidth); const ys = footprint.map((index) => Math.floor(index / mapWidth));
-    const width = Math.max(...xs) - Math.min(...xs) + 1; const height = Math.max(...ys) - Math.min(...ys) + 1;
-    const major = Math.max(3, Math.round(Math.max(width, height) / 2));
-    const minor = Math.max(2, Math.round(Math.min(width, height) / 3));
+    const major = Math.max(2, Math.round(buildingWidth / (2*Math.SQRT2)));
+    const minor = Math.max(2, Math.round(buildingDepth / (2*Math.SQRT2)));
     const u = orientation === 45 ? { x: 1, y: 1 } : { x: -1, y: 1 };
     const v = orientation === 45 ? { x: -1, y: 1 } : { x: 1, y: 1 };
     const corners: WallAnchor[] = [
@@ -440,10 +447,11 @@ function createTileDoorSegment(tileX: number, tileY: number, orientation: DoorOr
 
 function createTileWallSegment(tileX:number,tileY:number,orientation:DoorOrientation):SegmentGeometry{const centerX=(tileX+.5)*TILE_SIZE,centerY=(tileY+.5)*TILE_SIZE,half=TILE_SIZE/2,thickness=BUILDABLE_DEFINITIONS["wood-wall"].segment!.thickness;if(orientation==="vertical")return{startX:centerX,startY:centerY-half,endX:centerX,endY:centerY+half,thickness};return{startX:centerX-half,startY:centerY,endX:centerX+half,endY:centerY,thickness};}
 
-function canPlaceBuilding(footprint: readonly number[], terrain: Uint8Array, occupied: Uint8Array, width: number, height: number): boolean {
+function canPlaceBuilding(footprint: readonly number[], terrain: Uint8Array, occupied: Uint8Array, width: number, height: number,roadClearanceTiles=0): boolean {
   for (const index of footprint) {
     const x = index % width; const y = Math.floor(index / width);
     if (x < 2 || y < 2 || x >= width - 2 || y >= height - 2 || occupied[index] || terrain[index] === TerrainType.Road) return false;
+    for(let offsetY=-roadClearanceTiles;offsetY<=roadClearanceTiles;offsetY+=1)for(let offsetX=-roadClearanceTiles;offsetX<=roadClearanceTiles;offsetX+=1){const candidateX=x+offsetX,candidateY=y+offsetY;if(candidateX<0||candidateY<0||candidateX>=width||candidateY>=height)continue;const candidate=terrain[candidateY*width+candidateX];if(candidate===TerrainType.Road||candidate===TerrainType.Sidewalk)return false;}
   }
   return true;
 }
@@ -630,6 +638,30 @@ function prioritizedSamples(samples: number): number[] {
   }
   for (let sample = 1; sample < samples; sample += 1) if (!used.has(sample)) result.push(sample);
   return result;
+}
+function createDistrictRoadSegments(district?:CityKind):RoadSegment[]{
+  if(!district)return ROAD_SEGMENTS.map((segment)=>({...segment}));
+  const widths:Record<CityKind,{arterial:number;secondary:number;sidewalk:number}>={
+    mixed:{arterial:6,secondary:4,sidewalk:1},commercial:{arterial:8,secondary:6,sidewalk:1.5},industrial:{arterial:10,secondary:8,sidewalk:1.5},military:{arterial:10,secondary:8,sidewalk:1.5},
+  };
+  const selected=widths[district];
+  return ROAD_SEGMENTS.map((segment)=>({...segment,widthTiles:segment.kind==="arterial"?10:segment.id==="warehouse-access"?Math.max(selected.secondary,8):selected.secondary,sidewalkTiles:segment.kind==="arterial"?2:selected.sidewalk}));
+}
+function buildingDimensions(district:CityKind|undefined,index:number,sample:number):readonly[number,number]{
+  if(!district)return[8+(index+sample)%3,6+(index+sample)%2];
+  const phase=index+sample;
+  if(district==="industrial"&&index<3)return[16+phase%5,12+phase%4];
+  if(district==="military"&&index<3)return[12+phase%7,10+phase%4];
+  if(district==="commercial"&&index<3)return[12+phase%7,10+phase%5];
+  if(district==="mixed")return[8+phase%5,6+phase%4];
+  return[8+phase%3,6+phase%2];
+}
+function districtSetback(district:CityKind|undefined,index:number,sample:number):number{
+  if(!district)return 2;
+  const unit=((index*17+sample*13)%5)/4;
+  if(district==="commercial")return unit*.5;
+  if(district==="mixed")return .5+unit*.5;
+  return 1+unit*2;
 }
 function pointSegmentDistance(px: number, py: number, ax: number, ay: number, bx: number, by: number): number {
   const deltaX = bx - ax; const deltaY = by - ay; const lengthSquared = deltaX * deltaX + deltaY * deltaY;

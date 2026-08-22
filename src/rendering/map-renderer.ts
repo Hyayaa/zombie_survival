@@ -56,6 +56,8 @@ export function createMapRendering(scene: Phaser.Scene, map: MapDefinition): Map
   }
   const floorColors = new Uint32Array(map.widthTiles * map.heightTiles);
   for (const building of map.buildings) for (const index of building.floorTiles) floorColors[index] = building.floorColor;
+  const roadRenderByIndex=new Map<number,NonNullable<MapDefinition["roadRenderData"]>["tiles"][number]>();
+  for(const tile of map.roadRenderData?.tiles??[])roadRenderByIndex.set(tile.tileY*map.widthTiles+tile.tileX,tile);
 
   let staticChunkCount = 0;
   for (let chunkY = 0; chunkY < map.heightTiles; chunkY += CHUNK_TILES) {
@@ -69,16 +71,18 @@ export function createMapRendering(scene: Phaser.Scene, map: MapDefinition): Map
         for (let x = chunkX; x < maxX; x += 1) {
           const terrain = getTerrain(map, x, y);
           const index = y * map.widthTiles + x;
-          const color = terrain === TerrainType.Water ? 0x173747
-            : terrain === TerrainType.RiverBank ? 0x59604b
-              : terrain === TerrainType.BridgeRoad ? 0x4b4a45
-                : terrain === TerrainType.Road ? COLORS.road
-            : terrain === TerrainType.Sidewalk ? 0x3c4240
-              : terrain === TerrainType.Floor ? (floorColors[index] || ((x + y) % 2 === 0 ? COLORS.floor : COLORS.floorAlt))
-                : ((x + y) % 3 === 0 ? COLORS.groundAlt : COLORS.ground);
+          const roadRender=roadRenderByIndex.get(index);
+          const baseTerrain=(roadRender?.underlayTerrain??terrain) as TerrainType;
+          const color = terrainColor(roadRender?baseTerrain:terrain,x,y,floorColors[index]);
           const worldX = x * TILE_SIZE;
           const worldY = y * TILE_SIZE;
           ground.fillStyle(color, 1).fillRect(worldX, worldY, TILE_SIZE, TILE_SIZE);
+          if(roadRender){
+            drawPixelMask(ground,roadRender.sidewalkRows,worldX,worldY,0x3c4240);
+            drawPixelMask(ground,roadRender.roadRows,worldX,worldY,COLORS.road);
+            drawPixelMask(ground,roadRender.bridgeRows,worldX,worldY,0x4b4a45);
+            drawPixelMask(ground,roadRender.centerlineRows,worldX,worldY,COLORS.roadLine,.82);
+          }
           const obstacle = obstacleGrid[index];
           if (!obstacle || obstacle.kind === "water") continue;
           if (obstacle.kind === "wall") {
@@ -121,24 +125,31 @@ export function createMapRendering(scene: Phaser.Scene, map: MapDefinition): Map
     }
   }
 
-  const laneMarkings = scene.add.graphics().setDepth(DEPTH.ground + 1);
-  laneMarkings.fillStyle(COLORS.roadLine, 0.78);
-  for (const road of map.roadSegments) {
-    if (!road.laneMarking) continue;
-    const startX = (road.startX + 0.5) * TILE_SIZE;
-    const startY = (road.startY + 0.5) * TILE_SIZE;
-    const deltaX = (road.endX - road.startX) * TILE_SIZE;
-    const deltaY = (road.endY - road.startY) * TILE_SIZE;
-    const length = Math.hypot(deltaX, deltaY);
-    const steps = Math.floor(length / 13);
-    for (let step = 0; step <= steps; step += 2) {
-      const amount = steps === 0 ? 0 : step / steps;
-      const x = Math.round(startX + deltaX * amount);
-      const y = Math.round(startY + deltaY * amount);
-      if (Math.abs(deltaX) > Math.abs(deltaY) * 2) laneMarkings.fillRect(x - 5, y - 1, 10, 2);
-      else if (Math.abs(deltaY) > Math.abs(deltaX) * 2) laneMarkings.fillRect(x - 1, y - 5, 2, 10);
-      else laneMarkings.fillRect(x - 2, y - 2, 4, 4);
+  if(!map.roadRenderData){
+    const laneMarkings = scene.add.graphics().setDepth(DEPTH.ground + 1);
+    laneMarkings.fillStyle(COLORS.roadLine, 0.78);
+    for (const road of map.roadSegments) {
+      if (!road.laneMarking) continue;
+      const startX = (road.startX + 0.5) * TILE_SIZE;
+      const startY = (road.startY + 0.5) * TILE_SIZE;
+      const deltaX = (road.endX - road.startX) * TILE_SIZE;
+      const deltaY = (road.endY - road.startY) * TILE_SIZE;
+      const length = Math.hypot(deltaX, deltaY);
+      const steps = Math.floor(length / 13);
+      for (let step = 0; step <= steps; step += 2) {
+        const amount = steps === 0 ? 0 : step / steps;
+        const markX = Math.round(startX + deltaX * amount);
+        const markY = Math.round(startY + deltaY * amount);
+        if (Math.abs(deltaX) > Math.abs(deltaY) * 2) laneMarkings.fillRect(markX - 5, markY - 1, 10, 2);
+        else if (Math.abs(deltaY) > Math.abs(deltaX) * 2) laneMarkings.fillRect(markX - 1, markY - 5, 2, 10);
+        else laneMarkings.fillRect(markX - 2, markY - 2, 4, 4);
+      }
     }
+  }
+
+  if(map.districtProps?.length){
+    const chunks=new Map<string,Phaser.GameObjects.Graphics>();
+    for(const prop of map.districtProps){if(prop.placement==="interactive-furniture")continue;const key=`${Math.floor(prop.tileX/CHUNK_TILES)},${Math.floor(prop.tileY/CHUNK_TILES)}`;let graphics=chunks.get(key);if(!graphics){graphics=scene.add.graphics().setDepth(DEPTH.propBack+prop.tileY*TILE_SIZE);chunks.set(key,graphics);staticChunkCount+=1;}const x=prop.tileX*TILE_SIZE,y=prop.tileY*TILE_SIZE,color=prop.district==="military"?0x68735f:prop.district==="industrial"?0x766b59:prop.district==="commercial"?0x755f76:0x68716a;graphics.fillStyle(0x222827,1).fillRect(x+8,y+14,8,5);graphics.fillStyle(color,1).fillRect(x+6,y+7,12,9);}
   }
 
   const doorViews = new Map<string, DoorView>();
@@ -168,6 +179,9 @@ export function createMapRendering(scene: Phaser.Scene, map: MapDefinition): Map
   }
   return { doorViews, containerViews, extractionView, survivorMarkers, staticChunkCount };
 }
+
+function terrainColor(terrain:TerrainType,x:number,y:number,floorColor:number):number{return terrain===TerrainType.Water?0x173747:terrain===TerrainType.RiverBank?0x59604b:terrain===TerrainType.BridgeRoad?0x4b4a45:terrain===TerrainType.Road?COLORS.road:terrain===TerrainType.Sidewalk?0x3c4240:terrain===TerrainType.Floor?(floorColor||((x+y)%2===0?COLORS.floor:COLORS.floorAlt)):((x+y)%3===0?COLORS.groundAlt:COLORS.ground);}
+function drawPixelMask(graphics:Phaser.GameObjects.Graphics,rows:Uint32Array,worldX:number,worldY:number,color:number,alpha=1):void{graphics.fillStyle(color,alpha);for(let row=0;row<rows.length;row+=1){let bits=rows[row]!;let column=0;while(column<TILE_SIZE){while(column<TILE_SIZE&&(bits&(1<<column))===0)column+=1;if(column>=TILE_SIZE)break;const start=column;while(column<TILE_SIZE&&(bits&(1<<column))!==0)column+=1;graphics.fillRect(worldX+start,worldY+row,column-start,1);}}}
 
 export function updateDoorView(view: DoorView, open: boolean, orientation: DoorDefinition["orientation"] = "horizontal", destroyed = false): void {
   view.setDoorState(open, destroyed, orientation);
