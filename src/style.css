@@ -77,6 +77,8 @@ button:focus-visible {
   container-type: size;
 }
 
+.world-storage-panel{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(760px,92vw);padding:10px;background:#111915f2;border:2px solid #73806f;color:#eee;pointer-events:auto;z-index:40;font:12px monospace}.world-storage-panel[hidden]{display:none}.world-storage-panel header{margin-bottom:8px}.world-storage-panel__columns{display:grid;grid-template-columns:1fr 1fr;gap:10px}.world-storage-panel__player,.world-storage-panel__crate{position:relative;min-height:260px;border:1px solid #59645a;padding:24px 5px 5px;display:grid;grid-template-columns:repeat(8,1fr);grid-auto-rows:28px;gap:2px}.world-storage-panel__player:before,.world-storage-panel__crate:before{content:attr(data-label);position:absolute;top:5px;left:6px;color:#b9c7aa}.world-storage-panel button{font:10px monospace;background:#354238;color:#eee;border:1px solid #819079;overflow:hidden}
+
 .pixel-panel {
   color: #d9e0da;
   background: rgb(10 15 16 / 88%);
@@ -375,6 +377,7 @@ button:focus-visible {
 .recipe-grid__quantity { position:absolute;left:2px;bottom:1px;z-index:2;padding:0 2px;color:#f1dfad;background:#080b0a;font-size:9px;pointer-events:none; }
 .recipe-grid__item.is-missing .recipe-grid__quantity { color:#ff9b8e; }
 .inventory-item-frame--readonly-grid { cursor:pointer; }
+.build-catalog-view{scroll-behavior:smooth}.build-catalog-summary{margin:0 0 8px;color:#a9b5ae}.build-catalog-group{display:grid;gap:7px;margin-bottom:12px}.build-catalog-group>h3{position:sticky;top:-8px;z-index:2;margin:0;padding:6px;background:#18211e;color:#c7d3c8}.build-catalog-row .item-grid-row__body{padding-top:6px;border-top:1px solid #27332f}.build-catalog-row.is-selected{border-color:#d1bd70;box-shadow:inset 0 0 0 1px #8c7a42}.build-catalog-row__costs{color:#d4c590}.build-catalog-row__details,.build-catalog-row__source{margin:5px 0;color:#98a69f}.build-catalog-row__source{color:#d6a46e}.build-catalog-art{position:relative}.inventory-item-frame--build-catalog{pointer-events:none}.build-catalog-row .item-grid-row__left>small{display:block;margin-top:4px;color:#8d9993}
 
 .weapon-button.is-active {
   color: #f2df9d;

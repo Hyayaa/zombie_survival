@@ -2,6 +2,9 @@ import { MAP_HEIGHT_TILES, MAP_ID, MAP_VERSION, MAP_WIDTH_TILES, OBSTACLE_BALANC
 import type { SegmentGeometry } from "../systems/collision-geometry";
 import type { ZombieKind } from "./zombie-definitions";
 import type { WeaponId } from "./weapon-definitions";
+import { BUILDABLE_DEFINITIONS } from "./buildable-definitions";
+import type { StructureOwnership,StructureSource } from "../entities/placed-structure";
+import { createStructureSegmentGeometry, segmentKey, type WallAnchor } from "../systems/structure-segment-placement";
 
 export enum TerrainType { Ground = 0, Road = 1, Sidewalk = 2, Floor = 3 }
 export type RoadKind = "arterial" | "street" | "diagonal";
@@ -15,6 +18,7 @@ export type BuildingOrientation = 0 | 45 | 90 | 135;
 export type BuildingKind = "safehouse" | "house" | "store" | "warehouse" | "office" | "clinic" | "garage" | "gas-station" | "ruin";
 export type DoorOrientation = "horizontal" | "vertical" | "diagonal-down" | "diagonal-up";
 export type CoverHeight = "none" | "low" | "full";
+export interface GeneratedBuildingStructure {id:string;buildableId:"wood-wall"|"wood-door";source:"generated";ownership:"world";placement:SegmentGeometry;buildingId:string;wallIndex:number;demolishable:false;refund:false}
 
 export interface BuildingDefinition {
   id: string; name: string; kind: BuildingKind;
@@ -37,6 +41,7 @@ export interface DoorDefinition {
   orientation: DoorOrientation; open: boolean;
   segment?: SegmentGeometry;
   health: number; maxHealth: number; destroyed: boolean;
+  source?:StructureSource;ownership?:StructureOwnership;
 }
 
 export interface LootStack { itemId: string; quantity: number }
@@ -50,11 +55,12 @@ export interface ZombieSpawnDefinition { id: string; tileX: number; tileY: numbe
 export interface CompanionSpawnDefinition { id: string; tileX: number; tileY: number }
 
 export interface MapDefinition {
-  mapId: string; mapVersion: number; mapSeed: number;
+  mapId: string; mapVersion: number; mapGenerationVersion: number; mapSeed: number;
   widthTiles: number; heightTiles: number; terrain: Uint8Array;
   minimapWallCoverage: Uint8Array;
   roadSegments: RoadSegment[]; buildings: BuildingDefinition[]; structures: BuildingDefinition[];
   wallSegments: SegmentGeometry[];
+  generatedStructures:GeneratedBuildingStructure[];
   obstacles: WorldObstacle[]; doors: DoorDefinition[]; containers: ContainerDefinition[];
   groundItems: GroundItemDefinition[]; zombieSpawns: ZombieSpawnDefinition[];
   playerSpawn: { x: number; y: number }; companionSpawns: CompanionSpawnDefinition[];
@@ -81,7 +87,8 @@ const ROAD_SEGMENTS: RoadSegment[] = [
 const KIND_CYCLE: BuildingKind[] = ["house", "house", "store", "office", "ruin", "house", "warehouse", "garage", "clinic"];
 const FLOOR_COLORS = [0x4c5148, 0x514a42, 0x4c4842, 0x4b514c, 0x484d4c, 0x504a46];
 
-export function createCityBlockMap(mapSeed = 0x51a7c1): MapDefinition {
+export const CURRENT_MAP_GENERATION_VERSION=4;
+export function createCityBlockMap(mapSeed = 0x51a7c1,mapGenerationVersion=CURRENT_MAP_GENERATION_VERSION): MapDefinition {
   const widthTiles = MAP_WIDTH_TILES;
   const heightTiles = MAP_HEIGHT_TILES;
   const terrain = new Uint8Array(widthTiles * heightTiles);
@@ -94,6 +101,7 @@ export function createCityBlockMap(mapSeed = 0x51a7c1): MapDefinition {
   const doors: DoorDefinition[] = [];
   const obstacles: WorldObstacle[] = [];
   const wallSegments: SegmentGeometry[] = [];
+  const generatedStructures:GeneratedBuildingStructure[]=[];
   for (const road of roadSegments) {
     if (buildings.length >= 38) break;
     let acceptedForRoad = 0;
@@ -131,42 +139,40 @@ export function createCityBlockMap(mapSeed = 0x51a7c1): MapDefinition {
           const candidate = squared(tileX + 0.5 - roadX) + squared(tileY + 0.5 - roadY);
           if (candidate < entranceDistance) { entrance = index; entranceDistance = candidate; }
         }
-        const wallTiles = boundary.filter((index) => index !== entrance);
+        const entrances=mapGenerationVersion>=2&&orientation!==45&&orientation!==135?selectBuildingEntrances(boundary,entrance,widthTiles,buildingWidth*buildingDepth,mapSeed,`building-${String(buildings.length).padStart(2,"0")}`):[entrance];
+        const entranceSet=new Set(entrances);const wallTiles = boundary.filter((index) => !entranceSet.has(index));
         const wallSet = new Set(boundary);
-        const floorTiles = footprint.filter((index) => !wallSet.has(index) || index === entrance);
+        const floorTiles = footprint.filter((index) => !wallSet.has(index) || entranceSet.has(index));
         const id = `building-${String(buildings.length).padStart(2, "0")}`;
         const kind = KIND_CYCLE[buildings.length % KIND_CYCLE.length]!;
         const diagonalGeometry = orientation === 45 || orientation === 135
           ? createDiagonalBuildingGeometry(centerX, centerY, buildingWidth, buildingDepth, orientation, entrance, widthTiles, roadX, roadY)
           : undefined;
+        const anchoredGeometry = mapGenerationVersion >= 4
+          ? createGeneratedBuildingAnchorGeometry(footprint, entrances, orientation, widthTiles, roadX, roadY)
+          : undefined;
         const building: BuildingDefinition = {
           id, name: buildingName(kind, buildings.length), kind, centerTileX: centerX, centerTileY: centerY,
           widthTiles: buildingWidth, depthTiles: buildingDepth, orientation, roadId: road.id, roadSide: side,
           footprintTiles: footprint, floorTiles, wallTiles, entranceTiles: [entrance],
-          wallSegments: diagonalGeometry?.walls ?? [],
+          wallSegments: anchoredGeometry?.walls ?? diagonalGeometry?.walls ?? [],
           floorColor: FLOOR_COLORS[buildings.length % FLOOR_COLORS.length]!,
         };
         buildings.push(building);
         acceptedForRoad += 1;
         for (const index of footprint) { occupied[index] = 1; terrain[index] = TerrainType.Floor; }
         for (const index of wallTiles) minimapWallCoverage[index] = 1;
-        if (diagonalGeometry) wallSegments.push(...diagonalGeometry.walls);
+        if(mapGenerationVersion>=3){const existingWallKeys=new Set(wallSegments.map(segmentKey));const candidateWalls=anchoredGeometry?.walls??diagonalGeometry?.walls??wallTiles.map((index)=>createTileWallSegment(index%widthTiles,Math.floor(index/widthTiles),doorOrientationForBoundary(index,footprintSet,widthTiles)));const buildingWalls=candidateWalls.filter((placement)=>!existingWallKeys.has(segmentKey(placement)));building.wallSegments=buildingWalls;buildingWalls.forEach((placement,wallIndex)=>{wallSegments.push(placement);generatedStructures.push({id:`generated:${id}:wall:${wallIndex}`,buildableId:"wood-wall",source:"generated",ownership:"world",placement,buildingId:id,wallIndex,demolishable:false,refund:false});});}
+        else if (diagonalGeometry) wallSegments.push(...diagonalGeometry.walls);
         else for (const index of wallTiles) {
           const tileX = index % widthTiles;
           const tileY = Math.floor(index / widthTiles);
           obstacles.push(wall(`${id}-wall-${tileX}-${tileY}`, tileX, tileY));
         }
+        const orientationValue = diagonalGeometry ? doorOrientationFromSegment(diagonalGeometry.door) : doorOrientation(orientation);
+        entrances.forEach((entranceIndex,doorIndex)=>{const doorX=entranceIndex%widthTiles,doorY=Math.floor(entranceIndex/widthTiles),doorId=mapGenerationVersion>=3?`generated:${id}:door:${doorIndex}`:doorIndex===0?`door-${id}`:`door-${id}-${doorIndex+1}`,candidateOrientation=anchoredGeometry?doorOrientationFromSegment(anchoredGeometry.doors[doorIndex]??anchoredGeometry.doors[0]!):diagonalGeometry?orientationValue:doorOrientationForBoundary(entranceIndex,footprintSet,widthTiles),segment=anchoredGeometry?.doors[doorIndex]??anchoredGeometry?.doors[0]??(doorIndex===0&&diagonalGeometry?diagonalGeometry.door:createTileDoorSegment(doorX,doorY,candidateOrientation));doors.push({kind:"door",id:doorId,buildingId:id,tileX:doorX,tileY:doorY,orientation:candidateOrientation,segment,open:isDoorInitiallyOpen(mapSeed,doorId),health:OBSTACLE_BALANCE.doorHealth,maxHealth:OBSTACLE_BALANCE.doorHealth,destroyed:false,source:mapGenerationVersion>=3?"generated":undefined,ownership:mapGenerationVersion>=3?"world":undefined});if(mapGenerationVersion>=3)generatedStructures.push({id:doorId,buildableId:"wood-door",source:"generated",ownership:"world",placement:segment,buildingId:id,wallIndex:doorIndex,demolishable:false,refund:false});});
         const doorX = entrance % widthTiles;
         const doorY = Math.floor(entrance / widthTiles);
-        const doorId = `door-${id}`;
-        const orientationValue = diagonalGeometry ? doorOrientationFromSegment(diagonalGeometry.door) : doorOrientation(orientation);
-        doors.push({
-          kind: "door", id: doorId, buildingId: id, tileX: doorX, tileY: doorY,
-          orientation: orientationValue,
-          segment: diagonalGeometry?.door ?? createTileDoorSegment(doorX, doorY, orientationValue),
-          open: isDoorInitiallyOpen(mapSeed, doorId), health: OBSTACLE_BALANCE.doorHealth,
-          maxHealth: OBSTACLE_BALANCE.doorHealth, destroyed: false,
-        });
         rasterizeWalkway(terrain, occupied, widthTiles, heightTiles, doorX, doorY, Math.round(roadX), Math.round(roadY));
         if (buildings.length >= 38 || acceptedForRoad >= perRoadLimit) break;
       }
@@ -204,6 +210,9 @@ export function createCityBlockMap(mapSeed = 0x51a7c1): MapDefinition {
   fuelBuilding.kind = "gas-station"; fuelBuilding.name = "동부 주유소";
   engineBuilding.kind = "garage"; engineBuilding.name = "서부 정비소";
 
+  if(mapGenerationVersion>=2&&mapGenerationVersion<3)for(const building of [safehouse,batteryBuilding,fuelBuilding,engineBuilding])restorePresetPrimaryDoor(building,doors,obstacles,minimapWallCoverage,widthTiles);
+  else if(mapGenerationVersion>=3)for(const building of [safehouse,batteryBuilding,fuelBuilding,engineBuilding])restoreGeneratedPresetPrimaryDoor(building,doors,generatedStructures,wallSegments,minimapWallCoverage,widthTiles);
+
   const containers = createContainers(buildings, widthTiles, batteryBuilding, fuelBuilding, engineBuilding, mapSeed);
   const groundItems = createGroundItems(buildings, widthTiles);
   addVehicles(obstacles, terrain, occupied, widthTiles, heightTiles);
@@ -211,8 +220,8 @@ export function createCityBlockMap(mapSeed = 0x51a7c1): MapDefinition {
   const zombieSpawns = createZombieSpawns(terrain, occupied, widthTiles, heightTiles, mapSeed, playerTile);
   const safeBounds = footprintBounds(safehouse.footprintTiles, widthTiles);
   return {
-    mapId: MAP_ID, mapVersion: MAP_VERSION, mapSeed, widthTiles, heightTiles, terrain, minimapWallCoverage, roadSegments,
-    buildings, structures: buildings, wallSegments, obstacles, doors, containers, groundItems, zombieSpawns,
+    mapId: MAP_ID, mapVersion: MAP_VERSION, mapGenerationVersion, mapSeed, widthTiles, heightTiles, terrain, minimapWallCoverage, roadSegments,
+    buildings, structures: buildings, wallSegments,generatedStructures, obstacles, doors, containers, groundItems, zombieSpawns,
     playerSpawn: tileWorld(playerTile, widthTiles), companionSpawns, survivorSpawn: tileWorld(survivorTile, widthTiles),
     extractionZone: { ...tileWorld(extractionTile, widthTiles), radius: 52 },
     safehouseZone: {
@@ -222,6 +231,17 @@ export function createCityBlockMap(mapSeed = 0x51a7c1): MapDefinition {
     },
   };
 }
+
+function selectBuildingEntrances(boundary:readonly number[],primary:number,width:number,area:number,mapSeed:number,buildingId:string):number[]{
+  const cap=area<24?1:area<48?2:area<80?3:4;if(cap===1)return[primary];const desired=1+Math.floor(stableUnit(mapSeed,buildingId)*cap),selected=[primary],primaryX=primary%width,primaryY=Math.floor(primary/width);
+  const candidates=boundary.filter((index)=>{const x=index%width,y=Math.floor(index/width);if(Math.abs(x-primaryX)+Math.abs(y-primaryY)<2)return false;let neighbors=0;for(const [dx,dy] of [[1,0],[-1,0],[0,1],[0,-1]] as const)if(boundary.includes((y+dy)*width+x+dx))neighbors+=1;return neighbors>=2;}).sort((a,b)=>stableUnit(mapSeed,`${buildingId}:${a}`)-stableUnit(mapSeed,`${buildingId}:${b}`));
+  while(selected.length<desired&&candidates.length){let bestIndex=0,bestDistance=-1;for(let index=0;index<candidates.length;index+=1){const candidate=candidates[index]!,x=candidate%width,y=Math.floor(candidate/width),minimum=Math.min(...selected.map((chosen)=>Math.abs(x-chosen%width)+Math.abs(y-Math.floor(chosen/width))));if(minimum>bestDistance){bestDistance=minimum;bestIndex=index;}}const [picked]=candidates.splice(bestIndex,1);if(picked!==undefined&&bestDistance>=2)selected.push(picked);else break;}return selected;
+}
+
+function stableUnit(seed:number,key:string):number{let hash=(seed^0x85ebca6b)>>>0;for(let index=0;index<key.length;index+=1){hash^=key.charCodeAt(index);hash=Math.imul(hash,0x01000193)>>>0;}hash^=hash>>>16;return(hash>>>0)/0x1_0000_0000;}
+function doorOrientationForBoundary(index:number,footprint:ReadonlySet<number>,width:number):DoorOrientation{const left=footprint.has(index-1),right=footprint.has(index+1),up=footprint.has(index-width),down=footprint.has(index+width);return(!left||!right)&&(up||down)?"vertical":"horizontal";}
+function restorePresetPrimaryDoor(building:BuildingDefinition,doors:DoorDefinition[],obstacles:WorldObstacle[],minimapWallCoverage:Uint8Array,width:number):void{for(let index=doors.length-1;index>=0;index-=1){const door=doors[index]!;if(door.buildingId!==building.id||door.id===`door-${building.id}`)continue;doors.splice(index,1);const tileIndex=door.tileY*width+door.tileX;if(!building.wallTiles.includes(tileIndex))building.wallTiles.push(tileIndex);const floorIndex=building.floorTiles.indexOf(tileIndex);if(floorIndex>=0)building.floorTiles.splice(floorIndex,1);minimapWallCoverage[tileIndex]=1;if(building.orientation!==45&&building.orientation!==135)obstacles.push(wall(`${building.id}-wall-${door.tileX}-${door.tileY}`,door.tileX,door.tileY));}}
+function restoreGeneratedPresetPrimaryDoor(building:BuildingDefinition,doors:DoorDefinition[],generated:GeneratedBuildingStructure[],walls:SegmentGeometry[],minimapWallCoverage:Uint8Array,width:number):void{for(let index=doors.length-1;index>=0;index-=1){const door=doors[index]!;if(door.buildingId!==building.id||door.id===`generated:${building.id}:door:0`)continue;doors.splice(index,1);const generatedIndex=generated.findIndex((structure)=>structure.id===door.id);if(generatedIndex>=0)generated.splice(generatedIndex,1);const tileIndex=door.tileY*width+door.tileX;if(!building.wallTiles.includes(tileIndex))building.wallTiles.push(tileIndex);const floorIndex=building.floorTiles.indexOf(tileIndex);if(floorIndex>=0)building.floorTiles.splice(floorIndex,1);minimapWallCoverage[tileIndex]=1;const placement=door.segment?{...door.segment,thickness:BUILDABLE_DEFINITIONS["wood-wall"].segment!.thickness}:createTileWallSegment(door.tileX,door.tileY,door.orientation),wallIndex=building.wallSegments.length;building.wallSegments.push(placement);walls.push(placement);generated.push({id:`generated:${building.id}:wall:${wallIndex}`,buildableId:"wood-wall",source:"generated",ownership:"world",placement,buildingId:building.id,wallIndex,demolishable:false,refund:false});}}
 
 export function isDoorInitiallyOpen(mapSeed: number, doorId: string): boolean {
   let hash = (mapSeed ^ 0x9e3779b9) >>> 0;
@@ -271,6 +291,61 @@ function rasterizeBuildingFootprint(centerX: number, centerY: number, buildingWi
 const DIAGONAL_WALL_THICKNESS = 6;
 const DOOR_THICKNESS = 5;
 const DOOR_LENGTH = TILE_SIZE - 5;
+
+function createGeneratedBuildingAnchorGeometry(
+  footprint: readonly number[], entrances: readonly number[], orientation: BuildingOrientation,
+  mapWidth: number, roadTileX: number, roadTileY: number,
+): { walls: SegmentGeometry[]; doors: SegmentGeometry[] } {
+  const edges: Array<{ start: WallAnchor; end: WallAnchor }> = [];
+  if (orientation === 45 || orientation === 135) {
+    let sumX = 0; let sumY = 0;
+    for (const index of footprint) { sumX += index % mapWidth + 0.5; sumY += Math.floor(index / mapWidth) + 0.5; }
+    const center = { x: Math.round(sumX / footprint.length), y: Math.round(sumY / footprint.length) };
+    const xs = footprint.map((index) => index % mapWidth); const ys = footprint.map((index) => Math.floor(index / mapWidth));
+    const width = Math.max(...xs) - Math.min(...xs) + 1; const height = Math.max(...ys) - Math.min(...ys) + 1;
+    const major = Math.max(3, Math.round(Math.max(width, height) / 2));
+    const minor = Math.max(2, Math.round(Math.min(width, height) / 3));
+    const u = orientation === 45 ? { x: 1, y: 1 } : { x: -1, y: 1 };
+    const v = orientation === 45 ? { x: -1, y: 1 } : { x: 1, y: 1 };
+    const corners: WallAnchor[] = [
+      { x: center.x - u.x * major - v.x * minor, y: center.y - u.y * major - v.y * minor },
+      { x: center.x + u.x * major - v.x * minor, y: center.y + u.y * major - v.y * minor },
+      { x: center.x + u.x * major + v.x * minor, y: center.y + u.y * major + v.y * minor },
+      { x: center.x - u.x * major + v.x * minor, y: center.y - u.y * major + v.y * minor },
+    ];
+    for (let side = 0; side < 4; side += 1) appendUnitAnchorEdges(edges, corners[side]!, corners[(side + 1) % 4]!);
+  } else {
+    const cells = new Set(footprint);
+    for (const index of footprint) {
+      const x = index % mapWidth; const y = Math.floor(index / mapWidth);
+      if (!cells.has(index - mapWidth)) edges.push({ start: { x, y }, end: { x: x + 1, y } });
+      if (!cells.has(index + mapWidth)) edges.push({ start: { x: x + 1, y: y + 1 }, end: { x, y: y + 1 } });
+      if (x === 0 || !cells.has(index - 1)) edges.push({ start: { x, y: y + 1 }, end: { x, y } });
+      if (x === mapWidth - 1 || !cells.has(index + 1)) edges.push({ start: { x: x + 1, y }, end: { x: x + 1, y: y + 1 } });
+    }
+  }
+  const available = [...edges]; const doors: SegmentGeometry[] = [];
+  for (const entrance of entrances) {
+    const entranceX = entrance % mapWidth + 0.5; const entranceY = Math.floor(entrance / mapWidth) + 0.5;
+    let best = 0; let bestDistance = Number.POSITIVE_INFINITY;
+    for (let index = 0; index < available.length; index += 1) {
+      const edge = available[index]!; const midpointX = (edge.start.x + edge.end.x) / 2; const midpointY = (edge.start.y + edge.end.y) / 2;
+      const distance = squared(midpointX - entranceX) + squared(midpointY - entranceY) + 0.02 * (squared(midpointX - roadTileX) + squared(midpointY - roadTileY));
+      if (distance < bestDistance) { best = index; bestDistance = distance; }
+    }
+    const [edge] = available.splice(best, 1);
+    if (edge) doors.push(createStructureSegmentGeometry(edge.start, edge.end, "wood-door"));
+  }
+  const doorKeys = new Set(doors.map(segmentKey));
+  const walls = edges.map((edge) => createStructureSegmentGeometry(edge.start, edge.end, "wood-wall")).filter((edge) => !doorKeys.has(segmentKey(edge)));
+  return { walls, doors };
+}
+
+function appendUnitAnchorEdges(target: Array<{ start: WallAnchor; end: WallAnchor }>, start: WallAnchor, end: WallAnchor): void {
+  const deltaX = Math.sign(end.x - start.x); const deltaY = Math.sign(end.y - start.y);
+  const count = Math.max(Math.abs(end.x - start.x), Math.abs(end.y - start.y));
+  for (let index = 0; index < count; index += 1) target.push({ start: { x: start.x + deltaX * index, y: start.y + deltaY * index }, end: { x: start.x + deltaX * (index + 1), y: start.y + deltaY * (index + 1) } });
+}
 
 function createDiagonalBuildingGeometry(
   centerTileX: number,
@@ -358,6 +433,8 @@ function createTileDoorSegment(tileX: number, tileY: number, orientation: DoorOr
   if (orientation === "vertical") return { startX: centerX, startY: centerY - halfLength, endX: centerX, endY: centerY + halfLength, thickness: DOOR_THICKNESS };
   return { startX: centerX - halfLength, startY: centerY, endX: centerX + halfLength, endY: centerY, thickness: DOOR_THICKNESS };
 }
+
+function createTileWallSegment(tileX:number,tileY:number,orientation:DoorOrientation):SegmentGeometry{const centerX=(tileX+.5)*TILE_SIZE,centerY=(tileY+.5)*TILE_SIZE,half=TILE_SIZE/2,thickness=BUILDABLE_DEFINITIONS["wood-wall"].segment!.thickness;if(orientation==="vertical")return{startX:centerX,startY:centerY-half,endX:centerX,endY:centerY+half,thickness};return{startX:centerX-half,startY:centerY,endX:centerX+half,endY:centerY,thickness};}
 
 function canPlaceBuilding(footprint: readonly number[], terrain: Uint8Array, occupied: Uint8Array, width: number, height: number): boolean {
   for (const index of footprint) {

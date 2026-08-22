@@ -1,0 +1,2 @@
+import{describe,expect,it}from"vitest";import{BUILDABLE_DEFINITIONS}from"../data/buildable-definitions";
+describe("buildable placement classes",()=>{it("keeps walls and doors structural and all equipment furniture",()=>{for(const id of ["wood-wall","metal-wall","wood-door"] as const)expect(BUILDABLE_DEFINITIONS[id].placementClass).toBe("structure");for(const definition of Object.values(BUILDABLE_DEFINITIONS).filter((item)=>item.placementClass==="furniture")){expect(definition.blocksVision).toBe(false);expect(definition.furnitureSize?.width).toBeGreaterThan(0);}});});

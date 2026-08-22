@@ -10,9 +10,12 @@ export interface BuildablePlacementProbe {
   actorOccupied: boolean;
   indoor: boolean;
   roadLane: boolean;
+  withinRange?: boolean;
+  visible?: boolean;
+  lineOfSight?: boolean;
 }
 
-export type BuildablePlacementFailure = "out-of-bounds" | "blocked" | "occupied" | "doorway" | "objective" | "extraction" | "actor" | "solar-indoors" | "solar-road";
+export type BuildablePlacementFailure = "out-of-bounds" | "blocked" | "occupied" | "doorway" | "objective" | "extraction" | "actor" | "unseen" | "out-of-range" | "line-of-sight" | "solar-indoors" | "solar-road";
 
 export function getBuildablePlacementFailure(kind: BuildableKind, probe: BuildablePlacementProbe): BuildablePlacementFailure | null {
   if (!probe.inBounds) return "out-of-bounds";
@@ -22,6 +25,9 @@ export function getBuildablePlacementFailure(kind: BuildableKind, probe: Buildab
   if (probe.objective) return "objective";
   if (probe.extraction) return "extraction";
   if (probe.actorOccupied) return "actor";
+  if (probe.visible === false) return "unseen";
+  if (probe.withinRange === false) return "out-of-range";
+  if (probe.lineOfSight === false) return "line-of-sight";
   if (kind === "solar-generator" && probe.indoor) return "solar-indoors";
   if (kind === "solar-generator" && probe.roadLane) return "solar-road";
   return null;

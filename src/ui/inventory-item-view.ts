@@ -3,21 +3,23 @@ import { getInventoryObjectDefinition } from "../data/inventory-object-definitio
 import type { InventoryRotation } from "../data/item-definitions";
 import { getInventoryItemRenderGeometry, getInventoryRenderStyle, INVENTORY_GRID_METRICS, type InventoryGridMetrics, type InventoryItemRenderGeometry } from "./inventory-item-render-geometry";
 
-export type InventoryItemSurface = "inventory-grid" | "equipment-slot" | "weapon-slot" | "drag-ghost" | "readonly-grid";
+export type InventoryItemSurface = "inventory-grid" | "equipment-slot" | "weapon-slot" | "drag-ghost" | "readonly-grid" | "build-catalog";
+export interface CatalogItemViewArt { src:string; name:string; widthCells:number; heightCells:number }
 export interface InventoryItemViewOptions {
   instanceId: string; itemId: string; quantity: number; rotation: InventoryRotation;
-  surface: InventoryItemSurface; metrics?: InventoryGridMetrics; quickLabel?: string; className?: string;
+  surface: InventoryItemSurface; metrics?: InventoryGridMetrics; quickLabel?: string; className?: string; catalogArt?:CatalogItemViewArt;
 }
 
-export function getInventoryItemViewGeometry(options: Pick<InventoryItemViewOptions, "itemId" | "rotation" | "metrics">): InventoryItemRenderGeometry {
+export function getInventoryItemViewGeometry(options: Pick<InventoryItemViewOptions, "itemId" | "rotation" | "metrics"|"catalogArt">): InventoryItemRenderGeometry {
   const metrics = options.metrics ?? INVENTORY_GRID_METRICS;
-  return getInventoryItemRenderGeometry(getInventoryObjectDefinition(options.itemId).inventoryFootprint, options.rotation, metrics.cellSize, metrics.cellGap, metrics.innerPadding);
+  const footprint=options.catalogArt?{width:options.catalogArt.widthCells,height:options.catalogArt.heightCells}:getInventoryObjectDefinition(options.itemId).inventoryFootprint;
+  return getInventoryItemRenderGeometry(footprint, options.rotation, metrics.cellSize, metrics.cellGap, metrics.innerPadding);
 }
 
 export function createInventoryItemView(options: InventoryItemViewOptions): string {
-  const definition = getInventoryObjectDefinition(options.itemId); const geometry = getInventoryItemViewGeometry(options);
-  const dimensions = getItemIconSourceDimensions(options.itemId); const color = definition.iconColor.toString(16).padStart(6, "0");
-  return `<span class="inventory-item-frame inventory-item-frame--${options.surface} ${options.className ?? ""}" data-instance-id="${escapeAttribute(options.instanceId)}" data-item-id="${escapeAttribute(options.itemId)}" data-surface="${options.surface}" data-rotation="${options.rotation}" style="--swatch:#${color};${getInventoryRenderStyle(geometry)}"><span class="inventory-item-visual-stage"><span class="inventory-item-centerer"><img class="inventory-item-image" data-rotation="${options.rotation}" src="${getItemIconPath(options.itemId)}" alt="${escapeAttribute(definition.name)}" width="${dimensions.width}" height="${dimensions.height}"><span class="inventory-item-fallback" hidden></span></span></span>${options.quantity > 1 ? `<span class="inventory-item-badge">${options.quantity}</span>` : ""}${options.quickLabel ? `<em class="inventory-item-quick">${escapeAttribute(options.quickLabel)}</em>` : ""}</span>`;
+  const definition=options.catalogArt?undefined:getInventoryObjectDefinition(options.itemId),geometry=getInventoryItemViewGeometry(options);
+  const dimensions=options.catalogArt?{width:options.catalogArt.widthCells*64,height:options.catalogArt.heightCells*64}:getItemIconSourceDimensions(options.itemId),color=(definition?.iconColor??0x56615d).toString(16).padStart(6,"0"),src=options.catalogArt?.src??getItemIconPath(options.itemId),name=options.catalogArt?.name??definition!.name;
+  return `<span class="inventory-item-frame inventory-item-frame--${options.surface} ${options.className ?? ""}" data-instance-id="${escapeAttribute(options.instanceId)}" data-item-id="${escapeAttribute(options.itemId)}" data-surface="${options.surface}" data-rotation="${options.rotation}" style="--swatch:#${color};${getInventoryRenderStyle(geometry)}"><span class="inventory-item-visual-stage"><span class="inventory-item-centerer"><img class="inventory-item-image" data-rotation="${options.rotation}" src="${src}" alt="${escapeAttribute(name)}" width="${dimensions.width}" height="${dimensions.height}"><span class="inventory-item-fallback" hidden></span></span></span>${options.quantity > 1 ? `<span class="inventory-item-badge">${options.quantity}</span>` : ""}${options.quickLabel ? `<em class="inventory-item-quick">${escapeAttribute(options.quickLabel)}</em>` : ""}</span>`;
 }
 
 export function updateInventoryItemView(view: HTMLElement, options: InventoryItemViewOptions): void {

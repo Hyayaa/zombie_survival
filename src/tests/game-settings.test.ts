@@ -13,9 +13,9 @@ describe("GameSettingsStore", () => {
     const storage = new MemorySettingsStorage();
     const first = new GameSettingsStore(storage);
     expect(first.load()).toEqual(DEFAULT_GAME_SETTINGS);
-    expect(first.setDeveloperMode(true)).toEqual({ version: 1, developerMode: true });
+    expect(first.setDeveloperMode(true)).toEqual({ ...DEFAULT_GAME_SETTINGS, developerMode: true });
     expect(storage.data.has(GAME_SETTINGS_KEY)).toBe(true);
-    expect(new GameSettingsStore(storage).load()).toEqual({ version: 1, developerMode: true });
+    expect(new GameSettingsStore(storage).load()).toEqual({ ...DEFAULT_GAME_SETTINGS, developerMode: true });
   });
 
   it("recovers malformed or incompatible settings without touching game saves", () => {

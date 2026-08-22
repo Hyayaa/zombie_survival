@@ -8,6 +8,10 @@ import { bindItemIconFallbacks, createItemIconMarkup } from "./item-icon";
 import { getInventoryItemRenderGeometry, getInventoryRenderStyle, INVENTORY_GRID_METRICS, type InventoryItemRenderGeometry } from "./inventory-item-render-geometry";
 import { createInventoryItemView, getInventoryItemViewGeometry } from "./inventory-item-view";
 import { createItemGridRowMarkup, packReadonlyGrid } from "./item-grid-row";
+import { BUILDABLE_DEFINITIONS, getBuildCostItems, getBuildableCatalogArtPath, type BuildableDefinition, type BuildableKind } from "../data/buildable-definitions";
+import type { BuildPlacementSource } from "../systems/build-placement-flow";
+
+export interface BuildTabSelectionIntent { buildableId:BuildableKind; source:BuildPlacementSource; requestedAt:number }
 
 export interface InventoryPanelState {
   containers: ReadonlyArray<InventoryContainerView>; items: ReadonlyArray<InventoryItemInstance>;
@@ -20,6 +24,7 @@ export interface InventoryPanelState {
 
 export interface InventoryPanelCallbacks {
   onClose(): void; onCraft(recipeId: string): void; onUseItem(instanceId: string): void;
+  onStartBuildPlacement(intent:BuildTabSelectionIntent):boolean;
   onDropItem(instanceId: string): void; onAssignQuickslot(instanceId: string, quickslot: number): void;
   onMoveItem(instanceId: string, target: InventoryMoveTarget): boolean; onRotateItem(instanceId: string): boolean;
   canPlaceItem(instanceId: string, target: InventoryMoveTarget): boolean;
@@ -54,20 +59,22 @@ export type ItemContextAction = "use" | "equip" | "weapon-primary" | "weapon-sec
 export function getItemContextActions(itemId: string): ReadonlyArray<ItemContextAction> { const definition = getInventoryObjectDefinition(itemId); const actions: ItemContextAction[] = isWeaponItemId(itemId) ? ["weapon-primary", "weapon-secondary"] : definition.storageEquipment ? ["equip"] : ["use"]; if (definition.inventoryFootprint.width !== definition.inventoryFootprint.height) actions.push("rotate"); actions.push("drop"); if (!definition.storageEquipment && !isWeaponItemId(itemId)) actions.push("quick"); return actions; }
 export function createInventorySlotIconMarkup(slot: InventorySlot | null): string { if (!slot) return ""; const item = getInventoryObjectDefinition(slot.itemId); return createItemIconMarkup({ id: item.id, name: item.name, color: item.iconColor, className: "inventory-icon" }); }
 export function getEquipmentItemPreviewGeometry(itemId: string, rotation: InventoryRotation = 0): InventoryItemRenderGeometry { return getInventoryItemViewGeometry({ itemId, rotation, metrics: INVENTORY_GRID_METRICS }); }
+export function createBuildCatalogRowMarkup(definition:BuildableDefinition,basePath=import.meta.env.BASE_URL):string{const art=definition.catalogArt,view=createInventoryItemView({instanceId:`build:${definition.kind}`,itemId:definition.kind,quantity:1,rotation:0,surface:"build-catalog",catalogArt:{src:getBuildableCatalogArtPath(definition.kind,basePath),name:definition.name,widthCells:art.widthCells,heightCells:art.heightCells},metrics:INVENTORY_GRID_METRICS}),artGrid=`<div class="grid-inventory__surface build-catalog-art" style="--grid-w:${art.widthCells};--grid-h:${art.heightCells}"><div class="grid-inventory__item" style="--item-x:0;--item-y:0;--item-w:${art.widthCells};--item-h:${art.heightCells}">${view}</div></div><small>${definition.name} · 카탈로그 ${art.widthCells}×${art.heightCells}<br>${definition.placementClass}</small>`,header=`<div><b>${definition.name}</b><small>${definition.placementClass==="structure"?"구조물":"가구"} · 체력 ${definition.maximumHealth}</small></div><button data-action="start-build" data-buildable-id="${definition.kind}">배치 시작</button>`;return createItemGridRowMarkup({className:"build-catalog-row",attributes:`data-buildable-id="${definition.kind}"`,header,left:artGrid,right:`<div class="build-catalog-row__costs"></div><p class="build-catalog-row__details"></p><p class="build-catalog-row__source"></p>`});}
+export function isBuildIntentExactItemAvailable(intent:BuildTabSelectionIntent|undefined,items:ReadonlyArray<Pick<InventoryItemInstance,"instanceId"|"itemId"|"quantity">>):boolean{if(!intent)return true;const source=intent.source;if(source.kind!=="item")return true;return items.some((item)=>item.instanceId===source.instanceId&&item.itemId===source.itemId&&item.quantity>0);}
 
 export class InventoryPanel {
   readonly root: HTMLDivElement;
-  private readonly inventoryView: HTMLDivElement; private readonly craftingView: HTMLDivElement;
+  private readonly inventoryView: HTMLDivElement; private readonly craftingView: HTMLDivElement;private readonly buildView:HTMLDivElement;
   private readonly dragGhost: HTMLDivElement; private readonly placementPreview: HTMLDivElement; private readonly popover: HTMLDivElement;
   private state?: InventoryPanelState; private drag?: DragState; private popoverInstanceId?: string;
-  private activeTab: "inventory" | "crafting" = "inventory"; private previewKey = ""; private highlightedDropTarget?: HTMLElement;
+  private activeTab: "inventory" | "crafting"|"build" = "inventory"; private previewKey = ""; private highlightedDropTarget?: HTMLElement;private buildIntent?:BuildTabSelectionIntent;
   private craftingRenderKey = "";
 
   constructor(parent: HTMLElement, private readonly callbacks: InventoryPanelCallbacks) {
     this.root = document.createElement("div"); this.root.className = "modal-layer"; this.root.hidden = true;
-    this.root.innerHTML = `<section class="inventory-panel pixel-panel"><header><h2>생존 가방</h2><nav class="inventory-tabs"><button data-action="tab" data-tab="inventory">인벤토리</button><button data-action="tab" data-tab="crafting">제작</button></nav><button data-action="close">닫기 [Tab]</button></header><div class="inventory-panel__view" data-view="inventory"></div><div class="inventory-panel__view" data-view="crafting" hidden></div></section>`;
-    const inventoryView = this.root.querySelector<HTMLDivElement>('[data-view="inventory"]'); const craftingView = this.root.querySelector<HTMLDivElement>('[data-view="crafting"]');
-    if (!inventoryView || !craftingView) throw new Error("Inventory panel views missing"); this.inventoryView = inventoryView; this.craftingView = craftingView;
+    this.root.innerHTML = `<section class="inventory-panel pixel-panel"><header><h2>생존 가방</h2><nav class="inventory-tabs"><button data-action="tab" data-tab="inventory">인벤토리</button><button data-action="tab" data-tab="crafting">제작</button><button data-action="tab" data-tab="build">건설</button></nav><button data-action="close">닫기 [Tab]</button></header><div class="inventory-panel__view" data-view="inventory"></div><div class="inventory-panel__view" data-view="crafting" hidden></div><div class="inventory-panel__view build-catalog-view" data-view="build" hidden></div></section>`;
+    const inventoryView = this.root.querySelector<HTMLDivElement>('[data-view="inventory"]'),craftingView = this.root.querySelector<HTMLDivElement>('[data-view="crafting"]'),buildView=this.root.querySelector<HTMLDivElement>('[data-view="build"]');
+    if (!inventoryView || !craftingView||!buildView) throw new Error("Inventory panel views missing"); this.inventoryView = inventoryView; this.craftingView = craftingView;this.buildView=buildView;this.createBuildRows();
     this.dragGhost = document.createElement("div"); this.dragGhost.className = "inventory-drag-ghost"; this.dragGhost.hidden = true;
     this.placementPreview = document.createElement("div"); this.placementPreview.className = "inventory-placement-preview"; this.placementPreview.hidden = true;
     this.popover = document.createElement("div"); this.popover.className = "item-context-popover pixel-panel"; this.popover.hidden = true;
@@ -77,12 +84,18 @@ export class InventoryPanel {
   }
   show(state: InventoryPanelState): void { this.state = state; this.root.hidden = false; this.render(); this.switchTab(this.activeTab, false); }
   showCrafting(state: InventoryPanelState): void { this.activeTab = "crafting"; this.show(state); }
+  showBuild(state:InventoryPanelState):void{this.buildIntent=undefined;this.activeTab="build";this.show(state);}
+  openBuildTabForPlacement(intent:BuildTabSelectionIntent,state:InventoryPanelState):void{this.closePopover();this.buildIntent={...intent,source:{...intent.source}};this.activeTab="build";this.show(state);const row=this.buildView.querySelector<HTMLElement>(`[data-buildable-id="${intent.buildableId}"]`);row?.classList.add("is-selected");row?.scrollIntoView({block:"nearest"});}
   hide(): void { this.closePopover(); this.cancelDrag(); this.root.hidden = true; }
   isOpen(): boolean { return !this.root.hidden; }
   update(state: InventoryPanelState): void { this.state = state; if (this.popoverInstanceId && !state.items.some((item) => item.instanceId === this.popoverInstanceId)) this.closePopover(); if (!this.root.hidden) this.render(); }
   destroy(): void { window.removeEventListener("pointermove", this.handlePointerMove); window.removeEventListener("pointerup", this.handlePointerUp); document.removeEventListener("keydown", this.handleKeyDown); this.root.remove(); }
 
-  private render(): void { if (!this.state) return; this.renderInventory(); this.renderCrafting(); this.switchTab(this.activeTab, false); if (this.drag?.dragging) this.showTemporaryEquipmentDropTarget(); bindItemIconFallbacks(this.root); }
+  private render(): void { if (!this.state) return; this.renderInventory(); this.renderCrafting();this.renderBuild(); this.switchTab(this.activeTab, false); if (this.drag?.dragging) this.showTemporaryEquipmentDropTarget(); bindItemIconFallbacks(this.root); }
+
+  private createBuildRows():void{const groups=(["structure","furniture"] as const).map((placementClass)=>`<section class="build-catalog-group"><h3>${placementClass==="structure"?"구조물":"가구·설비"}</h3>${Object.values(BUILDABLE_DEFINITIONS).filter((definition)=>definition.placementClass===placementClass).map((definition)=>createBuildCatalogRowMarkup(definition)).join("")}</section>`).join("");this.buildView.innerHTML=`<p class="build-catalog-summary">재료가 부족해도 모든 항목을 확인할 수 있습니다.</p>${groups}`;}
+
+  private renderBuild():void{if(!this.state)return;for(const definition of Object.values(BUILDABLE_DEFINITIONS)){const row=this.buildView.querySelector<HTMLElement>(`[data-buildable-id="${definition.kind}"]`);if(!row)continue;const costs=getBuildCostItems(definition),exactIntent=this.buildIntent?.buildableId===definition.kind?this.buildIntent:undefined,missingExact=!isBuildIntentExactItemAvailable(exactIntent,this.state.items),affordable=this.state.developerMode||(!missingExact&&costs.every((cost)=> (this.state!.itemCounts[cost.itemId]??0)>=cost.quantity));const button=row.querySelector<HTMLButtonElement>('[data-action="start-build"]'),costsNode=row.querySelector<HTMLElement>(".build-catalog-row__costs"),details=row.querySelector<HTMLElement>(".build-catalog-row__details"),source=row.querySelector<HTMLElement>(".build-catalog-row__source");if(button){button.disabled=!affordable;button.textContent=missingExact?"아이템 없음":affordable?"배치 시작":"비용 부족";}if(costsNode)costsNode.textContent=this.state.developerMode?"비용 ∞ · 개발자 무제한":costs.map((cost)=>`${getItemDefinition(cost.itemId).name} ${this.state!.itemCounts[cost.itemId]??0}/${cost.quantity}`).join(" · ");if(details)details.textContent=`배치: ${definition.placementClass==="structure"?"타일 anchor":"자유 위치·각도"} · 시야 ${definition.blocksVision?"차단":"비차단"}${definition.craftingStationKind?` · ${CRAFTING_STATION_LABEL[definition.craftingStationKind]} 제작대`:definition.category==="power"?" · 전력 설비":""}`;if(source)source.textContent=missingExact?"건축 아이템이 더 이상 존재하지 않습니다.":exactIntent?.source.kind==="item"?`선택한 아이템: ${exactIntent.source.instanceId}`:"";row.classList.toggle("is-selected",this.buildIntent?.buildableId===definition.kind);}}
   private renderInventory(): void {
     if (!this.state) return; const itemsById = new Map(this.state.items.map((item) => [item.instanceId, item]));
     const rows = getStorageRows(this.state.containers).map(({ kind, container }) => {
@@ -125,9 +138,10 @@ export class InventoryPanel {
     const readonlyItem = (event.target as HTMLElement).closest<HTMLElement>("[data-readonly-item-id]");
     if (readonlyItem?.dataset.readonlyItemId) { this.openReadonlyPopover(readonlyItem, readonlyItem.dataset.readonlyItemId); return; }
     const target = (event.target as HTMLElement).closest<HTMLButtonElement>("button[data-action]"); if (!target) { if (!(event.target as HTMLElement).closest(".item-context-popover,.grid-inventory__item")) this.closePopover(); return; }
-    const action = target.dataset.action; if (action === "tab" && target.dataset.tab) { this.switchTab(target.dataset.tab as "inventory" | "crafting", true); return; }
+    const action = target.dataset.action; if (action === "tab" && target.dataset.tab) { this.switchTab(target.dataset.tab as "inventory" | "crafting"|"build", true); return; }
     if (action === "close") { this.callbacks.onAudio("ui-click"); this.callbacks.onClose(); return; }
     if (action === "craft" && target.dataset.recipe) this.callbacks.onCraft(target.dataset.recipe);
+    if(action==="start-build"&&target.dataset.buildableId&&this.state){const buildableId=target.dataset.buildableId as BuildableKind,source=this.buildIntent?.buildableId===buildableId?this.buildIntent.source:this.state.developerMode?{kind:"developer" as const}:{kind:"materials" as const},intent:BuildTabSelectionIntent={buildableId,source,requestedAt:Date.now()};if(this.callbacks.onStartBuildPlacement(intent)){this.buildIntent=undefined;this.hide();}return;}
     if (action === "unequip-item" && target.dataset.slot) this.callbacks.onUnequipItem(target.dataset.slot as StorageSlot);
     if (action === "activate-weapon" && target.dataset.slot) this.callbacks.onActivateWeapon(target.dataset.slot as WeaponEquipmentSlot);
     if (action === "unequip-weapon" && target.dataset.slot) this.callbacks.onUnequipWeapon(target.dataset.slot as WeaponEquipmentSlot);
@@ -137,7 +151,7 @@ export class InventoryPanel {
     if (action === "rotate-item") { const success = this.callbacks.onRotateItem(instanceId); this.callbacks.onAudio(success ? "item-rotate" : "inventory-invalid"); }
     if (action === "assign-item") { this.callbacks.onAudio("ui-click"); this.callbacks.onAssignQuickslot(instanceId, Number(target.dataset.quickslot)); } this.closePopover();
   }
-  private switchTab(tab: "inventory" | "crafting", playSound: boolean): void { const changed = this.activeTab !== tab; this.activeTab = tab; this.inventoryView.hidden = tab !== "inventory"; this.craftingView.hidden = tab !== "crafting"; for (const button of this.root.querySelectorAll<HTMLButtonElement>('[data-action="tab"]')) button.classList.toggle("is-active", button.dataset.tab === tab); if (playSound && changed) this.callbacks.onAudio("ui-tab"); if (changed) { this.closePopover(); this.cancelDrag(); } }
+  private switchTab(tab: "inventory" | "crafting"|"build", playSound: boolean): void { const changed = this.activeTab !== tab; this.activeTab = tab; this.inventoryView.hidden = tab !== "inventory"; this.craftingView.hidden = tab !== "crafting";this.buildView.hidden=tab!=="build"; for (const button of this.root.querySelectorAll<HTMLButtonElement>('[data-action="tab"]')) button.classList.toggle("is-active", button.dataset.tab === tab); if (playSound && changed) this.callbacks.onAudio("ui-tab"); if (changed) { this.closePopover(); this.cancelDrag(); } }
   private handlePointerDown(event: PointerEvent): void {
     if (event.button !== 0 || (event.target as HTMLElement).closest("button[data-action]")) return; const source = (event.target as HTMLElement).closest<HTMLElement>(".inventory-item-frame"); const instanceId = source?.dataset.instanceId; const item = this.state?.items.find((candidate) => candidate.instanceId === instanceId); if (!source || !item) return;
     const surface = source.closest<HTMLElement>(".grid-inventory__surface"); const equipmentSlot = source.closest<HTMLElement>("[data-equipment-equipped-slot]")?.dataset.equipmentEquippedSlot as StorageSlot | undefined; const weaponSlot = source.closest<HTMLElement>("[data-weapon-equipped-slot]")?.dataset.weaponEquippedSlot as WeaponEquipmentSlot | undefined;

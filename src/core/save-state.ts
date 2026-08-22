@@ -60,6 +60,7 @@ export interface SaveGame {
   version: number;
   mapId: string;
   mapVersion: number;
+  mapGenerationVersion?: number;
   mapSeed: number;
   seed: number;
   rngState: number;
@@ -88,6 +89,7 @@ export interface SaveGame {
   doorStates: SavedDoorState[];
   barricades: SavedBarricadeState[];
   structures: SavedStructureState[];
+  nextStructureId?: number;
   consumedZombieSpawnIds: string[];
   zombies: SavedZombie[];
   exploredFog: SavedFogExploration;

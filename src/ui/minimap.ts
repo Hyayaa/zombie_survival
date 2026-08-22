@@ -42,6 +42,8 @@ export interface MinimapDynamicState {
   collectedParts: number; defenseActive: boolean;
   developerMode: boolean;
   cameraWorldView: { x: number; y: number; width: number; height: number };
+  structures?: readonly { position: Point; kind: string }[];
+  structureRevision?: number;
 }
 
 export interface LocalMapWindow { startX: number; startY: number; width: number; height: number }
@@ -351,6 +353,7 @@ export class MinimapPanel {
     const context = this.localMarkerContext; context.clearRect(0, 0, MINIMAP.localSize, MINIMAP.localSize);
     const pixelsPerTile = getLocalMinimapPixelsPerTile(this.currentLocalTiles);
     drawLocalMarker(context, state.player, this.localWindow, pixelsPerTile, MINIMAP_COLORS.player, 5, false);
+    for (const structure of state.structures ?? []) drawLocalMarker(context, structure.position, this.localWindow, pixelsPerTile, structure.kind.includes("wall") || structure.kind.includes("door") ? 0x9c8a67 : 0x708f7d, 2, false);
     let edgeMarkerIndex = 0;
     for (const companion of state.companions) {
       if (!shouldShowLocalCompanion(companion.alive)) continue;
@@ -386,6 +389,7 @@ export class MinimapPanel {
       drawMarker(context, this.markerPoint, companion.rescued ? MINIMAP_COLORS.companion : MINIMAP_COLORS.survivor, 4, MINIMAP.fullSize);
     }
     worldToFullMap(state.player.x, state.player.y, this.markerPoint); drawMarker(context, this.markerPoint, MINIMAP_COLORS.player, 6, MINIMAP.fullSize);
+    for (const structure of state.structures ?? []) { worldToFullMap(structure.position.x, structure.position.y, this.markerPoint); drawMarker(context, this.markerPoint, structure.kind.includes("wall") || structure.kind.includes("door") ? 0x9c8a67 : 0x708f7d, 2, MINIMAP.fullSize); }
   }
 }
 

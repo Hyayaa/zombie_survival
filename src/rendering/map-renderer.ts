@@ -3,6 +3,7 @@ import { COLORS, DEPTH, ENTITY_OUTLINE, TILE_SIZE } from "../config/game-config"
 import { getTerrain, TerrainType, type DoorDefinition, type MapDefinition, type WorldObstacle } from "../data/map-definitions";
 import { EntityOutlineController, type EntityOutlineState, type OutlineableEntityView } from "./entity-outline";
 import { DoorView } from "./obstacle-views";
+import { createStructureRenderModel,drawStructureRenderModel } from "./structure-render-model";
 
 export class ContainerView implements OutlineableEntityView {
   private readonly outline: EntityOutlineController;
@@ -95,7 +96,9 @@ export function createMapRendering(scene: Phaser.Scene, map: MapDefinition): Map
     }
   }
 
-  if (map.wallSegments.length > 0) {
+  const generatedWalls=map.generatedStructures.filter((structure)=>structure.buildableId==="wood-wall");
+  if(generatedWalls.length>0){const chunks=new Map<string,Phaser.GameObjects.Graphics>();for(const structure of generatedWalls){const segment=structure.placement,midX=(segment.startX+segment.endX)/2,midY=(segment.startY+segment.endY)/2,key=`${Math.floor(midX/(CHUNK_TILES*TILE_SIZE))},${Math.floor(midY/(CHUNK_TILES*TILE_SIZE))}`;let graphics=chunks.get(key);if(!graphics){graphics=scene.add.graphics().setDepth(DEPTH.propBack);chunks.set(key,graphics);staticChunkCount+=1;}drawStructureRenderModel(graphics,createStructureRenderModel("wood-wall",{kind:"segment",...segment}));}}
+  else if (map.wallSegments.length > 0) {
     const diagonalWalls = scene.add.graphics().setDepth(DEPTH.propBack);
     staticChunkCount += 1;
     for (const segment of map.wallSegments) {
