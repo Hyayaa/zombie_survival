@@ -5,7 +5,7 @@ import { InventorySystem } from "../systems/inventory-system";
 
 describe("CraftingSystem", () => {
   const crafting = new CraftingSystem(RECIPE_DEFINITIONS);
-  const bulkyCrafting = new CraftingSystem([...RECIPE_DEFINITIONS, { id: "test-bulky", name: "test", resultItemId: "barricade", resultQuantity: 1, ingredients: { cloth: 2 }, craftTimeMs: 1, noiseIntensity: 0 }]);
+  const bulkyCrafting = new CraftingSystem([...RECIPE_DEFINITIONS, { id: "test-bulky", name: "test", resultItemId: "barricade", resultQuantity: 1, ingredients: { cloth: 2 }, craftTimeMs: 1, noiseIntensity: 0, requiredStation: "hand" as const }]);
 
   function fragmentedInventory(): InventorySystem {
     const inventory = new InventorySystem();

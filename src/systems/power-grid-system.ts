@@ -21,7 +21,7 @@ export class PowerGridSystem {
   getEdges(): readonly PowerEdge[] { return this.edges; }
 
   rebuild(structures: readonly PlacedStructureState[], positionOf: (state: PlacedStructureState) => { x: number; y: number }): void {
-    this.structures = [...structures];
+    this.structures = structures.filter((state) => state.kind === "turret" || state.kind === "solar-generator" || state.kind === "fuel-generator" || state.kind === "battery-bank");
     const backbone = this.structures.filter((state) => state.kind !== "turret");
     const candidates: Array<PowerEdge & { distanceSquared: number; a: number; b: number }> = [];
     for (let a = 0; a < backbone.length; a += 1) for (let b = a + 1; b < backbone.length; b += 1) {

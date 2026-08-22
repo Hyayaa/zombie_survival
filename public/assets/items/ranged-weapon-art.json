@@ -1,0 +1,155 @@
+{
+  "weapons": [
+    {
+      "id": "pistol",
+      "itemId": "pistol",
+      "facing": "east",
+      "direction": "east",
+      "category": "pistol",
+      "source": "WEAPON_DEFINITIONS",
+      "footprint": {
+        "width": 2,
+        "height": 2
+      },
+      "canvas": {
+        "width": 128,
+        "height": 128
+      },
+      "alphaBounds": {
+        "left": 12,
+        "top": 28,
+        "right": 122,
+        "bottom": 114
+      },
+      "keypoints": {
+        "stockX": 12,
+        "muzzleX": 121
+      },
+      "parts": [
+        "slide",
+        "barrel",
+        "front_sight",
+        "rear_sight",
+        "trigger_guard",
+        "trigger",
+        "grip",
+        "magazine",
+        "ejection_port",
+        "slide_groove",
+        "muzzle"
+      ]
+    },
+    {
+      "id": "smg",
+      "itemId": "smg",
+      "facing": "east",
+      "direction": "east",
+      "category": "smg",
+      "source": "WEAPON_DEFINITIONS",
+      "footprint": {
+        "width": 3,
+        "height": 2
+      },
+      "canvas": {
+        "width": 192,
+        "height": 128
+      },
+      "alphaBounds": {
+        "left": 12,
+        "top": 32,
+        "right": 184,
+        "bottom": 112
+      },
+      "keypoints": {
+        "stockX": 12,
+        "muzzleX": 183
+      },
+      "parts": [
+        "short_stock",
+        "rear_body",
+        "receiver",
+        "grip",
+        "magazine",
+        "short_barrel",
+        "muzzle",
+        "top_sight",
+        "metal_body",
+        "polymer_body"
+      ]
+    },
+    {
+      "id": "shotgun",
+      "itemId": "shotgun",
+      "facing": "east",
+      "direction": "east",
+      "category": "shotgun",
+      "source": "WEAPON_DEFINITIONS",
+      "footprint": {
+        "width": 4,
+        "height": 2
+      },
+      "canvas": {
+        "width": 256,
+        "height": 128
+      },
+      "alphaBounds": {
+        "left": 14,
+        "top": 36,
+        "right": 246,
+        "bottom": 100
+      },
+      "keypoints": {
+        "stockX": 14,
+        "muzzleX": 245
+      },
+      "parts": [
+        "stock",
+        "receiver",
+        "trigger_guard",
+        "trigger",
+        "pump",
+        "long_barrel",
+        "tubular_magazine",
+        "front_sight",
+        "muzzle"
+      ]
+    },
+    {
+      "id": "hunting_rifle",
+      "itemId": "hunting_rifle",
+      "facing": "east",
+      "direction": "east",
+      "category": "rifle",
+      "source": "WEAPON_DEFINITIONS",
+      "footprint": {
+        "width": 4,
+        "height": 2
+      },
+      "canvas": {
+        "width": 256,
+        "height": 128
+      },
+      "alphaBounds": {
+        "left": 14,
+        "top": 22,
+        "right": 246,
+        "bottom": 110
+      },
+      "keypoints": {
+        "stockX": 14,
+        "muzzleX": 245
+      },
+      "parts": [
+        "wood_stock",
+        "receiver",
+        "trigger_guard",
+        "trigger",
+        "bolt",
+        "long_barrel",
+        "scope",
+        "scope_mount",
+        "muzzle"
+      ]
+    }
+  ]
+}

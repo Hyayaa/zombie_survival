@@ -29,6 +29,31 @@ canvas {
   image-rendering: pixelated;
 }
 
+canvas.has-weapon-crosshair { cursor: none; }
+
+.weapon-crosshair {
+  --crosshair-x: 0px;
+  --crosshair-y: 0px;
+  --crosshair-gap: 5px;
+  --crosshair-color: #f4f4e8;
+  position: fixed;
+  z-index: 60;
+  left: var(--crosshair-x);
+  top: var(--crosshair-y);
+  width: 1px;
+  height: 1px;
+  pointer-events: none;
+}
+.weapon-crosshair[hidden] { display: none; }
+.weapon-crosshair__arm { position:absolute;display:block;background:var(--crosshair-color);box-shadow:0 0 0 1px #080a09; }
+.weapon-crosshair__arm--top,.weapon-crosshair__arm--bottom { left:0;width:1px;height:6px;transform:translateX(-1px); }
+.weapon-crosshair__arm--left,.weapon-crosshair__arm--right { top:0;width:6px;height:1px;transform:translateY(-1px); }
+.weapon-crosshair__arm--top { bottom:var(--crosshair-gap); }
+.weapon-crosshair__arm--bottom { top:var(--crosshair-gap); }
+.weapon-crosshair__arm--left { right:var(--crosshair-gap); }
+.weapon-crosshair__arm--right { left:var(--crosshair-gap); }
+.weapon-crosshair.is-hit { --crosshair-color:#fff0c2; }
+
 button {
   color: #dce3dd;
   background: #26312f;
@@ -289,10 +314,14 @@ button:focus-visible {
 .inventory-panel__view { max-height:calc(92vh - 62px);overflow:auto;padding-top:8px; }
 .inventory-panel__view[hidden] { display:none; }
 .grid-inventory { display:grid;gap:7px;align-content:start; }
+.item-grid-row { min-width:0;padding:6px;background:#101614;border:1px solid #34413c; }
+.item-grid-row__header { display:flex;align-items:center;justify-content:space-between;gap:10px;min-height:24px; }
+.item-grid-row__header h3 { margin:0; }
+.item-grid-row__body { display:grid;grid-template-columns:max-content minmax(0,1fr);gap:12px;align-items:start; }
+.item-grid-row__left,.item-grid-row__right { min-width:0; }
 .storage-row { min-width:0;padding:6px;background:#101614;border:1px solid #34413c; }
 .storage-row h3 { display:flex;gap:6px;min-height:18px;margin-top:0; }
 .storage-row h3 small { color:#76827c;font-weight:normal; }
-.storage-row__body { display:grid;grid-template-columns:max-content minmax(0,1fr);gap:12px;align-items:start; }
 .storage-row__equipment { min-height:76px;display:grid;grid-template-columns:max-content minmax(76px,1fr);gap:4px 8px;align-items:center;padding:5px;background:#18201d;border:1px solid #3d4b45; }
 .storage-row__equipment b { font-size:.88em; }.storage-row__equipment small { color:#87938d;font-size:.72em; }
 .storage-row__equipment button { padding:2px 5px;justify-self:start; }
@@ -327,14 +356,25 @@ button:focus-visible {
   gap: 4px;
 }
 .weapon-equipment{display:grid;gap:7px}.weapon-equipment__slot{min-height:82px;display:grid;grid-template-columns:max-content minmax(90px,1fr);gap:4px 8px;align-items:center;padding:6px;background:#18201d;border:1px solid #485650}.weapon-equipment__slot.is-empty{grid-template-columns:1fr;opacity:.72}.weapon-equipment__slot.is-active{border-color:#d6c27c;background:#29342c}.weapon-equipment__slot button{padding:2px 5px}.equipment-drop-target.is-drop-valid{border-color:#70c184;box-shadow:inset 0 0 0 2px rgb(112 193 132 / 35%)}.equipment-drop-target.is-drop-invalid{border-color:#db655b;box-shadow:inset 0 0 0 2px rgb(219 101 91 / 35%)}
+.temporary-equipment-drop-target{display:grid;gap:3px;margin-top:12px;padding:10px;background:#18201d;border:1px dashed #71847b}.temporary-equipment-drop-target small{color:#87938d}
 
+.crafting-station-context { margin:0 0 8px;padding:7px;color:#aeb9b2;background:#151d1a;border:1px solid #3d4b45; }
 .crafting-list { display:grid;gap:7px; }
-.craft-card { display:grid;grid-template-columns:minmax(180px,1fr) 24px minmax(120px,.7fr) 110px;gap:8px;align-items:center;padding:7px;background:#101614;border:1px solid #34413c; }
-.craft-card.is-disabled { opacity:.68; }.craft-card__ingredients { display:flex;flex-wrap:wrap;gap:5px; }
-.craft-ingredient,.craft-card__result { display:grid;grid-template-columns:34px auto;align-items:center;gap:1px 5px; }
-.craft-ingredient .craft-icon,.craft-result-icon { grid-row:1/3;width:32px;height:32px; }
-.craft-ingredient small,.craft-card__result small { color:#98a49e; }.craft-ingredient.is-missing small { color:#df766b; }
-.craft-card__arrow { color:#d6c27c;text-align:center; }.craft-card button:disabled { color:#ad6a62; }
+.craft-recipe.is-disabled { opacity:.78; }
+.craft-recipe__title { display:flex;align-items:center;flex-wrap:wrap;gap:5px 10px; }
+.craft-recipe__title small,.craft-grid-label { color:#89968f; }
+.craft-status { padding:1px 5px;border:1px solid #567063;color:#82c795;background:#17241d; }
+.craft-status--station-missing,.craft-status--missing-materials,.craft-status--inventory-full { color:#e08a78;border-color:#755147;background:#2b1b18; }
+.craft-recipe .item-grid-row__body { grid-template-columns:minmax(92px,max-content) minmax(0,1fr);padding-top:6px;border-top:1px solid #27332f; }
+.craft-grid-label { display:block;margin-bottom:4px;font-size:.74em; }
+.recipe-grid__surface { --cell:40px;max-width:100%; }
+.recipe-grid__result { width:max-content; }
+.recipe-grid__item { cursor:pointer; }
+.recipe-grid__item:active { cursor:pointer; }
+.recipe-grid__item.is-missing .inventory-item-frame { border-color:#b65950;background-color:#412522; }
+.recipe-grid__quantity { position:absolute;left:2px;bottom:1px;z-index:2;padding:0 2px;color:#f1dfad;background:#080b0a;font-size:9px;pointer-events:none; }
+.recipe-grid__item.is-missing .recipe-grid__quantity { color:#ff9b8e; }
+.inventory-item-frame--readonly-grid { cursor:pointer; }
 
 .weapon-button.is-active {
   color: #f2df9d;
@@ -457,7 +497,7 @@ button:focus-visible {
 
 @media (max-width: 700px), (max-height: 480px) {
   .inventory-panel__content { grid-template-columns: 1fr 190px; }
-  .craft-card { grid-template-columns:1fr 20px 1fr; }.craft-card>button { grid-column:1/4; }
+  .craft-recipe .item-grid-row__body { grid-template-columns:1fr; }
   .hud__objective { top: 42px; max-width: 45%; }
   .hud__bottom-right { right:6px;bottom:42px;gap:3px; }
   .hud__needs,.hud__weapon { width:170px;padding:3px 5px; }

@@ -14,10 +14,12 @@ export interface AttackEffectEvent {
   originY: number;
   angle: number;
   startedAt: number;
-  endpointX?: number;
-  endpointY?: number;
   impacts: readonly AttackEffectImpact[];
   alwaysShowCore?: boolean;
+  meleeMode?: "stab" | "swing" | "heavy";
+  meleeRange?: number;
+  meleeArcRadians?: number;
+  sweepDirection?: -1 | 1;
 }
 
 export const ATTACK_EFFECT_DURATION_MS: Record<AttackEffectWeapon, number> = {
@@ -35,7 +37,5 @@ export const PIXEL_EFFECT_PRIORITY = {
   smoke: 2,
   wall: 3,
   impact: 4,
-  tracer: 5,
   muzzle: 6,
-  swing: 7,
 } as const;

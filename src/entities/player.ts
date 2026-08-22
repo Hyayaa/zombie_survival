@@ -6,6 +6,7 @@ import type { Point } from "../systems/zombie-ai-system";
 import { ACTOR_PALETTES, TopDownActorView } from "../rendering/generated-sprites";
 import type Phaser from "phaser";
 import { createSurvivalNeeds, createSurvivalRuntime } from "../systems/survival-needs-system";
+import type { MeleeAttackMode } from "../data/melee-attack-definitions";
 
 export class Player {
   readonly id = "player";
@@ -58,13 +59,15 @@ export class Player {
     this.view.setHealth(this.vitals.health, this.vitals.maxHealth, true);
   }
 
-  beginAttack(startedAt: number): void {
+  beginAttack(startedAt: number, meleeMode?: MeleeAttackMode, durationMs?: number, sweepDirection?: -1 | 1): void {
     if (!this.equippedWeapon) return;
     this.view.beginAttack({
       weapon: this.equippedWeapon,
       startedAt,
-      durationMs: ATTACK_EFFECT_DURATION_MS[this.equippedWeapon],
+      durationMs: durationMs ?? ATTACK_EFFECT_DURATION_MS[this.equippedWeapon],
       baseAimAngle: this.aimAngle,
+      meleeMode,
+      sweepDirection,
     });
   }
 }

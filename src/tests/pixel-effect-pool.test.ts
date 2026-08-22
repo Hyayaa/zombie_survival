@@ -89,8 +89,8 @@ describe("PixelEffectSystem pooling", () => {
       },
     } as unknown as Phaser.Scene;
     const effects = new PixelEffectSystem(scene, () => true);
-    expect(views).toHaveLength(408);
-    expect(graphics).toHaveLength(2);
+    expect(views).toHaveLength(312);
+    expect(graphics).toHaveLength(3);
     for (let attack = 0; attack < 100; attack += 1) {
       effects.playAttack({
         sequence: attack + 1,
@@ -99,20 +99,18 @@ describe("PixelEffectSystem pooling", () => {
         originY: 100,
         angle: attack * 0.1,
         startedAt: attack * 300,
-        endpointX: 180,
-        endpointY: 100,
         impacts: [{ x: 180, y: 100, kind: attack % 2 === 0 ? "wall" : "zombie" }],
         alwaysShowCore: true,
       });
       effects.emitDirectionalBlood({kind:"projectile",damage:34,hitX:180,hitY:100,directionX:1,directionY:0,weaponId:"pistol",sequence:attack+1},attack*300);
       effects.update(attack * 300 + 100, 0.016);
     }
-    expect(views).toHaveLength(408);
-    expect(graphics).toHaveLength(2);
-    expect(effects.getStats().capacity).toBe(632);
+    expect(views).toHaveLength(312);
+    expect(graphics).toHaveLength(3);
+    expect(effects.getStats().capacity).toBe(536);
     expect(effects.getStats().blood).toBeLessThanOrEqual(224);
     effects.clear();
-    expect(effects.getStats()).toMatchObject({ particles: 0, swings: 0, muzzle: 0, tracers: 0,blood:0 });
+    expect(effects.getStats()).toMatchObject({ particles: 0, muzzle: 0, tracers: 0,blood:0 });
     effects.destroy();
     expect(views.every((view) => view.destroyed)).toBe(true);
     expect(graphics.every((view)=>view.destroyed)).toBe(true);

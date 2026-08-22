@@ -180,13 +180,32 @@ export class CollisionSystem implements VisionGrid {
   moveCircle(position: Point, deltaX: number, deltaY: number, radius: number): Point {
     let x = position.x;
     let y = position.y;
-    const horizontalTarget = { x: x + deltaX, y };
-    if (!this.isMovementBlockedWorld(horizontalTarget.x, horizontalTarget.y, radius)
-      && !this.traversalHitsIndexedSegment({ x, y }, horizontalTarget, radius, false)) x = horizontalTarget.x;
-    const verticalTarget = { x, y: y + deltaY };
-    if (!this.isMovementBlockedWorld(verticalTarget.x, verticalTarget.y, radius)
-      && !this.traversalHitsIndexedSegment({ x, y }, verticalTarget, radius, false)) y = verticalTarget.y;
+    const steps = Math.max(1, Math.ceil(Math.hypot(deltaX, deltaY) / 3.5));
+    const horizontalEnd = { x: x + deltaX, y };
+    const horizontalAllowed = !this.isMovementBlockedWorld(horizontalEnd.x, horizontalEnd.y, radius)
+      && !this.traversalHitsIndexedSegment({ x, y }, horizontalEnd, radius, false);
+    const stepX = horizontalAllowed ? deltaX / steps : 0;
+    const verticalStartX = horizontalAllowed ? x + deltaX : x;
+    const verticalEnd = { x: verticalStartX, y: y + deltaY };
+    const verticalAllowed = !this.isMovementBlockedWorld(verticalEnd.x, verticalEnd.y, radius)
+      && !this.traversalHitsIndexedSegment({ x: verticalStartX, y }, verticalEnd, radius, false);
+    const stepY = verticalAllowed ? deltaY / steps : 0;
+    for (let step = 0; step < steps; step += 1) {
+      const horizontalTarget = { x: x + stepX, y };
+      if (!this.isMovementBlockedWorld(horizontalTarget.x, horizontalTarget.y, radius)
+        && !this.traversalHitsIndexedSegment({ x, y }, horizontalTarget, radius, false)) x = horizontalTarget.x;
+      const verticalTarget = { x, y: y + stepY };
+      if (!this.isMovementBlockedWorld(verticalTarget.x, verticalTarget.y, radius)
+        && !this.traversalHitsIndexedSegment({ x, y }, verticalTarget, radius, false)) y = verticalTarget.y;
+    }
     return { x, y };
+  }
+
+  firstProjectileCollisionAlongSegment(from: Point, to: Point): { point: Point; amount: number } | null {
+    const point = this.firstProjectileCollision(from, to, 2);
+    if (!point) return null;
+    const length = Math.hypot(to.x - from.x, to.y - from.y);
+    return { point, amount: length <= 0 ? 0 : Math.hypot(point.x - from.x, point.y - from.y) / length };
   }
 
   blocksVisionWorld(x: number, y: number): boolean {

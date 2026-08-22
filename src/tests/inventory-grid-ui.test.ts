@@ -10,6 +10,6 @@ describe("inventory grid UI model", () => {
     const styles = inventory.getStoredItems().map(getItemGridStyle);
     expect(styles).toHaveLength(inventory.getStoredItems().length);
     expect(new Set(styles).size).toBe(styles.length);
-    expect(styles.some((style) => style.includes("--item-w:1;--item-h:2"))).toBe(true);
+    expect(styles.some((style) => style.includes("--item-w:2;--item-h:1"))).toBe(true);
   });
 });

@@ -246,7 +246,7 @@ export class SaveSystem {
 
   private hasValidStructures(value: SaveCandidate): boolean {
     return Array.isArray(value.structures) && value.structures.every((state) => state && typeof state.id === "string"
-      && ["turret", "solar-generator", "fuel-generator", "battery-bank"].includes(state.kind)
+      && ["turret", "solar-generator", "fuel-generator", "battery-bank", "makeshift_workbench", "plank_workbench", "technical_workbench"].includes(state.kind)
       && typeof state.tileX === "number" && typeof state.tileY === "number" && typeof state.storedEnergy === "number"
       && (state.fuelSeconds === undefined || typeof state.fuelSeconds === "number"));
   }

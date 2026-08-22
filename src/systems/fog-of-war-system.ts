@@ -14,7 +14,7 @@ export interface VisionSource {
   y: number;
   radius: number;
   intensity: number;
-  sourceType: "player" | "proximity" | "ambient-cone" | "torch" | "flashlight" | "fire" | "companion" | "turret";
+  sourceType: "player" | "proximity" | "torch" | "flashlight" | "fire" | "companion" | "turret";
   direction?: number;
   coneAngle?: number;
 }
@@ -26,10 +26,9 @@ export interface VisionGrid {
 
 export interface FogInvalidationInput {
   playerCell: number;
-  ambientAimBucket: number;
+  flashlightAimBucket: number;
   visionRevision: number;
   ambientRadiusBucket: number;
-  ambientAngleBucket: number;
   flashlightActive: boolean;
   flashlightRadiusBucket: number;
   torchActive: boolean;
@@ -38,10 +37,9 @@ export interface FogInvalidationInput {
 
 export class FogInvalidationTracker {
   private lastPlayerCell = -1;
-  private lastAmbientAimBucket = -1;
+  private lastFlashlightAimBucket = -1;
   private lastVisionRevision = -1;
   private lastAmbientRadiusBucket = -1;
-  private lastAmbientAngleBucket = -1;
   private lastFlashlightActive = false;
   private lastFlashlightRadiusBucket = -1;
   private lastTorchActive = false;
@@ -51,10 +49,9 @@ export class FogInvalidationTracker {
   shouldRecompute(input: FogInvalidationInput, force = false): boolean {
     return force || this.invalidated
       || input.playerCell !== this.lastPlayerCell
-      || input.ambientAimBucket !== this.lastAmbientAimBucket
+      || input.flashlightAimBucket !== this.lastFlashlightAimBucket
       || input.visionRevision !== this.lastVisionRevision
       || input.ambientRadiusBucket !== this.lastAmbientRadiusBucket
-      || input.ambientAngleBucket !== this.lastAmbientAngleBucket
       || input.flashlightActive !== this.lastFlashlightActive
       || input.flashlightRadiusBucket !== this.lastFlashlightRadiusBucket
       || input.torchActive !== this.lastTorchActive
@@ -63,10 +60,9 @@ export class FogInvalidationTracker {
 
   commit(input: FogInvalidationInput): void {
     this.lastPlayerCell = input.playerCell;
-    this.lastAmbientAimBucket = input.ambientAimBucket;
+    this.lastFlashlightAimBucket = input.flashlightAimBucket;
     this.lastVisionRevision = input.visionRevision;
     this.lastAmbientRadiusBucket = input.ambientRadiusBucket;
-    this.lastAmbientAngleBucket = input.ambientAngleBucket;
     this.lastFlashlightActive = input.flashlightActive;
     this.lastFlashlightRadiusBucket = input.flashlightRadiusBucket;
     this.lastTorchActive = input.torchActive;
@@ -80,10 +76,9 @@ export class FogInvalidationTracker {
 
   reset(): void {
     this.lastPlayerCell = -1;
-    this.lastAmbientAimBucket = -1;
+    this.lastFlashlightAimBucket = -1;
     this.lastVisionRevision = -1;
     this.lastAmbientRadiusBucket = -1;
-    this.lastAmbientAngleBucket = -1;
     this.lastFlashlightActive = false;
     this.lastFlashlightRadiusBucket = -1;
     this.lastTorchActive = false;
@@ -106,7 +101,6 @@ const OCTANTS = [
 const SOURCE_SALTS = {
   player: 0x13579b,
   proximity: 0x13579b,
-  "ambient-cone": 0x1975b3,
   torch: 0x2468ac,
   flashlight: 0x3579bd,
   fire: 0x468ace,

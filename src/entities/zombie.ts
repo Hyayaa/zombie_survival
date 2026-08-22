@@ -2,12 +2,14 @@ import type Phaser from "phaser";
 import { ZOMBIE_DEFINITIONS, type ZombieKind, type ZombieStateName } from "../data/zombie-definitions";
 import { ACTOR_PALETTES, TopDownActorView } from "../rendering/generated-sprites";
 import { createZombieMind, type Point, type ZombieMind } from "../systems/zombie-ai-system";
+import { cancelZombieAttackWindups, createZombiePosture, damageZombiePosture, updateZombiePosture, type ZombiePostureDamageResult, type ZombiePostureState } from "../systems/zombie-posture-system";
 
 export class Zombie {
   readonly view: TopDownActorView;
   readonly definition;
   position: Point;
   health: number;
+  readonly posture: ZombiePostureState;
   mind: ZombieMind;
   path: Point[] = [];
   pathIndex = 0;
@@ -28,13 +30,16 @@ export class Zombie {
     this.position = { ...position };
     this.definition = ZOMBIE_DEFINITIONS[kind];
     this.health = this.definition.health;
+    this.posture = createZombiePosture(this.definition);
     this.mind = { ...createZombieMind(), state };
-    this.view = new TopDownActorView(scene, position.x, position.y, kind === "runner" ? ACTOR_PALETTES.runner : ACTOR_PALETTES.walker, false);
+    this.view = new TopDownActorView(scene, position.x, position.y, kind === "runner" ? ACTOR_PALETTES.runner : ACTOR_PALETTES.walker, false, false);
   }
 
   isAlive(): boolean {
     return this.health > 0 && this.mind.state !== "Dead";
   }
+
+  get alive(): boolean { return this.isAlive(); }
 
   damage(amount: number, knockback: Point, now: number): boolean {
     if (!this.isAlive() || amount <= 0) return false;
@@ -46,9 +51,25 @@ export class Zombie {
       this.view.setDead(true);
       return true;
     }
-    this.staggerUntil = now + 180;
-    this.mind = { ...this.mind, state: "Stagger" };
     return false;
+  }
+
+  damagePosture(amount: number, now: number): ZombiePostureDamageResult {
+    const result = damageZombiePosture(this.posture, amount, now, this.definition);
+    if (result.broken) {
+      this.staggerUntil = this.posture.staggerUntil;
+      this.mind = { ...this.mind, state: "Stagger" };
+      this.cancelAttackWindups();
+    }
+    return result;
+  }
+
+  updatePosture(now: number, deltaSeconds: number): void {
+    updateZombiePosture(this.posture, this.definition, now, deltaSeconds);
+  }
+
+  cancelAttackWindups(): void {
+    cancelZombieAttackWindups(this);
   }
 
   applyKnockback(knockback: Point): void {
@@ -62,6 +83,5 @@ export class Zombie {
     this.view.setPosition(this.position.x, this.position.y);
     this.view.updateAnimation(time, this.isAlive() && this.mind.state !== "Idle", this.mind.state === "Attack", this.aimAngle);
     if (!this.isAlive()) this.view.setDead(true);
-    this.view.setHealth(this.health, this.definition.health);
   }
 }

@@ -2,6 +2,7 @@ import Phaser from "phaser";
 import { DEPTH, ENTITY_OUTLINE } from "../config/game-config";
 import type { WeaponId } from "../data/weapon-definitions";
 import { swingOffsetAt } from "../effects/pixel-effect-math";
+import type { MeleeAttackMode } from "../data/melee-attack-definitions";
 import { EntityOutlineController, type EntityOutlineState, type OutlineableEntityView } from "./entity-outline";
 
 export interface ActorPalette {
@@ -25,6 +26,8 @@ export interface ActorAttackAnimation {
   startedAt: number;
   durationMs: number;
   baseAimAngle: number;
+  meleeMode?: MeleeAttackMode;
+  sweepDirection?: -1 | 1;
 }
 
 export class TopDownActorView implements OutlineableEntityView {
@@ -35,8 +38,8 @@ export class TopDownActorView implements OutlineableEntityView {
   private readonly weaponTip?: Phaser.GameObjects.Rectangle;
   private readonly fillOutlineShapes: Phaser.GameObjects.Shape[];
   private readonly strokeOutlineShapes: Phaser.GameObjects.Shape[];
-  private readonly healthBarBackground: Phaser.GameObjects.Rectangle;
-  private readonly healthBarFill: Phaser.GameObjects.Rectangle;
+  private readonly healthBarBackground?: Phaser.GameObjects.Rectangle;
+  private readonly healthBarFill?: Phaser.GameObjects.Rectangle;
   private attackAnimation?: ActorAttackAnimation;
   private weapon: WeaponId = "pistol";
   private hitUntil = 0;
@@ -56,7 +59,7 @@ export class TopDownActorView implements OutlineableEntityView {
   private dead = false;
   private readonly outline: EntityOutlineController;
 
-  constructor(scene: Phaser.Scene, x: number, y: number, palette: ActorPalette, armed = true) {
+  constructor(scene: Phaser.Scene, x: number, y: number, palette: ActorPalette, armed = true, showHealthBar = true) {
     this.container = scene.add.container(Math.round(x), Math.round(y));
     const shadow = scene.add.ellipse(0, 6, 11, 4, 0x050708, 0.62);
     this.visual = scene.add.container(0, 0);
@@ -76,9 +79,12 @@ export class TopDownActorView implements OutlineableEntityView {
       for (const shape of this.fillOutlineShapes) shape.setFillStyle(color, 1);
       for (const shape of this.strokeOutlineShapes) shape.setStrokeStyle(1, color, 1);
     });
-    this.healthBarBackground = scene.add.rectangle(-7, -13, 14, 2, 0x171a18, 0.9).setOrigin(0, 0);
-    this.healthBarFill = scene.add.rectangle(-7, -13, 14, 2, 0x7aaa65, 1).setOrigin(0, 0);
-    this.visual.add([torsoOutline, torso, torsoLight, headOutline, head, headLight, this.aimLayer, this.healthBarBackground, this.healthBarFill]);
+    this.visual.add([torsoOutline, torso, torsoLight, headOutline, head, headLight, this.aimLayer]);
+    if (showHealthBar) {
+      this.healthBarBackground = scene.add.rectangle(-7, -13, 14, 2, 0x171a18, 0.9).setOrigin(0, 0);
+      this.healthBarFill = scene.add.rectangle(-7, -13, 14, 2, 0x7aaa65, 1).setOrigin(0, 0);
+      this.visual.add([this.healthBarBackground, this.healthBarFill]);
+    }
     this.container.add([shadow, this.visual]);
     this.setAim(0);
     this.setWeapon("pistol");
@@ -163,10 +169,16 @@ export class TopDownActorView implements OutlineableEntityView {
         customAttacking = true;
         poseAngle = attack.baseAimAngle;
         if (attack.weapon === "knife" || attack.weapon === "bat") {
-          poseAngle += swingOffsetAt(attack.weapon, progress);
-          visualX = -Math.round(Math.cos(attack.baseAimAngle));
-          visualY = -Math.round(Math.sin(attack.baseAimAngle));
-          if (attack.weapon === "bat") visualRotation = Math.sin(progress * Math.PI) * 0.045;
+          if (attack.meleeMode === "stab") {
+            const thrust = Math.sin(progress * Math.PI) * 3;
+            visualX = Math.round(Math.cos(attack.baseAimAngle) * thrust);
+            visualY = Math.round(Math.sin(attack.baseAimAngle) * thrust);
+          } else {
+            poseAngle += swingOffsetAt(attack.weapon, progress) * (attack.meleeMode === "heavy" ? 1.15 : 1) * (attack.sweepDirection ?? 1);
+            visualX = -Math.round(Math.cos(attack.baseAimAngle));
+            visualY = -Math.round(Math.sin(attack.baseAimAngle));
+            if (attack.weapon === "bat") visualRotation = Math.sin(progress * Math.PI) * (attack.meleeMode === "heavy" ? 0.075 : 0.045);
+          }
         } else {
           const recoil = progress < 0.3 ? progress / 0.3 : 1 - (progress - 0.3) / 0.7;
           aimOffsetX = -Math.cos(attack.baseAimAngle) * Math.round(recoil * 2);
@@ -212,6 +224,7 @@ export class TopDownActorView implements OutlineableEntityView {
   }
 
   setHealth(current: number, maximum: number, alwaysVisible = false): void {
+    if (!this.healthBarBackground || !this.healthBarFill) return;
     if (current === this.lastHealth && maximum === this.lastMaximum && alwaysVisible === this.lastAlwaysVisible) return;
     this.lastHealth = current;
     this.lastMaximum = maximum;

@@ -7,7 +7,7 @@ Download date: 2026-08-17. All assets below are CC0 1.0. Editing is documented p
 | `creepy-ambient-loop.ogg` | `creepyloop-v2_0.ogg` | Creepy Ambient Loop / epb9000 | https://opengameart.org/content/creepy-ambient-loop | CC0 1.0 | Renamed only |
 | `pistol-smg-single.wav` | `cz.wav` | Gunshot Sounds / Tabasco | https://opengameart.org/content/gunshot-sounds | CC0 1.0 | Cropped 0.15–1.55s to keep the first shot only; 8ms fade-in and 150ms fade-out; shared by pistol and SMG |
 | `shotgun.wav` | `shotty.wav` | Gunshot Sounds / Tabasco | https://opengameart.org/content/gunshot-sounds | CC0 1.0 | Renamed only |
-| `rifle.wav` | `mosin.wav` | Gunshot Sounds / Tabasco | https://opengameart.org/content/gunshot-sounds | CC0 1.0 | Renamed only |
+| `rifle-shot-single-v2.wav` | `mosin.wav` | Gunshot Sounds / Tabasco | https://opengameart.org/content/gunshot-sounds | CC0 1.0 | Edited 2026-08-22; cropped 0.40–1.35s to retain the first shot and short natural decay only; 8ms fade-in and 40ms fade-out |
 | `zombie-death.ogg` | `fastzombie1.ogg` | Zombie noises and moans / ianzazz | https://opengameart.org/content/zombie-noises-and-moans | CC0 1.0 | Renamed only |
 | `zombie-growl-1.ogg` | `zombienoise1.ogg` | Zombie noises and moans / ianzazz | https://opengameart.org/content/zombie-noises-and-moans | CC0 1.0 | Renamed only |
 | `zombie-growl-2.ogg` | `zombienoise2.ogg` | Zombie noises and moans / ianzazz | https://opengameart.org/content/zombie-noises-and-moans | CC0 1.0 | Renamed only |
@@ -26,4 +26,4 @@ Download date: 2026-08-17. All assets below are CC0 1.0. Editing is documented p
 
 `mechanical.ogg` is also reused for the short `DAY` impact cue. `creepy-ambient-loop.ogg` remains the single tension BGM (`bgm-tension`) by epb9000 under CC0 1.0; no additional music track was added.
 
-Runtime audio total: 19 files, 4,583,829 bytes. Source ZIP archives were used only in a temporary directory and are not part of this repository.
+Runtime audio total: 19 files, 1,941,589 bytes. Source ZIP archives were used only in a temporary directory and are not part of this repository.

@@ -30,10 +30,8 @@ export const MAX_PATHFINDING_PER_FRAME = 4;
 
 export const VISION = {
   proximityRadius: 72,
-  dayConeRadius: 420,
-  dayConeAngle: 2.20,
-  nightBareConeRadius: 78,
-  nightBareConeAngle: 0.78,
+  playerDayOmniRadius: 360,
+  playerNightOmniRadius: 60,
   flashlightRadius: 300,
   flashlightConeAngle: Math.PI * 0.34,
   torchRadius: 170,

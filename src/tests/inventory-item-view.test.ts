@@ -5,7 +5,7 @@ describe("common inventory item view", () => {
   it("uses one geometry and one centered image hierarchy on every surface", () => {
     const surfaces: InventoryItemSurface[] = ["inventory-grid", "equipment-slot", "weapon-slot", "drag-ghost"];
     const geometries = surfaces.map(() => getInventoryItemViewGeometry({ itemId: "shotgun", rotation: 1 }));
-    expect(geometries.every(({ frameWidthPx, frameHeightPx }) => frameWidthPx === 160 && frameHeightPx === 80)).toBe(true);
+    expect(geometries.every(({ frameWidthPx, frameHeightPx }) => frameWidthPx === 80 && frameHeightPx === 160)).toBe(true);
     for (const surface of surfaces) {
       const markup = createInventoryItemView({ instanceId: "weapon-1", itemId: "shotgun", quantity: 1, rotation: 1, surface });
       expect(markup).toContain(`inventory-item-frame--${surface}`); expect(markup).toContain("inventory-item-visual-stage"); expect(markup).toContain("inventory-item-centerer");

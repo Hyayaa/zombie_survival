@@ -19,6 +19,10 @@ export interface SavedZombie extends SavedActor {
   visualLock?: boolean;
   currentTargetId?: string;
   lastSeenAt?: number;
+  postureValue?: number;
+  postureRecoveryRemainingMs?: number;
+  postureStaggerRemainingMs?: number;
+  postureBreakImmunityRemainingMs?: number;
 }
 
 export interface SavedCompanion extends SavedActor {

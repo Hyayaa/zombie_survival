@@ -51,18 +51,18 @@ describe("attack effect integration", () => {
     let magazine = state.magazine;
     if (getAttackBlockReason(state, WEAPON_DEFINITIONS.pistol) === null) {
       magazine -= 1;
-      controller.play({ weapon: "pistol", originX: 10, originY: 20, angle: 0, startedAt: state.now, endpointX: 80, endpointY: 20, impacts: [] });
+      controller.play({ weapon: "pistol", originX: 10, originY: 20, angle: 0, startedAt: state.now, impacts: [] });
     }
     expect(magazine).toBe(2);
     expect(sink.events).toHaveLength(1);
-    expect(sink.events[0]).toMatchObject({ weapon: "pistol", endpointX: 80, endpointY: 20 });
+    expect(sink.events[0]).toMatchObject({ weapon: "pistol", impacts: [] });
   });
 
   it("passes wall and zombie results through without a second hit test", () => {
     const sink = new RecordingSink();
     const controller = new AttackEffectController(sink);
     controller.play({
-      weapon: "pistol", originX: 0, originY: 0, angle: 0, startedAt: 0, endpointX: 40, endpointY: 0,
+      weapon: "pistol", originX: 0, originY: 0, angle: 0, startedAt: 0,
       impacts: [{ x: 40, y: 0, kind: "wall" }],
     });
     controller.play({
@@ -75,7 +75,7 @@ describe("attack effect integration", () => {
     expect(sink.events[2]?.impacts).toHaveLength(0);
   });
 
-  it("dispatches exactly one firearm sound for each accepted shot sequence",()=>{const gate=new AudioEventGate();const calls:FirearmShotCue[]=[];const audio={playForEvent:(cue:FirearmShotCue,sequence:number)=>{if(!gate.allow(cue,sequence))return false;calls.push(cue);return true;}};const pistol=readiness({magazine:3});if(getAttackBlockReason(pistol,WEAPON_DEFINITIONS.pistol)===null){playFirearmShotForEvent(audio,"pistol",12);playFirearmShotForEvent(audio,"pistol",12);}expect(calls).toEqual(["pistol-shot"]);const shotgun=readiness({magazine:2});if(getAttackBlockReason(shotgun,WEAPON_DEFINITIONS.shotgun)===null){for(let pellet=0;pellet<(WEAPON_DEFINITIONS.shotgun.pelletCount??1);pellet++)void pellet;playFirearmShotForEvent(audio,"shotgun",13);}expect(calls).toEqual(["pistol-shot","shotgun-shot"]);});
+  it("dispatches exactly one firearm sound for each accepted shot sequence",()=>{const gate=new AudioEventGate();const calls:FirearmShotCue[]=[];const audio={playForEvent:(cue:FirearmShotCue,sequence:number)=>{if(!gate.allow(cue,sequence))return false;calls.push(cue);return true;}};const pistol=readiness({magazine:3});if(getAttackBlockReason(pistol,WEAPON_DEFINITIONS.pistol)===null){playFirearmShotForEvent(audio,"pistol",12);playFirearmShotForEvent(audio,"pistol",12);}expect(calls).toEqual(["pistol-shot"]);const shotgun=readiness({magazine:2});if(getAttackBlockReason(shotgun,WEAPON_DEFINITIONS.shotgun)===null){for(let pellet=0;pellet<(WEAPON_DEFINITIONS.shotgun.pelletCount??1);pellet++)void pellet;playFirearmShotForEvent(audio,"shotgun",13);}const rifle=readiness({magazine:2});if(getAttackBlockReason(rifle,WEAPON_DEFINITIONS.hunting_rifle)===null){playFirearmShotForEvent(audio,"hunting_rifle",14);for(const _impact of ["muzzle","projectile","zombie","wall"])void _impact;playFirearmShotForEvent(audio,"hunting_rifle",14);}expect(calls).toEqual(["pistol-shot","shotgun-shot","rifle-shot"]);});
 
   it("dispatches no firearm sound for cooldown, reload, empty magazine, or blocked UI",()=>{const calls:FirearmShotCue[]=[];const audio={playForEvent:(cue:FirearmShotCue)=>{calls.push(cue);return true;}};for(const state of [readiness({lastAttackAt:900}),readiness({reloadingUntil:1200}),readiness({magazine:0}),readiness({blocked:true})])if(getAttackBlockReason(state,WEAPON_DEFINITIONS.pistol)===null)playFirearmShotForEvent(audio,"pistol",20);expect(calls).toEqual([]);});
 });

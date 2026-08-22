@@ -15,25 +15,24 @@ function grid(blocked: (x: number, y: number) => boolean = () => false): VisionG
 }
 
 describe("FogOfWarSystem", () => {
-  it("uses phase-based ambient cones and disables flashlight contribution in full daylight", () => {
+  it("uses phase-based ambient circles and disables flashlight contribution in full daylight", () => {
     const clock = new GameClock();
-    expect(getVisionProfile(clock)).toMatchObject({ darknessFactor: 0, ambientRadius: 420, ambientConeAngle: 2.2, flashlightFactor: 0 });
+    expect(getVisionProfile(clock)).toMatchObject({ darknessFactor: 0, ambientRadius: 360, flashlightFactor: 0 });
     const dayOff = buildVisionSources({ x: 12, y: 12, aimAngle: 0, flashlightOn: false, torchRemaining: 1 }, clock, [{ id: "fire-a", x: 30, y: 30, remaining: 1 }]);
     const dayOn = buildVisionSources({ x: 12, y: 12, aimAngle: 0, flashlightOn: true, torchRemaining: 1 }, clock, [{ id: "fire-a", x: 30, y: 30, remaining: 1 }]);
     expect(dayOn).toEqual(dayOff);
-    expect(dayOn.find((candidate) => candidate.sourceType === "ambient-cone")).toMatchObject({ radius: 420, coneAngle: 2.2 });
+    const ambient = dayOn.find((candidate) => candidate.id === "player:ambient");
+    expect(ambient).toMatchObject({ radius: 360 }); expect(ambient?.direction).toBeUndefined(); expect(ambient?.coneAngle).toBeUndefined();
     expect(dayOn.find((candidate) => candidate.sourceType === "proximity")?.radius).toBe(72);
     expect(shouldConsumeFlashlightCharge(true, 100, clock)).toBe(false);
 
     clock.restore({ elapsedSeconds: BALANCE.daySeconds + BALANCE.duskSeconds });
-    expect(getVisionProfile(clock)).toMatchObject({ darknessFactor: 1, ambientRadius: 78, ambientConeAngle: 0.78, flashlightFactor: 1 });
+    expect(getVisionProfile(clock)).toMatchObject({ darknessFactor: 1, ambientRadius: 60, flashlightFactor: 1 });
     const night = buildVisionSources({ x: 12, y: 12, aimAngle: 0, flashlightOn: true, torchRemaining: 1 }, clock, []);
     expect(night.find((candidate) => candidate.sourceType === "flashlight")).toMatchObject({ radius: 300, coneAngle: VISION.flashlightConeAngle });
     expect(shouldConsumeFlashlightCharge(true, 100, clock)).toBe(true);
-    expect(VISION.dayConeRadius).toBeGreaterThan(VISION.flashlightRadius);
-    expect(VISION.flashlightRadius).toBeGreaterThan(VISION.nightBareConeRadius);
-    expect(VISION.dayConeAngle).toBeGreaterThan(VISION.flashlightConeAngle);
-    expect(VISION.flashlightConeAngle).toBeGreaterThan(VISION.nightBareConeAngle);
+    expect(VISION.playerDayOmniRadius).toBeGreaterThan(VISION.flashlightRadius);
+    expect(VISION.flashlightRadius).toBeGreaterThan(VISION.playerNightOmniRadius);
   });
 
   it("interpolates darkness smoothly through dusk and dawn", () => {
@@ -41,8 +40,8 @@ describe("FogOfWarSystem", () => {
     clock.restore({ elapsedSeconds: BALANCE.daySeconds + BALANCE.duskSeconds / 2 });
     const dusk = getVisionProfile(clock);
     expect(dusk.darknessFactor).toBeCloseTo(0.5, 4);
-    expect(dusk.ambientRadius).toBeLessThan(VISION.dayConeRadius);
-    expect(dusk.ambientRadius).toBeGreaterThan(VISION.nightBareConeRadius);
+    expect(dusk.ambientRadius).toBeLessThan(VISION.playerDayOmniRadius);
+    expect(dusk.ambientRadius).toBeGreaterThan(VISION.playerNightOmniRadius);
     expect(dusk.flashlightFactor).toBeGreaterThan(0);
     clock.restore({ elapsedSeconds: BALANCE.daySeconds + BALANCE.duskSeconds + BALANCE.nightSeconds + BALANCE.dawnSeconds / 2 });
     const dawn = getVisionProfile(clock);
@@ -64,8 +63,8 @@ describe("FogOfWarSystem", () => {
   it("does zero idle recomputes until a fog input is invalidated", () => {
     const tracker = new FogInvalidationTracker();
     const input: FogInvalidationInput = {
-      playerCell: 10, ambientAimBucket: 3, visionRevision: 2, ambientRadiusBucket: 50,
-      ambientAngleBucket: 22, flashlightActive: false, flashlightRadiusBucket: -1, torchActive: false,
+      playerCell: 10, flashlightAimBucket: -1, visionRevision: 2, ambientRadiusBucket: 50,
+      flashlightActive: false, flashlightRadiusBucket: -1, torchActive: false,
       companionVisionSignature: 0,
     };
     expect(tracker.shouldRecompute(input)).toBe(true);
@@ -121,13 +120,13 @@ describe("FogOfWarSystem", () => {
     expect(fog.getStateAtWorld(114, 6)).toBe(VisibilityState.Unknown);
   });
 
-  it("reveals a long day cone, keeps distant rear cells hidden, and preserves rear proximity", () => {
+  it("reveals the same large radius in front of and behind the player during the day", () => {
     const fog = new FogOfWarSystem(1_000, 1_000, FOG_CELL_SIZE, 811);
     const clock = new GameClock();
     const player = { x: 500, y: 500, aimAngle: 0, flashlightOn: false, torchRemaining: 0 };
     fog.recompute(buildVisionSources(player, clock, []), grid());
-    expect(fog.getStateAtWorld(780, 500)).toBe(VisibilityState.Visible);
-    expect(fog.getStateAtWorld(250, 500)).not.toBe(VisibilityState.Visible);
+    expect(fog.getStateAtWorld(750, 500)).toBe(VisibilityState.Visible);
+    expect(fog.getStateAtWorld(250, 500)).toBe(VisibilityState.Visible);
     expect(fog.getStateAtWorld(480, 500)).toBe(VisibilityState.Visible);
   });
 
@@ -174,7 +173,7 @@ describe("FogOfWarSystem", () => {
 
   it("keeps multi-source visibility stable when source order changes", () => {
     const sources = [
-      source({ id: "ambient", x: 90, y: 90, radius: 66, sourceType: "ambient-cone", direction: 0, coneAngle: 2.2 }),
+      source({ id: "ambient", x: 90, y: 90, radius: 66, sourceType: "player" }),
       source({ id: "torch", x: 120, y: 72, radius: 45, sourceType: "torch" }),
       source({ id: "fire:stable", x: 54, y: 108, radius: 36, sourceType: "fire" }),
     ];

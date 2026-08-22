@@ -24,20 +24,17 @@ export interface CompanionLightState {
 export interface VisionProfile {
   darknessFactor: number;
   ambientRadius: number;
-  ambientConeAngle: number;
   flashlightFactor: number;
   effectiveFlashlightRadius: number;
 }
 
 export function getVisionProfile(clock: Pick<GameClock, "getDarknessFactor">): VisionProfile {
   const darknessFactor = clock.getDarknessFactor();
-  const ambientRadius = lerp(VISION.dayConeRadius, VISION.nightBareConeRadius, darknessFactor);
-  const ambientConeAngle = lerp(VISION.dayConeAngle, VISION.nightBareConeAngle, darknessFactor);
+  const ambientRadius = lerp(VISION.playerDayOmniRadius, VISION.playerNightOmniRadius, darknessFactor);
   const flashlightFactor = smoothstepRange(0.15, 0.75, darknessFactor);
   return {
     darknessFactor,
     ambientRadius,
-    ambientConeAngle,
     flashlightFactor,
     effectiveFlashlightRadius: VISION.flashlightRadius * flashlightFactor,
   };
@@ -64,14 +61,12 @@ export function buildVisionSources(
     intensity: 1,
     sourceType: "proximity",
   }, {
-    id: "player-ambient-cone",
+    id: "player:ambient",
     x: player.x,
     y: player.y,
     radius: profile.ambientRadius,
     intensity: 1,
-    sourceType: "ambient-cone",
-    direction: player.aimAngle,
-    coneAngle: profile.ambientConeAngle,
+    sourceType: "player",
   });
   if (player.torchRemaining > 0) {
     output.push({ id: "player-torch", x: player.x, y: player.y, radius: VISION.torchRadius, intensity: 1, sourceType: "torch" });

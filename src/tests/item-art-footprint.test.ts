@@ -20,9 +20,11 @@ describe("footprint item art", () => {
     expect(names.filter((name: string) => /(?:_|-)(?:rot|90|vertical)(?:\.|_|-)/i.test(name))).toEqual([]);
     expect(names.filter((name: string) => /\.(?:zip|bmp|psd)$/i.test(name))).toEqual([]);
   });
-  it("uses the revised square and long weapon canvases", () => {
+  it("uses the revised footprint-sized weapon canvases", () => {
     const dimensions = (id: string) => { const bytes = readFileSync(`public/assets/items/${id}.png`); return [bytes.readUInt32BE(16), bytes.readUInt32BE(20)]; };
-    expect(dimensions("pistol")).toEqual([128, 128]); expect(dimensions("knife")).toEqual([128, 128]);
-    expect(dimensions("shotgun")).toEqual([128, 256]); expect(dimensions("bat")).toEqual([128, 256]);
+    expect(dimensions("pistol")).toEqual([128, 128]); expect(dimensions("knife")).toEqual([128, 64]);
+    expect(dimensions("smg")).toEqual([192, 128]); expect(dimensions("shotgun")).toEqual([256, 128]); expect(dimensions("bat")).toEqual([256, 64]);
+    expect(dimensions("hunting_rifle")).toEqual([256, 128]);
+    expect(Object.keys(WEAPON_DEFINITIONS)).toHaveLength(6);
   });
 });
